@@ -79,6 +79,30 @@ export class OutlinerService {
     return rowToWorkspace(row);
   }
 
+  updateWorkspace(id: string, input: { name?: string }): Workspace {
+    const workspace = this.getWorkspace(id);
+    const name = input.name?.trim();
+    if (!name) throw new ValidationError("Workspace name is required.");
+    const now = timestamp();
+
+    this.transaction(() => {
+      this.db
+        .prepare("UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?")
+        .run(name, now, id);
+      this.db
+        .prepare("UPDATE nodes SET title = ?, updated_at = ? WHERE id = ?")
+        .run(name, now, workspace.rootNodeId);
+    });
+
+    return this.getWorkspace(id);
+  }
+
+  deleteWorkspace(id: string): { deleted: string } {
+    this.getWorkspace(id);
+    this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
+    return { deleted: id };
+  }
+
   getNode(id: string): OutlineNode {
     const row = this.db
       .prepare("SELECT * FROM nodes WHERE id = ? AND deleted_at IS NULL")
@@ -306,6 +330,33 @@ export class OutlinerService {
       .prepare("INSERT INTO tags (id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(id, workspaceId, normalized, tagColor, now);
     return rowToTag(this.db.prepare("SELECT * FROM tags WHERE id = ?").get(id) as Row);
+  }
+
+  getTag(id: string): Tag {
+    const row = this.db.prepare("SELECT * FROM tags WHERE id = ?").get(id) as Row | undefined;
+    if (!row) throw new NotFoundError(`Tag not found: ${id}`);
+    return rowToTag(row);
+  }
+
+  updateTag(id: string, input: { name?: string; color?: string }): Tag {
+    const tag = this.getTag(id);
+    const name = input.name?.trim().replace(/^#/, "");
+    if (!name) throw new ValidationError("Tag name is required.");
+    const duplicate = this.db
+      .prepare("SELECT id FROM tags WHERE workspace_id = ? AND name = ? AND id != ?")
+      .get(tag.workspaceId, name, id) as Row | undefined;
+    if (duplicate) throw new ValidationError(`Tag already exists: ${name}`);
+
+    this.db
+      .prepare("UPDATE tags SET name = ?, color = ? WHERE id = ?")
+      .run(name, input.color ?? tag.color, id);
+    return this.getTag(id);
+  }
+
+  deleteTag(id: string): { deleted: string } {
+    this.getTag(id);
+    this.db.prepare("DELETE FROM tags WHERE id = ?").run(id);
+    return { deleted: id };
   }
 
   setNodeTag(nodeId: string, tagName: string): Tag {

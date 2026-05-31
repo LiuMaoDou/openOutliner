@@ -19,6 +19,7 @@ import {
   apiPost,
   apiText,
   type OutlineTreeNode,
+  type Tag,
   type Workspace
 } from "./api";
 
@@ -35,6 +36,8 @@ export function App() {
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [tagName, setTagName] = useState("");
+  const [managedTagName, setManagedTagName] = useState("");
+  const [tags, setTags] = useState<Tag[]>([]);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -42,14 +45,27 @@ export function App() {
   const loadWorkspaces = useCallback(async () => {
     const next = await apiGet<Workspace[]>("/api/workspaces");
     setWorkspaces(next);
-    setWorkspaceId(current => current || next[0]?.id || "");
+    setWorkspaceId(current => (current && next.some(workspace => workspace.id === current) ? current : next[0]?.id || ""));
+    return next;
   }, []);
 
   const loadTree = useCallback(async (id: string) => {
-    if (!id) return;
+    if (!id) {
+      setTree(null);
+      setSelectedId("");
+      return;
+    }
     const next = await apiGet<OutlineTreeNode>(`/api/workspaces/${id}/tree`);
     setTree(next);
     setSelectedId(current => current || next.children[0]?.id || next.id);
+  }, []);
+
+  const loadTags = useCallback(async (id: string) => {
+    if (!id) {
+      setTags([]);
+      return;
+    }
+    setTags(await apiGet<Tag[]>(`/api/tags?workspaceId=${id}`));
   }, []);
 
   useEffect(() => {
@@ -59,6 +75,10 @@ export function App() {
   useEffect(() => {
     loadTree(workspaceId).catch(toError(setError));
   }, [loadTree, workspaceId]);
+
+  useEffect(() => {
+    loadTags(workspaceId).catch(toError(setError));
+  }, [loadTags, workspaceId]);
 
   const flatNodes = useMemo(() => (tree ? flatten(tree) : []), [tree]);
   const nodeMap = useMemo(() => {
@@ -139,11 +159,63 @@ export function App() {
     setSelectedId("");
   };
 
+  const updateWorkspaceName = async (workspace: Workspace, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const updated = await apiPatch<Workspace>(`/api/workspaces/${workspace.id}`, { name: trimmed });
+    setWorkspaces(current => current.map(item => (item.id === updated.id ? updated : item)));
+    if (updated.id === workspaceId) await loadTree(updated.id);
+  };
+
+  const updateWorkspaceDraft = (id: string, name: string) => {
+    setWorkspaces(current => current.map(workspace => (workspace.id === id ? { ...workspace, name } : workspace)));
+  };
+
+  const deleteWorkspace = async (workspace: Workspace) => {
+    if (!window.confirm(`Delete workspace "${workspace.name}"?`)) return;
+    await apiDelete(`/api/workspaces/${workspace.id}`);
+    await loadWorkspaces();
+    if (workspace.id === workspaceId) {
+      setTree(null);
+      setSelectedId("");
+    }
+  };
+
   const addTag = async () => {
     if (!selectedNode || !tagName.trim()) return;
     await apiPost(`/api/nodes/${selectedNode.id}/tags`, { name: tagName.trim() });
     setTagName("");
+    await loadTags(workspaceId);
     await refresh(selectedNode.id);
+  };
+
+  const createManagedTag = async () => {
+    if (!workspaceId || !managedTagName.trim()) return;
+    await apiPost<Tag>("/api/tags", { workspaceId, name: managedTagName.trim() });
+    setManagedTagName("");
+    await loadTags(workspaceId);
+  };
+
+  const updateTagDraft = (id: string, name: string) => {
+    setTags(current => current.map(tag => (tag.id === id ? { ...tag, name } : tag)));
+  };
+
+  const saveTag = async (tag: Tag) => {
+    const name = tag.name.trim();
+    if (!name) {
+      await loadTags(workspaceId);
+      return;
+    }
+    await apiPatch<Tag>(`/api/tags/${tag.id}`, { name });
+    await loadTags(workspaceId);
+    await refresh();
+  };
+
+  const deleteTag = async (tag: Tag) => {
+    if (!window.confirm(`Delete tag #${tag.name}?`)) return;
+    await apiDelete(`/api/tags/${tag.id}`);
+    await loadTags(workspaceId);
+    await refresh();
   };
 
   const exportFile = async (format: "markdown" | "opml") => {
@@ -185,17 +257,38 @@ export function App() {
         <div className="workspaceGroup">
           <div className="sidebarLabel">Workspaces</div>
           {workspaces.map(workspace => (
-            <button
+            <div
               className={workspace.id === workspaceId ? "workspaceItem active" : "workspaceItem"}
               key={workspace.id}
-              type="button"
               onClick={() => {
                 setWorkspaceId(workspace.id);
                 setSelectedId("");
               }}
             >
-              <span>{workspace.name}</span>
-            </button>
+              <input
+                value={workspace.name}
+                onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
+                onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
+                onFocus={() => {
+                  setWorkspaceId(workspace.id);
+                  setSelectedId("");
+                }}
+                onKeyDown={event => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+              <button
+                className="workspaceDeleteButton"
+                type="button"
+                title="Delete workspace"
+                onClick={event => {
+                  event.stopPropagation();
+                  deleteWorkspace(workspace).catch(toError(setError));
+                }}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           ))}
         </div>
       </aside>
@@ -233,9 +326,6 @@ export function App() {
               <FileDown size={17} />
               <span>OPML</span>
             </button>
-            <button title="Comments" type="button" onClick={() => setIsInspectorOpen(open => !open)}>
-              <PanelRight size={17} />
-            </button>
           </div>
         </header>
 
@@ -248,7 +338,7 @@ export function App() {
           </div>
         )}
 
-        <section className="contentGrid">
+        <section className={isInspectorOpen ? "contentGrid" : "contentGrid commentsClosed"}>
           <div className="outlineSurface">
             <div className="outlineHeader">
               <h1>{tree?.title ?? "OpenOutliner"}</h1>
@@ -293,7 +383,14 @@ export function App() {
                 <div>
                   <span>Comments</span>
                 </div>
-                <PanelRight size={17} />
+                <button
+                  className="iconButton commentsHideButton"
+                  type="button"
+                  title="Hide comments"
+                  onClick={() => setIsInspectorOpen(false)}
+                >
+                  <PanelRight size={17} />
+                </button>
               </div>
               {selectedNode ? (
                 <>
@@ -341,7 +438,58 @@ export function App() {
               ) : (
                 <div className="emptyInspector">No node selected</div>
               )}
+              <div className="inspectorSection">
+                <label>Manage tags</label>
+                <div className="tagManagerList">
+                  {tags.map(tag => (
+                    <div className="tagManagerRow" key={tag.id}>
+                      <span>#</span>
+                      <input
+                        value={tag.name}
+                        onChange={event => updateTagDraft(tag.id, event.target.value)}
+                        onBlur={() => saveTag(tag).catch(toError(setError))}
+                        onKeyDown={event => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        title="Delete tag"
+                        onClick={() => deleteTag(tag).catch(toError(setError))}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="tagInput">
+                  <TagIcon size={15} />
+                  <input
+                    value={managedTagName}
+                    onChange={event => setManagedTagName(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === "Enter") createManagedTag().catch(toError(setError));
+                    }}
+                    placeholder="New tag"
+                  />
+                  <button type="button" onClick={() => createManagedTag().catch(toError(setError))}>
+                    <Plus size={15} />
+                    <span>Add</span>
+                  </button>
+                </div>
+              </div>
             </aside>
+          )}
+          {!isInspectorOpen && (
+            <button
+              className="commentsRestoreButton"
+              type="button"
+              title="Show comments"
+              onClick={() => setIsInspectorOpen(true)}
+            >
+              <PanelRight size={15} />
+              <span>Comments</span>
+            </button>
           )}
         </section>
       </main>

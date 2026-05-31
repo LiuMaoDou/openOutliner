@@ -168,6 +168,7 @@ textarea:focus-visible {
   height: 34px;
   color: var(--primary-foreground);
   background: var(--primary);
+  font-weight: 700;
   box-shadow: var(--shadow-sm);
 }
 
@@ -191,19 +192,35 @@ textarea:focus-visible {
 }
 
 .workspaceItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 4px;
   justify-content: flex-start;
   width: 100%;
   min-height: 34px;
-  padding: 0 10px;
+  padding: 0 4px 0 10px;
   color: #3f3f46;
   text-align: left;
   background: transparent;
 }
 
-.workspaceItem span {
+.workspaceItem input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  outline: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspaceItem input:focus-visible {
+  box-shadow: none;
 }
 
 .workspaceItem:hover {
@@ -215,7 +232,33 @@ textarea:focus-visible {
   color: var(--foreground);
   background: var(--background);
   border-color: var(--border);
+  font-weight: 650;
   box-shadow: var(--shadow-sm);
+}
+
+.workspaceDeleteButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  opacity: 0;
+}
+
+.workspaceItem:hover .workspaceDeleteButton,
+.workspaceItem.active .workspaceDeleteButton,
+.workspaceDeleteButton:focus-visible {
+  opacity: 1;
+}
+
+.workspaceDeleteButton:hover {
+  color: var(--destructive);
+  background: var(--background);
+  border-color: var(--border);
 }
 
 .mainPane {
@@ -337,8 +380,13 @@ textarea:focus-visible {
 .contentGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 332px;
+  position: relative;
   min-height: 0;
   flex: 1;
+}
+
+.contentGrid.commentsClosed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .outlineSurface {
@@ -539,7 +587,12 @@ textarea:focus-visible {
 
 .inspectorHeader span {
   color: var(--foreground);
-  font-weight: 650;
+  font-weight: 700;
+}
+
+.commentsHideButton {
+  width: 30px;
+  height: 30px;
 }
 
 .inspectorSection {
@@ -611,6 +664,85 @@ textarea:focus-visible {
 .tagInput button span {
   font-size: 0.78rem;
   font-weight: 600;
+}
+
+.tagManagerList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tagManagerRow {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 4px 0 10px;
+  color: var(--muted-foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.tagManagerRow input {
+  min-width: 0;
+  height: 28px;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+
+.tagManagerRow input:focus-visible {
+  box-shadow: none;
+}
+
+.tagManagerRow button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+}
+
+.tagManagerRow button:hover {
+  color: var(--destructive);
+  background: var(--accent);
+  border-color: var(--border);
+}
+
+.commentsRestoreButton {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--secondary-foreground);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(212, 212, 216, 0.72);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 8px rgba(24, 24, 27, 0.06);
+  backdrop-filter: blur(10px) saturate(1.08);
+  -webkit-backdrop-filter: blur(10px) saturate(1.08);
+}
+
+.commentsRestoreButton:hover {
+  background: var(--background);
+}
+
+.commentsRestoreButton span {
+  font-size: 0.78rem;
+  font-weight: 650;
 }
 
 .emptyInspector {

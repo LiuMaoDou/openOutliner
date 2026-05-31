@@ -54,6 +54,32 @@ describe("OutlinerService", () => {
     expect(tree.children[0].tags[0].name).toBe("project");
     expect(tree.children[0].fieldValues[0].value).toBe("doing");
   });
+
+  it("updates and deletes workspaces", () => {
+    const workspace = service.createWorkspace("Draft");
+    const renamed = service.updateWorkspace(workspace.id, { name: "Personal" });
+
+    expect(renamed.name).toBe("Personal");
+    expect(service.getNode(workspace.rootNodeId).title).toBe("Personal");
+
+    service.deleteWorkspace(workspace.id);
+
+    expect(service.listWorkspaces()).toEqual([]);
+  });
+
+  it("updates and deletes tags", () => {
+    const workspace = service.createWorkspace("Tags");
+    const node = service.createNode({ parentId: workspace.rootNodeId, title: "Tagged" });
+    const tag = service.setNodeTag(node.id, "project");
+    const renamed = service.updateTag(tag.id, { name: "area" });
+
+    expect(renamed.name).toBe("area");
+    expect(service.getTree(workspace.rootNodeId).children[0].tags[0].name).toBe("area");
+
+    service.deleteTag(tag.id);
+
+    expect(service.getTree(workspace.rootNodeId).children[0].tags).toEqual([]);
+  });
 });
 
 describe("import/export", () => {

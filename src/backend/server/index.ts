@@ -65,6 +65,16 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
+  const workspaceMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
+  if (method === "PATCH" && workspaceMatch) {
+    sendJson(res, service.updateWorkspace(workspaceMatch[1], await readJson(req)));
+    return;
+  }
+  if (method === "DELETE" && workspaceMatch) {
+    sendJson(res, service.deleteWorkspace(workspaceMatch[1]));
+    return;
+  }
+
   const nodeChildrenMatch = path.match(/^\/api\/nodes\/([^/]+)\/children$/);
   if (method === "GET" && nodeChildrenMatch) {
     sendJson(res, service.listChildren(nodeChildrenMatch[1]));
@@ -114,6 +124,16 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   if (method === "POST" && path === "/api/tags") {
     const body = await readJson<{ workspaceId: string; name: string; color?: string }>(req);
     sendJson(res, service.createTag(body.workspaceId, body.name, body.color), 201);
+    return;
+  }
+
+  const tagMatch = path.match(/^\/api\/tags\/([^/]+)$/);
+  if (method === "PATCH" && tagMatch) {
+    sendJson(res, service.updateTag(tagMatch[1], await readJson(req)));
+    return;
+  }
+  if (method === "DELETE" && tagMatch) {
+    sendJson(res, service.deleteTag(tagMatch[1]));
     return;
   }
 
