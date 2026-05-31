@@ -451,6 +451,35 @@ textarea:focus-visible {
   border-radius: var(--radius);
 }
 
+.emptyNodeButton,
+.outlineEmptyState {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  color: var(--muted-foreground);
+  border-radius: var(--radius);
+}
+
+.emptyNodeButton {
+  justify-content: flex-start;
+  background: transparent;
+  border: 1px dashed var(--border);
+}
+
+.emptyNodeButton:hover {
+  color: var(--foreground);
+  background: var(--accent);
+  border-color: #d4d4d8;
+}
+
+.outlineEmptyState {
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
 .nodeRow:hover {
   background: var(--accent);
 }

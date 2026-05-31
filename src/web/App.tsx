@@ -119,7 +119,8 @@ export function App() {
   }, [tree]);
   const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
-  const filteredNodes = search.trim()
+  const isSearching = search.trim().length > 0;
+  const filteredNodes = isSearching
     ? flatNodes.filter(({ node }) => `${node.title}\n${node.body}`.toLowerCase().includes(search.toLowerCase()))
     : flatNodes;
 
@@ -144,6 +145,16 @@ export function App() {
       parentId: current.parentId ?? tree?.id,
       title: "",
       position: current.position + 1
+    });
+    await refresh(created.id);
+  };
+
+  const createFirstNode = async () => {
+    if (!tree) return;
+    const created = await apiPost<OutlineTreeNode>("/api/nodes", {
+      parentId: tree.id,
+      title: "",
+      position: 0
     });
     await refresh(created.id);
   };
@@ -391,36 +402,49 @@ export function App() {
               <h1>{tree?.title ?? "OpenOutliner"}</h1>
             </div>
             <div className="outlineList">
-              {filteredNodes.map(({ node, depth }) => (
-                <NodeRow
-                  key={node.id}
-                  node={node}
-                  depth={depth}
-                  selected={selectedId === node.id}
-                  registerInput={element => {
-                    if (element) inputRefs.current.set(node.id, element);
-                    else inputRefs.current.delete(node.id);
-                  }}
-                  onSelect={() => setSelectedId(node.id)}
-                  onPatchLocal={patch => {
-                    setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
-                  }}
-                  onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
-                  onToggle={async patch => {
-                    await patchNode(node.id, patch);
-                    await refresh(node.id);
-                  }}
-                  onCreateAfter={() => createAfter(node).catch(toError(setError))}
-                  onIndent={() => indent(node).catch(toError(setError))}
-                  onOutdent={() => outdent(node).catch(toError(setError))}
-                  onFocusPrevious={() => focusRelative(node, -1)}
-                  onFocusNext={() => focusRelative(node, 1)}
-                  onDelete={async () => {
-                    await apiDelete(`/api/nodes/${node.id}`);
-                    await refresh(flatNodes[flatNodes.findIndex(item => item.node.id === node.id) - 1]?.node.id);
-                  }}
-                />
-              ))}
+              {filteredNodes.length > 0 ? (
+                filteredNodes.map(({ node, depth }) => (
+                  <NodeRow
+                    key={node.id}
+                    node={node}
+                    depth={depth}
+                    selected={selectedId === node.id}
+                    registerInput={element => {
+                      if (element) inputRefs.current.set(node.id, element);
+                      else inputRefs.current.delete(node.id);
+                    }}
+                    onSelect={() => setSelectedId(node.id)}
+                    onPatchLocal={patch => {
+                      setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
+                    }}
+                    onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
+                    onToggle={async patch => {
+                      await patchNode(node.id, patch);
+                      await refresh(node.id);
+                    }}
+                    onCreateAfter={() => createAfter(node).catch(toError(setError))}
+                    onIndent={() => indent(node).catch(toError(setError))}
+                    onOutdent={() => outdent(node).catch(toError(setError))}
+                    onFocusPrevious={() => focusRelative(node, -1)}
+                    onFocusNext={() => focusRelative(node, 1)}
+                    onDelete={async () => {
+                      await apiDelete(`/api/nodes/${node.id}`);
+                      await refresh(flatNodes[flatNodes.findIndex(item => item.node.id === node.id) - 1]?.node.id);
+                    }}
+                  />
+                ))
+              ) : flatNodes.length === 0 && tree ? (
+                <button
+                  className="emptyNodeButton"
+                  type="button"
+                  onClick={() => createFirstNode().catch(toError(setError))}
+                >
+                  <Plus size={16} />
+                  <span>First node</span>
+                </button>
+              ) : (
+                <div className="outlineEmptyState">No matching nodes</div>
+              )}
             </div>
           </div>
 
