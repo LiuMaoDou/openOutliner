@@ -440,8 +440,8 @@ export function App() {
               </div>
               {selectedNode ? (
                 <>
-                  <div className="inspectorSection">
-                    <label>Notes</label>
+                  <div className="notesAlert">
+                    <div className="notesAlertTitle">Notes</div>
                     <textarea
                       value={selectedNode.body}
                       onChange={event =>
