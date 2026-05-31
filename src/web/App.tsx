@@ -71,6 +71,7 @@ export function App() {
     return map;
   }, [tree]);
   const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
+  const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
   const filteredNodes = search.trim()
     ? flatNodes.filter(({ node }) => `${node.title}\n${node.body}`.toLowerCase().includes(search.toLowerCase()))
     : flatNodes;
@@ -168,15 +169,21 @@ export function App() {
   return (
     <div className="appShell">
       <aside className="sidebar">
-        <div className="brand">
-          <FolderTree size={22} />
-          <span>OpenOutliner</span>
+        <div className="sidebarHeader">
+          <div className="brand">
+            <span className="brandMark">
+              <FolderTree size={18} />
+            </span>
+            <span>OpenOutliner</span>
+          </div>
+          <button className="commandButton" type="button" onClick={createWorkspace}>
+            <Plus size={15} />
+            <span>Workspace</span>
+          </button>
         </div>
-        <button className="commandButton" type="button" onClick={createWorkspace}>
-          <Plus size={16} />
-          <span>Workspace</span>
-        </button>
-        <div className="workspaceList">
+
+        <div className="workspaceGroup">
+          <div className="sidebarLabel">Workspaces</div>
           {workspaces.map(workspace => (
             <button
               className={workspace.id === workspaceId ? "workspaceItem active" : "workspaceItem"}
@@ -187,7 +194,7 @@ export function App() {
                 setSelectedId("");
               }}
             >
-              {workspace.name}
+              <span>{workspace.name}</span>
             </button>
           ))}
         </div>
@@ -195,6 +202,10 @@ export function App() {
 
       <main className="mainPane">
         <header className="topbar">
+          <div className="topbarTitle">
+            <span>{selectedWorkspace?.name ?? "Workspace"}</span>
+            <small>{flatNodes.length} nodes</small>
+          </div>
           <div className="searchBox">
             <Search size={17} />
             <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search" />
@@ -241,6 +252,10 @@ export function App() {
           <div className="outlineSurface">
             <div className="outlineHeader">
               <h1>{tree?.title ?? "OpenOutliner"}</h1>
+              <div className="outlineMeta">
+                <span>{filteredNodes.length} visible</span>
+                <span>{selectedNode ? "1 selected" : "No selection"}</span>
+              </div>
             </div>
             <div className="outlineList">
               {filteredNodes.map(({ node, depth }) => (
@@ -279,41 +294,52 @@ export function App() {
           {isInspectorOpen && (
             <aside className="inspector">
               <div className="inspectorHeader">
-                <PanelRight size={18} />
-                <span>Inspector</span>
+                <div>
+                  <span>Inspector</span>
+                  <small>{selectedNode?.title || "No node selected"}</small>
+                </div>
+                <PanelRight size={17} />
               </div>
               {selectedNode ? (
                 <>
-                  <textarea
-                    value={selectedNode.body}
-                    onChange={event =>
-                      setTree(current =>
-                        current ? updateTreeNode(current, selectedNode.id, { body: event.target.value }) : current
-                      )
-                    }
-                    onBlur={event => patchNode(selectedNode.id, { body: event.target.value }).catch(toError(setError))}
-                    placeholder="Notes"
-                  />
-                  <div className="tagList">
-                    {selectedNode.tags.map(tag => (
-                      <span className="tagPill" key={tag.id} style={{ borderColor: tag.color }}>
-                        #{tag.name}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="tagInput">
-                    <TagIcon size={16} />
-                    <input
-                      value={tagName}
-                      onChange={event => setTagName(event.target.value)}
-                      onKeyDown={event => {
-                        if (event.key === "Enter") addTag().catch(toError(setError));
-                      }}
-                      placeholder="Tag"
+                  <div className="inspectorSection">
+                    <label>Notes</label>
+                    <textarea
+                      value={selectedNode.body}
+                      onChange={event =>
+                        setTree(current =>
+                          current ? updateTreeNode(current, selectedNode.id, { body: event.target.value }) : current
+                        )
+                      }
+                      onBlur={event =>
+                        patchNode(selectedNode.id, { body: event.target.value }).catch(toError(setError))
+                      }
+                      placeholder="Add node details"
                     />
-                    <button type="button" onClick={() => addTag().catch(toError(setError))}>
-                      <Plus size={16} />
-                    </button>
+                  </div>
+                  <div className="inspectorSection">
+                    <label>Tags</label>
+                    <div className="tagList">
+                      {selectedNode.tags.map(tag => (
+                        <span className="tagPill" key={tag.id} style={{ "--tag-color": tag.color } as React.CSSProperties}>
+                          #{tag.name}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="tagInput">
+                      <TagIcon size={15} />
+                      <input
+                        value={tagName}
+                        onChange={event => setTagName(event.target.value)}
+                        onKeyDown={event => {
+                          if (event.key === "Enter") addTag().catch(toError(setError));
+                        }}
+                        placeholder="Tag"
+                      />
+                      <button type="button" onClick={() => addTag().catch(toError(setError))}>
+                        <Plus size={15} />
+                      </button>
+                    </div>
                   </div>
                 </>
               ) : (
@@ -406,7 +432,7 @@ function NodeRow({
       />
       <div className="nodeTags">
         {node.tags.map(tag => (
-          <span key={tag.id} style={{ borderColor: tag.color }}>
+          <span key={tag.id} style={{ "--tag-color": tag.color } as React.CSSProperties}>
             #{tag.name}
           </span>
         ))}
