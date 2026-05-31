@@ -547,10 +547,41 @@ textarea:focus-visible {
   gap: 8px;
 }
 
-.inspectorSection label {
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inspectorSection label,
+.sectionHeader label {
   color: var(--muted-foreground);
   font-size: 0.78rem;
   font-weight: 620;
+}
+
+.sectionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  color: var(--secondary-foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 7px;
+  box-shadow: var(--shadow-sm);
+}
+
+.sectionButton:hover {
+  background: var(--accent);
+}
+
+.sectionButton span {
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .inspector textarea {
@@ -574,7 +605,7 @@ textarea:focus-visible {
 
 .tagInput {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 30px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
   height: 36px;
@@ -596,14 +627,20 @@ textarea:focus-visible {
 }
 
 .tagInput button {
-  width: 28px;
+  min-width: 58px;
   height: 28px;
+  padding: 0 8px;
   color: var(--primary-foreground);
   background: var(--primary);
 }
 
 .tagInput button:hover {
   background: #27272a;
+}
+
+.tagInput button span {
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .emptyInspector {

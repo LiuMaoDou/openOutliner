@@ -146,6 +146,11 @@ export function App() {
     await refresh(selectedNode.id);
   };
 
+  const saveSelectedNodeNotes = async () => {
+    if (!selectedNode) return;
+    await patchNode(selectedNode.id, { body: selectedNode.body });
+  };
+
   const exportFile = async (format: "markdown" | "opml") => {
     if (!workspaceId) return;
     const extension = format === "markdown" ? "md" : "opml";
@@ -303,7 +308,17 @@ export function App() {
               {selectedNode ? (
                 <>
                   <div className="inspectorSection">
-                    <label>Notes</label>
+                    <div className="sectionHeader">
+                      <label>Notes</label>
+                      <button
+                        className="sectionButton"
+                        type="button"
+                        onClick={() => saveSelectedNodeNotes().catch(toError(setError))}
+                      >
+                        <Check size={14} />
+                        <span>Save</span>
+                      </button>
+                    </div>
                     <textarea
                       value={selectedNode.body}
                       onChange={event =>
@@ -338,6 +353,7 @@ export function App() {
                       />
                       <button type="button" onClick={() => addTag().catch(toError(setError))}>
                         <Plus size={15} />
+                        <span>Add</span>
                       </button>
                     </div>
                   </div>
