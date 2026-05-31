@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { openDatabase } from "../db/database.js";
 import { exportMarkdown, importMarkdown } from "../importExport/markdown.js";
@@ -22,6 +22,9 @@ const server = createServer(async (req, res) => {
   try {
     if (req.url?.startsWith("/api/")) {
       await routeApi(req, res);
+      return;
+    }
+    if (servePersonAsset(req, res)) {
       return;
     }
     serveStatic(req, res);
@@ -218,6 +221,28 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
   createReadStream(safeTarget).pipe(res);
 }
 
+function servePersonAsset(req: IncomingMessage, res: ServerResponse): boolean {
+  const requested = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+  if (!requested.startsWith("/person/")) return false;
+
+  const assetDir = resolve(process.cwd(), "person");
+  const relativePath = decodeURIComponent(requested.slice("/person/".length));
+  const target = resolve(assetDir, relativePath);
+
+  const insideAssetDir = target === assetDir || target.startsWith(`${assetDir}${sep}`);
+  if (!insideAssetDir || !existsSync(target) || !statSync(target).isFile()) {
+    sendJson(res, { error: "Asset not found." }, 404);
+    return true;
+  }
+
+  res.writeHead(200, {
+    "content-type": contentType(target),
+    "cache-control": "public, max-age=31536000, immutable"
+  });
+  createReadStream(target).pipe(res);
+  return true;
+}
+
 function contentType(filePath: string): string {
   switch (extname(filePath)) {
     case ".html":
@@ -228,6 +253,10 @@ function contentType(filePath: string): string {
       return "text/css; charset=utf-8";
     case ".svg":
       return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".otf":
+      return "font/otf";
     default:
       return "application/octet-stream";
   }
