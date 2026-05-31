@@ -1,0 +1,48 @@
+{
+  "name": "openoutliner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first outline notes app with MCP and CLI access.",
+  "bin": {
+    "openoutliner": "./dist/backend/cli/index.js",
+    "openoutliner-mcp": "./dist/backend/mcp/server.js"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm:server:dev\" \"npm:web:dev\"",
+    "server:dev": "tsx watch src/backend/server/index.ts",
+    "web:dev": "vite --host 127.0.0.1",
+    "server": "tsx src/backend/server/index.ts",
+    "start": "node dist/backend/server/index.js",
+    "cli": "tsx src/backend/cli/index.ts",
+    "mcp": "tsx src/backend/mcp/server.ts",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p tsconfig.node.json",
+    "build:web": "vite build",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "commander": "^14.0.2",
+    "concurrently": "^9.2.1",
+    "fast-xml-parser": "^5.3.2",
+    "lucide-react": "^0.555.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "vite": "^7.2.4",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  },
+  "engines": {
+    "node": ">=25.0.0"
+  }
+}

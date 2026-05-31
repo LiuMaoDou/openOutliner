@@ -1,0 +1,89 @@
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+export type OpenOutlinerDb = DatabaseSync;
+
+export function getDefaultDbPath(): string {
+  return process.env.OPENOUTLINER_DB ?? resolve(process.cwd(), "data", "openoutliner.sqlite");
+}
+
+export function openDatabase(dbPath = getDefaultDbPath()): OpenOutlinerDb {
+  if (dbPath !== ":memory:") {
+    mkdirSync(dirname(dbPath), { recursive: true });
+  }
+
+  const db = new DatabaseSync(dbPath);
+  db.exec("PRAGMA foreign_keys = ON;");
+  if (dbPath !== ":memory:") {
+    db.exec("PRAGMA journal_mode = WAL;");
+  }
+  migrate(db);
+  return db;
+}
+
+function migrate(db: OpenOutlinerDb): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      root_node_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS nodes (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      parent_id TEXT REFERENCES nodes(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL DEFAULT 0,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      done INTEGER NOT NULL DEFAULT 0,
+      collapsed INTEGER NOT NULL DEFAULT 0,
+      deleted_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_nodes_workspace_parent
+      ON nodes(workspace_id, parent_id, position);
+
+    CREATE INDEX IF NOT EXISTS idx_nodes_search
+      ON nodes(workspace_id, title, body);
+
+    CREATE TABLE IF NOT EXISTS tags (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(workspace_id, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS node_tags (
+      node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      PRIMARY KEY(node_id, tag_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS field_definitions (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('text', 'number', 'date', 'checkbox', 'select')),
+      options TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(tag_id, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS field_values (
+      node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      field_id TEXT NOT NULL REFERENCES field_definitions(id) ON DELETE CASCADE,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(node_id, field_id)
+    );
+  `);
+}
