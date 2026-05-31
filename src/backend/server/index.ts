@@ -277,6 +277,8 @@ function contentType(filePath: string): string {
       return "image/png";
     case ".otf":
       return "font/otf";
+    case ".ttf":
+      return "font/ttf";
     default:
       return "application/octet-stream";
   }
