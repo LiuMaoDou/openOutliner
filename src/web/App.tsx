@@ -407,7 +407,7 @@ function NodeRow({
         aria-pressed={node.done}
         onClick={() => onToggle({ done: !node.done })}
       >
-        {node.done && <Check size={13} strokeWidth={3} />}
+        {node.done && <Check size={15} strokeWidth={3} />}
       </button>
       <input
         ref={registerInput}
