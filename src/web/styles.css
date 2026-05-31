@@ -226,8 +226,7 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.topbarTitle small,
-.outlineMeta {
+.topbarTitle small {
   color: var(--muted-foreground);
   font-size: 0.78rem;
 }
@@ -342,24 +341,6 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.outlineMeta {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-.outlineMeta span {
-  display: inline-flex;
-  align-items: center;
-  height: 24px;
-  padding: 0 8px;
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-}
-
 .outlineList {
   max-width: 980px;
   margin: 0 auto;
@@ -383,9 +364,11 @@ textarea:focus-visible {
 }
 
 .nodeRow.selected {
-  background: #f8fafc;
-  border-color: #d4d4d8;
-  box-shadow: inset 3px 0 0 #18181b;
+  background: rgba(255, 255, 255, 0.58);
+  border-color: rgba(212, 212, 216, 0.68);
+  box-shadow: 0 1px 8px rgba(24, 24, 27, 0.04);
+  backdrop-filter: blur(10px) saturate(1.08);
+  -webkit-backdrop-filter: blur(10px) saturate(1.08);
 }
 
 .nodeRow.completed .nodeTitle {
@@ -490,14 +473,13 @@ textarea:focus-visible {
 
 .nodeTags span,
 .tagPill {
-  --tag-color: #71717a;
   display: inline-flex;
   align-items: center;
   min-height: 22px;
   padding: 0 7px;
-  color: #27272a;
-  background: color-mix(in srgb, var(--tag-color) 10%, white);
-  border: 1px solid color-mix(in srgb, var(--tag-color) 34%, var(--border));
+  color: #3f3f46;
+  background: #f4f4f5;
+  border: 1px solid #d4d4d8;
   border-radius: 999px;
   font-size: 0.76rem;
 }
@@ -648,9 +630,6 @@ textarea:focus-visible {
     flex-direction: column;
   }
 
-  .outlineMeta {
-    justify-content: flex-start;
-  }
 }
 
 @media (max-width: 640px) {

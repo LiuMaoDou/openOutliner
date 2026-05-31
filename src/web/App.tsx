@@ -252,10 +252,6 @@ export function App() {
           <div className="outlineSurface">
             <div className="outlineHeader">
               <h1>{tree?.title ?? "OpenOutliner"}</h1>
-              <div className="outlineMeta">
-                <span>{filteredNodes.length} visible</span>
-                <span>{selectedNode ? "1 selected" : "No selection"}</span>
-              </div>
             </div>
             <div className="outlineList">
               {filteredNodes.map(({ node, depth }) => (
@@ -320,7 +316,7 @@ export function App() {
                     <label>Tags</label>
                     <div className="tagList">
                       {selectedNode.tags.map(tag => (
-                        <span className="tagPill" key={tag.id} style={{ "--tag-color": tag.color } as React.CSSProperties}>
+                        <span className="tagPill" key={tag.id}>
                           #{tag.name}
                         </span>
                       ))}
@@ -437,7 +433,7 @@ function NodeRow({
       />
       <div className="nodeTags">
         {node.tags.map(tag => (
-          <span key={tag.id} style={{ "--tag-color": tag.color } as React.CSSProperties}>
+          <span key={tag.id}>
             #{tag.name}
           </span>
         ))}
