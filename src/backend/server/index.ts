@@ -53,8 +53,8 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   }
 
   if (method === "POST" && path === "/api/workspaces") {
-    const body = await readJson<{ name?: string }>(req);
-    sendJson(res, service.createWorkspace(body.name?.trim() || "Untitled Workspace"), 201);
+    const body = await readJson<{ name?: string; icon?: string }>(req);
+    sendJson(res, service.createWorkspace(body.name?.trim() || "Untitled Workspace", body.icon), 201);
     return;
   }
 

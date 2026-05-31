@@ -27,6 +27,7 @@ function migrate(db: OpenOutlinerDb): void {
     CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      icon TEXT NOT NULL DEFAULT 'folder-tree',
       root_node_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -86,4 +87,11 @@ function migrate(db: OpenOutlinerDb): void {
       PRIMARY KEY(node_id, field_id)
     );
   `);
+  ensureColumn(db, "workspaces", "icon", "TEXT NOT NULL DEFAULT 'folder-tree'");
+}
+
+function ensureColumn(db: OpenOutlinerDb, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: unknown }>;
+  if (columns.some(row => row.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
 }

@@ -11,6 +11,7 @@ import {
   Trash2,
   Upload
 } from "lucide-react";
+import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   apiDelete,
@@ -31,6 +32,8 @@ interface FlatNode {
 interface LoadTreeOptions {
   preserveSelection?: boolean;
 }
+
+const iconNameSet = new Set<string>(iconNames);
 
 export function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -189,7 +192,10 @@ export function App() {
   }, []);
 
   const createWorkspace = async () => {
-    const created = await apiPost<Workspace>("/api/workspaces", { name: "Untitled Workspace" });
+    const created = await apiPost<Workspace>("/api/workspaces", {
+      name: "Untitled Workspace",
+      icon: randomWorkspaceIcon()
+    });
     await loadWorkspaces();
     selectWorkspace(created.id);
   };
@@ -300,6 +306,14 @@ export function App() {
               key={workspace.id}
               onClick={() => selectWorkspace(workspace.id)}
             >
+              <span className="workspaceIcon">
+                <DynamicIcon
+                  name={workspaceIconName(workspace.icon)}
+                  fallback={() => <FolderTree size={15} />}
+                  size={15}
+                  strokeWidth={2.2}
+                />
+              </span>
               <input
                 value={workspace.name}
                 onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
@@ -664,6 +678,14 @@ function updateTreeNode(
 
 function hasNode(root: OutlineTreeNode, id: string): boolean {
   return root.id === id || root.children.some(child => hasNode(child, id));
+}
+
+function randomWorkspaceIcon(): IconName {
+  return iconNames[Math.floor(Math.random() * iconNames.length)] ?? "folder-tree";
+}
+
+function workspaceIconName(icon: string): IconName {
+  return iconNameSet.has(icon) ? (icon as IconName) : "folder-tree";
 }
 
 function toError(setError: (message: string) => void) {

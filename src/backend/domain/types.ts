@@ -3,6 +3,7 @@ export type FieldType = "text" | "number" | "date" | "checkbox" | "select";
 export interface Workspace {
   id: string;
   name: string;
+  icon: string;
   rootNodeId: string;
   createdAt: string;
   updatedAt: string;

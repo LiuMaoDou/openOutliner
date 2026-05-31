@@ -32,7 +32,8 @@ workspace
   .command("create")
   .description("Create a workspace")
   .requiredOption("--name <name>", "Workspace name")
-  .action(options => print(getService().createWorkspace(options.name)));
+  .option("--icon <icon>", "Lucide icon name")
+  .action(options => print(getService().createWorkspace(options.name, options.icon)));
 
 const node = program.command("node").description("Manage outline nodes");
 

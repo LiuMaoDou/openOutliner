@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase, type OpenOutlinerDb } from "../src/backend/db/database.js";
 import { exportMarkdown, importMarkdown } from "../src/backend/importExport/markdown.js";
@@ -56,10 +57,12 @@ describe("OutlinerService", () => {
   });
 
   it("updates and deletes workspaces", () => {
-    const workspace = service.createWorkspace("Draft");
+    const workspace = service.createWorkspace("Draft", "rocket");
     const renamed = service.updateWorkspace(workspace.id, { name: "Personal" });
 
+    expect(workspace.icon).toBe("rocket");
     expect(renamed.name).toBe("Personal");
+    expect(renamed.icon).toBe("rocket");
     expect(service.getNode(workspace.rootNodeId).title).toBe("Personal");
 
     service.deleteWorkspace(workspace.id);
@@ -79,6 +82,31 @@ describe("OutlinerService", () => {
     service.deleteTag(tag.id);
 
     expect(service.getTree(workspace.rootNodeId).children[0].tags).toEqual([]);
+  });
+
+  it("migrates older workspaces with default icons", () => {
+    const dbPath = join(tempDir, "old.sqlite");
+    const oldDb = new DatabaseSync(dbPath);
+    oldDb.exec(`
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root_node_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO workspaces (id, name, root_node_id, created_at, updated_at)
+      VALUES ('workspace', 'Old', 'root', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    `);
+    oldDb.close();
+
+    const migratedDb = openDatabase(dbPath);
+    try {
+      const migratedService = new OutlinerService(migratedDb);
+      expect(migratedService.listWorkspaces()[0].icon).toBe("folder-tree");
+    } finally {
+      migratedDb.close();
+    }
   });
 });
 

@@ -16,6 +16,43 @@ type Row = Record<string, unknown>;
 type SqlValue = string | number | bigint | Buffer | null;
 
 const tagColors = ["#266dd3", "#2a9d8f", "#c2410c", "#7c3aed", "#0f766e", "#be123c"];
+const workspaceIcons = [
+  "album",
+  "archive",
+  "badge-check",
+  "book-open",
+  "briefcase-business",
+  "calendar-days",
+  "chart-no-axes-combined",
+  "circle-dot",
+  "clipboard-list",
+  "cloud",
+  "code-xml",
+  "compass",
+  "database",
+  "folder-tree",
+  "gem",
+  "goal",
+  "grid-3x3",
+  "heart",
+  "layers",
+  "layout-dashboard",
+  "lightbulb",
+  "map",
+  "message-square",
+  "notebook-tabs",
+  "palette",
+  "panel-top",
+  "rocket",
+  "sparkles",
+  "square-pen",
+  "star",
+  "sun",
+  "target",
+  "telescope",
+  "timer",
+  "zap"
+];
 
 export class OutlinerService {
   constructor(private readonly db: OpenOutlinerDb) {}
@@ -50,17 +87,18 @@ export class OutlinerService {
       .map(rowToWorkspace);
   }
 
-  createWorkspace(name: string): Workspace {
+  createWorkspace(name: string, icon?: string): Workspace {
     const now = timestamp();
     const workspaceId = randomUUID();
     const rootNodeId = randomUUID();
+    const workspaceIcon = normalizeWorkspaceIcon(icon);
 
     this.transaction(() => {
       this.db
         .prepare(
-          "INSERT INTO workspaces (id, name, root_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+          "INSERT INTO workspaces (id, name, icon, root_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
         )
-        .run(workspaceId, name, rootNodeId, now, now);
+        .run(workspaceId, name, workspaceIcon, rootNodeId, now, now);
       this.db
         .prepare(
           `INSERT INTO nodes
@@ -467,6 +505,7 @@ function rowToWorkspace(row: Row): Workspace {
   return {
     id: text(row.id),
     name: text(row.name),
+    icon: text(row.icon) || "folder-tree",
     rootNodeId: text(row.root_node_id),
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at)
@@ -546,4 +585,10 @@ function hash(value: string): number {
     result |= 0;
   }
   return result;
+}
+
+function normalizeWorkspaceIcon(icon?: string): string {
+  const value = icon?.trim();
+  if (value && /^[a-z0-9][a-z0-9-]*$/.test(value)) return value;
+  return workspaceIcons[Math.floor(Math.random() * workspaceIcons.length)] ?? "folder-tree";
 }
