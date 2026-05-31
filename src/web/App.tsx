@@ -28,6 +28,10 @@ interface FlatNode {
   depth: number;
 }
 
+interface LoadTreeOptions {
+  preserveSelection?: boolean;
+}
+
 export function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>("");
@@ -40,33 +44,47 @@ export function App() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+  const workspaceIdRef = useRef("");
+  const treeRequestRef = useRef(0);
+  const tagsRequestRef = useRef(0);
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadWorkspaces = useCallback(async () => {
     const next = await apiGet<Workspace[]>("/api/workspaces");
     setWorkspaces(next);
-    setWorkspaceId(current => (current && next.some(workspace => workspace.id === current) ? current : next[0]?.id || ""));
+    setWorkspaceId(current => {
+      const nextId = current && next.some(workspace => workspace.id === current) ? current : next[0]?.id || "";
+      workspaceIdRef.current = nextId;
+      return nextId;
+    });
     return next;
   }, []);
 
-  const loadTree = useCallback(async (id: string) => {
+  const loadTree = useCallback(async (id: string, options: LoadTreeOptions = {}) => {
+    const requestId = ++treeRequestRef.current;
     if (!id) {
       setTree(null);
       setSelectedId("");
       return;
     }
     const next = await apiGet<OutlineTreeNode>(`/api/workspaces/${id}/tree`);
+    if (requestId !== treeRequestRef.current || id !== workspaceIdRef.current) return;
     setTree(next);
-    setSelectedId(current => current || next.children[0]?.id || next.id);
+    setSelectedId(current =>
+      options.preserveSelection && current && hasNode(next, current) ? current : next.children[0]?.id || next.id
+    );
   }, []);
 
   const loadTags = useCallback(async (id: string) => {
+    const requestId = ++tagsRequestRef.current;
     if (!id) {
       setTags([]);
       return;
     }
-    setTags(await apiGet<Tag[]>(`/api/tags?workspaceId=${id}`));
+    const next = await apiGet<Tag[]>(`/api/tags?workspaceId=${id}`);
+    if (requestId !== tagsRequestRef.current || id !== workspaceIdRef.current) return;
+    setTags(next);
   }, []);
 
   useEffect(() => {
@@ -103,7 +121,7 @@ export function App() {
 
   const refresh = useCallback(
     async (focusId?: string) => {
-      await loadTree(workspaceId);
+      await loadTree(workspaceId, { preserveSelection: true });
       if (focusId) {
         setSelectedId(focusId);
         window.setTimeout(() => inputRefs.current.get(focusId)?.focus(), 30);
@@ -157,11 +175,23 @@ export function App() {
     }
   };
 
+  const selectWorkspace = useCallback((id: string) => {
+    if (id === workspaceIdRef.current) return;
+    workspaceIdRef.current = id;
+    treeRequestRef.current += 1;
+    tagsRequestRef.current += 1;
+    setWorkspaceId(id);
+    setTree(null);
+    setSelectedId("");
+    setTags([]);
+    setTagName("");
+    setManagedTagName("");
+  }, []);
+
   const createWorkspace = async () => {
     const created = await apiPost<Workspace>("/api/workspaces", { name: "Untitled Workspace" });
     await loadWorkspaces();
-    setWorkspaceId(created.id);
-    setSelectedId("");
+    selectWorkspace(created.id);
   };
 
   const updateWorkspaceName = async (workspace: Workspace, name: string) => {
@@ -169,7 +199,7 @@ export function App() {
     if (!trimmed) return;
     const updated = await apiPatch<Workspace>(`/api/workspaces/${workspace.id}`, { name: trimmed });
     setWorkspaces(current => current.map(item => (item.id === updated.id ? updated : item)));
-    if (updated.id === workspaceId) await loadTree(updated.id);
+    if (updated.id === workspaceIdRef.current) await loadTree(updated.id, { preserveSelection: true });
   };
 
   const updateWorkspaceDraft = (id: string, name: string) => {
@@ -181,8 +211,11 @@ export function App() {
     await apiDelete(`/api/workspaces/${workspace.id}`);
     await loadWorkspaces();
     if (workspace.id === workspaceId) {
+      treeRequestRef.current += 1;
+      tagsRequestRef.current += 1;
       setTree(null);
       setSelectedId("");
+      setTags([]);
     }
   };
 
@@ -265,19 +298,13 @@ export function App() {
             <div
               className={workspace.id === workspaceId ? "workspaceItem active" : "workspaceItem"}
               key={workspace.id}
-              onClick={() => {
-                setWorkspaceId(workspace.id);
-                setSelectedId("");
-              }}
+              onClick={() => selectWorkspace(workspace.id)}
             >
               <input
                 value={workspace.name}
                 onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
                 onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
-                onFocus={() => {
-                  setWorkspaceId(workspace.id);
-                  setSelectedId("");
-                }}
+                onFocus={() => selectWorkspace(workspace.id)}
                 onKeyDown={event => {
                   if (event.key === "Enter") event.currentTarget.blur();
                 }}
@@ -633,6 +660,10 @@ function updateTreeNode(
     ...root,
     children: root.children.map(child => updateTreeNode(child, id, patch))
   };
+}
+
+function hasNode(root: OutlineTreeNode, id: string): boolean {
+  return root.id === id || root.children.some(child => hasNode(child, id));
 }
 
 function toError(setError: (message: string) => void) {
