@@ -400,6 +400,14 @@ textarea:focus-visible {
   border-color: var(--border);
 }
 
+.disclosureButton:hover:not(:disabled),
+.disclosureButton:focus-visible {
+  color: var(--foreground);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .iconButton.danger {
   color: var(--destructive);
   opacity: 0;

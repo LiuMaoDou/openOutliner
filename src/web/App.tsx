@@ -387,7 +387,7 @@ function NodeRow({
   return (
     <div className={selected ? "nodeRow selected" : "nodeRow"} style={{ "--depth": depth } as React.CSSProperties}>
       <button
-        className="iconButton"
+        className="iconButton disclosureButton"
         type="button"
         title={node.collapsed ? "Expand" : "Collapse"}
         disabled={node.children.length === 0}
