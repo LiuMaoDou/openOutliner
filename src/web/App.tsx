@@ -39,6 +39,7 @@ export function App() {
   const [managedTagName, setManagedTagName] = useState("");
   const [tags, setTags] = useState<Tag[]>([]);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
+  const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -79,6 +80,10 @@ export function App() {
   useEffect(() => {
     loadTags(workspaceId).catch(toError(setError));
   }, [loadTags, workspaceId]);
+
+  useEffect(() => {
+    setIsTagManagerOpen(false);
+  }, [workspaceId]);
 
   const flatNodes = useMemo(() => (tree ? flatten(tree) : []), [tree]);
   const nodeMap = useMemo(() => {
@@ -438,45 +443,58 @@ export function App() {
               ) : (
                 <div className="emptyInspector">No node selected</div>
               )}
-              <div className="inspectorSection">
-                <label>Manage tags</label>
-                <div className="tagManagerList">
-                  {tags.map(tag => (
-                    <div className="tagManagerRow" key={tag.id}>
-                      <span>#</span>
+              <div className="inspectorSection tagManagerSection">
+                <button
+                  className="tagManagerToggle"
+                  type="button"
+                  aria-expanded={isTagManagerOpen}
+                  onClick={() => setIsTagManagerOpen(open => !open)}
+                >
+                  {isTagManagerOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                  <span>Manage tags</span>
+                  <small>{tags.length}</small>
+                </button>
+                {isTagManagerOpen && (
+                  <>
+                    <div className="tagManagerList">
+                      {tags.map(tag => (
+                        <div className="tagManagerRow" key={tag.id}>
+                          <span>#</span>
+                          <input
+                            value={tag.name}
+                            onChange={event => updateTagDraft(tag.id, event.target.value)}
+                            onBlur={() => saveTag(tag).catch(toError(setError))}
+                            onKeyDown={event => {
+                              if (event.key === "Enter") event.currentTarget.blur();
+                            }}
+                          />
+                          <button
+                            type="button"
+                            title="Delete tag"
+                            onClick={() => deleteTag(tag).catch(toError(setError))}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="tagInput">
+                      <TagIcon size={15} />
                       <input
-                        value={tag.name}
-                        onChange={event => updateTagDraft(tag.id, event.target.value)}
-                        onBlur={() => saveTag(tag).catch(toError(setError))}
+                        value={managedTagName}
+                        onChange={event => setManagedTagName(event.target.value)}
                         onKeyDown={event => {
-                          if (event.key === "Enter") event.currentTarget.blur();
+                          if (event.key === "Enter") createManagedTag().catch(toError(setError));
                         }}
+                        placeholder="New tag"
                       />
-                      <button
-                        type="button"
-                        title="Delete tag"
-                        onClick={() => deleteTag(tag).catch(toError(setError))}
-                      >
-                        <Trash2 size={14} />
+                      <button type="button" onClick={() => createManagedTag().catch(toError(setError))}>
+                        <Plus size={15} />
+                        <span>Add</span>
                       </button>
                     </div>
-                  ))}
-                </div>
-                <div className="tagInput">
-                  <TagIcon size={15} />
-                  <input
-                    value={managedTagName}
-                    onChange={event => setManagedTagName(event.target.value)}
-                    onKeyDown={event => {
-                      if (event.key === "Enter") createManagedTag().catch(toError(setError));
-                    }}
-                    placeholder="New tag"
-                  />
-                  <button type="button" onClick={() => createManagedTag().catch(toError(setError))}>
-                    <Plus size={15} />
-                    <span>Add</span>
-                  </button>
-                </div>
+                  </>
+                )}
               </div>
             </aside>
           )}
