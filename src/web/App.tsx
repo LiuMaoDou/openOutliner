@@ -233,7 +233,7 @@ export function App() {
               <FileDown size={17} />
               <span>OPML</span>
             </button>
-            <button title="Inspector" type="button" onClick={() => setIsInspectorOpen(open => !open)}>
+            <button title="Comments" type="button" onClick={() => setIsInspectorOpen(open => !open)}>
               <PanelRight size={17} />
             </button>
           </div>
@@ -295,8 +295,7 @@ export function App() {
             <aside className="inspector">
               <div className="inspectorHeader">
                 <div>
-                  <span>Inspector</span>
-                  <small>{selectedNode?.title || "No node selected"}</small>
+                  <span>Comments</span>
                 </div>
                 <PanelRight size={17} />
               </div>

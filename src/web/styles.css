@@ -227,8 +227,7 @@ textarea:focus-visible {
 }
 
 .topbarTitle small,
-.outlineMeta,
-.inspectorHeader small {
+.outlineMeta {
   color: var(--muted-foreground);
   font-size: 0.78rem;
 }
@@ -532,13 +531,6 @@ textarea:focus-visible {
 .inspectorHeader span {
   color: var(--foreground);
   font-weight: 650;
-}
-
-.inspectorHeader small {
-  overflow: hidden;
-  max-width: 244px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .inspectorSection {
