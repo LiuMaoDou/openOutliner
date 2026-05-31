@@ -547,41 +547,10 @@ textarea:focus-visible {
   gap: 8px;
 }
 
-.sectionHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.inspectorSection label,
-.sectionHeader label {
+.inspectorSection label {
   color: var(--muted-foreground);
   font-size: 0.78rem;
   font-weight: 620;
-}
-
-.sectionButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 9px;
-  color: var(--secondary-foreground);
-  background: var(--background);
-  border: 1px solid var(--input);
-  border-radius: 7px;
-  box-shadow: var(--shadow-sm);
-}
-
-.sectionButton:hover {
-  background: var(--accent);
-}
-
-.sectionButton span {
-  font-size: 0.78rem;
-  font-weight: 600;
 }
 
 .inspector textarea {
