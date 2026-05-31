@@ -639,31 +639,45 @@ textarea:focus-visible {
 }
 
 .notesAlert {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 10px;
   width: 100%;
-  padding: 12px 14px;
-  color: var(--foreground);
-  background: var(--background);
-  border: 1px solid var(--border);
+  padding: 14px;
+  color: #52525b;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #d4d4d8;
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
 }
 
+.notesAlertIcon {
+  margin-top: 1px;
+  color: #27272a;
+}
+
+.notesAlertContent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 .notesAlertTitle {
-  color: var(--foreground);
+  color: #18181b;
   font-size: var(--inspector-font-size);
-  font-weight: 650;
+  font-weight: 700;
   line-height: 1.35;
 }
 
 .notesAlert textarea {
-  min-height: 156px;
+  min-height: 128px;
   padding: 0;
+  color: #52525b;
   background: transparent;
   border: 0;
   border-radius: 0;
+  line-height: 1.5;
   box-shadow: none;
 }
 

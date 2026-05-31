@@ -1,5 +1,6 @@
 import {
   Check,
+  CircleCheck,
   ChevronDown,
   ChevronRight,
   FileDown,
@@ -441,19 +442,22 @@ export function App() {
               {selectedNode ? (
                 <>
                   <div className="notesAlert">
-                    <div className="notesAlertTitle">Notes</div>
-                    <textarea
-                      value={selectedNode.body}
-                      onChange={event =>
-                        setTree(current =>
-                          current ? updateTreeNode(current, selectedNode.id, { body: event.target.value }) : current
-                        )
-                      }
-                      onBlur={event =>
-                        patchNode(selectedNode.id, { body: event.target.value }).catch(toError(setError))
-                      }
-                      placeholder="Add node details"
-                    />
+                    <CircleCheck className="notesAlertIcon" size={18} strokeWidth={2.2} />
+                    <div className="notesAlertContent">
+                      <div className="notesAlertTitle">Notes</div>
+                      <textarea
+                        value={selectedNode.body}
+                        onChange={event =>
+                          setTree(current =>
+                            current ? updateTreeNode(current, selectedNode.id, { body: event.target.value }) : current
+                          )
+                        }
+                        onBlur={event =>
+                          patchNode(selectedNode.id, { body: event.target.value }).catch(toError(setError))
+                        }
+                        placeholder="Add node details"
+                      />
+                    </div>
                   </div>
                   <div className="inspectorSection">
                     <label>Tags</label>
