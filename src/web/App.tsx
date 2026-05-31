@@ -384,8 +384,12 @@ function NodeRow({
   onFocusNext: () => void;
   onDelete: () => Promise<void>;
 }) {
+  const rowClassName = ["nodeRow", selected ? "selected" : "", node.done ? "completed" : ""]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={selected ? "nodeRow selected" : "nodeRow"} style={{ "--depth": depth } as React.CSSProperties}>
+    <div className={rowClassName} style={{ "--depth": depth } as React.CSSProperties}>
       <button
         className="iconButton disclosureButton"
         type="button"
@@ -398,10 +402,11 @@ function NodeRow({
       <button
         className={node.done ? "checkButton done" : "checkButton"}
         type="button"
-        title={node.done ? "Done" : "Open"}
+        title={node.done ? "Mark open" : "Mark done"}
+        aria-pressed={node.done}
         onClick={() => onToggle({ done: !node.done })}
       >
-        {node.done && <Check size={14} />}
+        {node.done && <Check size={13} strokeWidth={3} />}
       </button>
       <input
         ref={registerInput}
