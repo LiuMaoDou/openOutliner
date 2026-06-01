@@ -1,0 +1,334 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "5bb5eb6839144acabd7e8238d0bc126b8de628eb",
+  "generatedAt": "2026-06-01T15:50:09.772Z",
+  "files": {
+    "AGENTS.md": {
+      "filePath": "AGENTS.md",
+      "contentHash": "a5c2d4254f7b94cb45c7b268a82191b4f9b027b99494935958b1856c68709b56",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 32,
+      "hasStructuralAnalysis": false
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "22374dcd3162a2d9921e0506fc1209d9373357af689ef3b8b338a21e55600a26",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 67,
+      "hasStructuralAnalysis": false
+    },
+    "package.json": {
+      "filePath": "package.json",
+      "contentHash": "065270aac1b9d548659bbd9163380355259c05da1a9a614bd0b0a895fba31ba0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 48,
+      "hasStructuralAnalysis": false
+    },
+    "tsconfig.node.json": {
+      "filePath": "tsconfig.node.json",
+      "contentHash": "ef088f53a43736047380a4c1eec1db84aca20bdca266259bbeea7ba193561b88",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 18,
+      "hasStructuralAnalysis": false
+    },
+    "tsconfig.web.json": {
+      "filePath": "tsconfig.web.json",
+      "contentHash": "3bce9e2266d85821572d6eea0aa077fb6b43ac3d26156aad538c835c7f84f578",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 20,
+      "hasStructuralAnalysis": false
+    },
+    "vite.config.ts": {
+      "filePath": "vite.config.ts",
+      "contentHash": "206047a2f7b48093df3b79df5d863a559abad820d126288d37080270fe6bb108",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 16,
+      "hasStructuralAnalysis": false
+    },
+    "index.html": {
+      "filePath": "index.html",
+      "contentHash": "8cbee11a66f33d97b7042d34395f23db79d2fea8b4bd2e235429e515cc215a7e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 13,
+      "hasStructuralAnalysis": false
+    },
+    "src/backend/domain/types.ts": {
+      "filePath": "src/backend/domain/types.ts",
+      "contentHash": "730e7c14398900535959a4a4c263abcfccbef579d772a0afbfc14a5b7ec460cf",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 69,
+      "hasStructuralAnalysis": false
+    },
+    "src/backend/db/database.ts": {
+      "filePath": "src/backend/db/database.ts",
+      "contentHash": "07120f16f64e29ae043151e931e23b9e042885b64f591256f2bb467577dd14cf",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 97,
+      "hasStructuralAnalysis": false
+    },
+    "src/backend/services/outliner.ts": {
+      "filePath": "src/backend/services/outliner.ts",
+      "contentHash": "7adf5fccade090f557cb1257d6366fb6745a02119cbaff68ce01ab602af774d5",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/backend/db/database.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/domain/types.ts",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 594,
+      "hasStructuralAnalysis": false
+    },
+    "src/backend/importExport/markdown.ts": {
+      "filePath": "src/backend/importExport/markdown.ts",
+      "contentHash": "f5488460893cc095ccc2e4aea17c14a5d6390e5cf95a1772b58d213628109641",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/backend/domain/types.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/services/outliner.ts",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 86,
+      "hasStructuralAnalysis": false
+    },
+    "src/backend/importExport/opml.ts": {
+      "filePath": "src/backend/importExport/opml.ts",
+      "contentHash": "a3f819450f9df63a268f7e5c37b47a992e957c679d7f34082e7e3c8b5c7cbd27",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/backend/domain/types.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/services/outliner.ts",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 77,
+      "hasStructuralAnalysis": false
+    },
+    "src/backend/server/index.ts": {
+      "filePath": "src/backend/server/index.ts",
+      "contentHash": "2c6be52efdf1acc84e32d381b53f92390d404c8c8bfc73040ca4818b41e92466",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/backend/db/database.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/importExport/markdown.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/importExport/opml.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/services/outliner.ts",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 285,
+      "hasStructuralAnalysis": false
+    },
+    "src/backend/cli/index.ts": {
+      "filePath": "src/backend/cli/index.ts",
+      "contentHash": "dad69675a4b67e47e35473faba9c21b5f3e1741ffde9c206711d9c4b470ab2bf",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/backend/db/database.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/importExport/markdown.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/importExport/opml.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/services/outliner.ts",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 188,
+      "hasStructuralAnalysis": false
+    },
+    "src/backend/mcp/server.ts": {
+      "filePath": "src/backend/mcp/server.ts",
+      "contentHash": "0aa5c973c07dc900999b615aca97c2b69a6bc83a7a1e8ead989700b8dbdb4c15",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/backend/db/database.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/importExport/markdown.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/importExport/opml.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/services/outliner.ts",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 216,
+      "hasStructuralAnalysis": false
+    },
+    "src/web/api.ts": {
+      "filePath": "src/web/api.ts",
+      "contentHash": "399f2bf1fee9de4f2d3c0ae53dc35e0180ffdf80df444b54c2bc559b03ed9976",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 88,
+      "hasStructuralAnalysis": false
+    },
+    "src/web/theme.tsx": {
+      "filePath": "src/web/theme.tsx",
+      "contentHash": "899c2c2658d2b16e5bb655a381f8e9f14a0ea580f5dbf71312d1a6f1be551bfe",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 71,
+      "hasStructuralAnalysis": false
+    },
+    "src/web/main.tsx": {
+      "filePath": "src/web/main.tsx",
+      "contentHash": "2f4162eb8f0b45604a5a79d8ae6486aba247c86bf62996623827c2b81f75c053",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/web/App.tsx",
+          "specifiers": []
+        },
+        {
+          "source": "src/web/styles.css",
+          "specifiers": []
+        },
+        {
+          "source": "src/web/theme.tsx",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 13,
+      "hasStructuralAnalysis": false
+    },
+    "src/web/App.tsx": {
+      "filePath": "src/web/App.tsx",
+      "contentHash": "706fac28f5a4190a04760705c83276c2877665e84c981bc4003389018b4dac2b",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/web/api.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/web/theme.tsx",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 886,
+      "hasStructuralAnalysis": false
+    },
+    "src/web/styles.css": {
+      "filePath": "src/web/styles.css",
+      "contentHash": "27d27f5cbb64fed4a236dac4fe4891c792fe42f4800030885ae1e19d2f5e6bb4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1209,
+      "hasStructuralAnalysis": false
+    },
+    "tests/outliner.test.ts": {
+      "filePath": "tests/outliner.test.ts",
+      "contentHash": "f5ce8803ad0710a84ef0ddd307f4be9a3a83708dec4ef7e607a4e61f75012d5f",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "src/backend/db/database.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/importExport/markdown.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/importExport/opml.ts",
+          "specifiers": []
+        },
+        {
+          "source": "src/backend/services/outliner.ts",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 145,
+      "hasStructuralAnalysis": false
+    }
+  }
+}

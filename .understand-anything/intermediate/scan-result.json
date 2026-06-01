@@ -1,0 +1,221 @@
+{
+  "projectName": "OpenOutliner",
+  "description": "本地优先的大纲笔记应用，包含 React Web UI、Node HTTP API、SQLite 业务服务、CLI、MCP server 以及 Markdown/OPML 导入导出。",
+  "languages": [
+    "typescript",
+    "typescript-react",
+    "css",
+    "html",
+    "markdown",
+    "json"
+  ],
+  "frameworks": [
+    "React",
+    "Vite",
+    "Node.js",
+    "Vitest",
+    "MCP SDK",
+    "SQLite"
+  ],
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "language": "markdown",
+      "sizeLines": 32,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "sizeLines": 67,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "package.json",
+      "language": "json",
+      "sizeLines": 48,
+      "fileCategory": "config"
+    },
+    {
+      "path": "tsconfig.node.json",
+      "language": "json",
+      "sizeLines": 18,
+      "fileCategory": "config"
+    },
+    {
+      "path": "tsconfig.web.json",
+      "language": "json",
+      "sizeLines": 20,
+      "fileCategory": "config"
+    },
+    {
+      "path": "vite.config.ts",
+      "language": "typescript",
+      "sizeLines": 16,
+      "fileCategory": "config"
+    },
+    {
+      "path": "index.html",
+      "language": "html",
+      "sizeLines": 13,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "src/backend/domain/types.ts",
+      "language": "typescript",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/db/database.ts",
+      "language": "typescript",
+      "sizeLines": 97,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/services/outliner.ts",
+      "language": "typescript",
+      "sizeLines": 594,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/importExport/markdown.ts",
+      "language": "typescript",
+      "sizeLines": 86,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/importExport/opml.ts",
+      "language": "typescript",
+      "sizeLines": 77,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/server/index.ts",
+      "language": "typescript",
+      "sizeLines": 285,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/cli/index.ts",
+      "language": "typescript",
+      "sizeLines": 188,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/mcp/server.ts",
+      "language": "typescript",
+      "sizeLines": 216,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/web/api.ts",
+      "language": "typescript",
+      "sizeLines": 88,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/web/theme.tsx",
+      "language": "typescript-react",
+      "sizeLines": 71,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/web/main.tsx",
+      "language": "typescript-react",
+      "sizeLines": 13,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/web/App.tsx",
+      "language": "typescript-react",
+      "sizeLines": 886,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/web/styles.css",
+      "language": "css",
+      "sizeLines": 1209,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "tests/outliner.test.ts",
+      "language": "typescript",
+      "sizeLines": 145,
+      "fileCategory": "code"
+    }
+  ],
+  "totalFiles": 21,
+  "filteredByIgnore": 10,
+  "estimatedComplexity": "moderate",
+  "stats": {
+    "filesScanned": 21,
+    "byCategory": {
+      "docs": 2,
+      "config": 4,
+      "markup": 2,
+      "code": 13
+    },
+    "byLanguage": {
+      "markdown": 2,
+      "json": 3,
+      "typescript": 11,
+      "html": 1,
+      "typescript-react": 3,
+      "css": 1
+    }
+  },
+  "importMap": {
+    "vite.config.ts": [],
+    "src/backend/domain/types.ts": [],
+    "src/backend/db/database.ts": [],
+    "src/backend/services/outliner.ts": [
+      "src/backend/db/database.ts",
+      "src/backend/domain/types.ts"
+    ],
+    "src/backend/importExport/markdown.ts": [
+      "src/backend/domain/types.ts",
+      "src/backend/services/outliner.ts"
+    ],
+    "src/backend/importExport/opml.ts": [
+      "src/backend/domain/types.ts",
+      "src/backend/services/outliner.ts"
+    ],
+    "src/backend/server/index.ts": [
+      "src/backend/db/database.ts",
+      "src/backend/importExport/markdown.ts",
+      "src/backend/importExport/opml.ts",
+      "src/backend/services/outliner.ts"
+    ],
+    "src/backend/cli/index.ts": [
+      "src/backend/db/database.ts",
+      "src/backend/importExport/markdown.ts",
+      "src/backend/importExport/opml.ts",
+      "src/backend/services/outliner.ts"
+    ],
+    "src/backend/mcp/server.ts": [
+      "src/backend/db/database.ts",
+      "src/backend/importExport/markdown.ts",
+      "src/backend/importExport/opml.ts",
+      "src/backend/services/outliner.ts"
+    ],
+    "src/web/api.ts": [],
+    "src/web/theme.tsx": [],
+    "src/web/main.tsx": [
+      "src/web/App.tsx",
+      "src/web/styles.css",
+      "src/web/theme.tsx"
+    ],
+    "src/web/App.tsx": [
+      "src/web/api.ts",
+      "src/web/theme.tsx"
+    ],
+    "src/web/styles.css": [],
+    "tests/outliner.test.ts": [
+      "src/backend/db/database.ts",
+      "src/backend/importExport/markdown.ts",
+      "src/backend/importExport/opml.ts",
+      "src/backend/services/outliner.ts"
+    ]
+  }
+}

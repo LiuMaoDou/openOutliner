@@ -1,0 +1,21 @@
+# .understandignore - patterns for files/dirs to exclude from analysis
+# Syntax: same as .gitignore.
+node_modules/
+dist/
+.git/
+data/
+*.lock
+package-lock.json
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.otf
+*.ttf
+*.woff
+*.woff2
+*.map
+*.log
+.DS_Store

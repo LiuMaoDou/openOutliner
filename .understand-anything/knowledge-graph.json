@@ -1,0 +1,2287 @@
+{
+  "version": "1.0.0",
+  "kind": "codebase",
+  "project": {
+    "name": "OpenOutliner",
+    "languages": [
+      "typescript",
+      "typescript-react",
+      "css",
+      "html",
+      "markdown",
+      "json"
+    ],
+    "frameworks": [
+      "React",
+      "Vite",
+      "Node.js",
+      "Vitest",
+      "MCP SDK",
+      "SQLite"
+    ],
+    "description": "本地优先的大纲笔记应用，包含 React Web UI、Node HTTP API、SQLite 业务服务、CLI、MCP server 以及 Markdown/OPML 导入导出。",
+    "analyzedAt": "2026-06-01T15:50:09.772Z",
+    "gitCommitHash": "5bb5eb6839144acabd7e8238d0bc126b8de628eb"
+  },
+  "nodes": [
+    {
+      "id": "document:AGENTS.md",
+      "type": "document",
+      "name": "AGENTS.md",
+      "filePath": "AGENTS.md",
+      "summary": "记录仓库结构、编码风格、测试要求和 Git 工作流，是维护 OpenOutliner 时的工程约束来源。",
+      "tags": [
+        "文档",
+        "协作",
+        "流程"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "README.md",
+      "summary": "介绍 OpenOutliner 的本地优先大纲编辑、SQLite 存储、导入导出、CLI 和 MCP 能力。",
+      "tags": [
+        "文档",
+        "项目概览",
+        "本地优先"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:package.json",
+      "type": "config",
+      "name": "package.json",
+      "filePath": "package.json",
+      "summary": "定义 npm scripts、Node 版本要求、CLI bin 入口，以及 React、Vite、MCP SDK、SQLite 相关依赖。",
+      "tags": [
+        "配置",
+        "npm",
+        "入口"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:tsconfig.node.json",
+      "type": "config",
+      "name": "tsconfig.node.json",
+      "filePath": "tsconfig.node.json",
+      "summary": "配置后端 TypeScript 编译，使用 NodeNext 模块、严格类型检查，并输出到 dist/backend。",
+      "tags": [
+        "配置",
+        "typescript",
+        "后端"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:tsconfig.web.json",
+      "type": "config",
+      "name": "tsconfig.web.json",
+      "filePath": "tsconfig.web.json",
+      "summary": "配置前端 TypeScript 和 React JSX 检查，使用 Bundler 模块解析并只做 noEmit 类型校验。",
+      "tags": [
+        "配置",
+        "typescript",
+        "前端"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:vite.config.ts",
+      "type": "config",
+      "name": "vite.config.ts",
+      "filePath": "vite.config.ts",
+      "summary": "配置 Vite React 插件、5173 端口、/api 到本地 4317 服务的代理，以及 dist/web 构建目录。",
+      "tags": [
+        "配置",
+        "vite",
+        "前端"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:index.html",
+      "type": "file",
+      "name": "index.html",
+      "filePath": "index.html",
+      "summary": "提供 Vite 前端 HTML 壳，挂载 root 节点并加载 src/web/main.tsx，同时引用 person 目录中的 favicon。",
+      "tags": [
+        "前端",
+        "入口",
+        "html"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:src/backend/domain/types.ts",
+      "type": "file",
+      "name": "domain types",
+      "filePath": "src/backend/domain/types.ts",
+      "summary": "集中定义 Workspace、OutlineNode、Tag、FieldDefinition、FieldValue、OutlineTreeNode 以及创建/更新输入类型。",
+      "tags": [
+        "后端",
+        "领域模型",
+        "类型"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:src/backend/db/database.ts",
+      "type": "file",
+      "name": "database",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "打开 node:sqlite DatabaseSync 数据库，设置 PRAGMA，并创建 workspaces、nodes、tags、字段等核心表结构。",
+      "tags": [
+        "后端",
+        "sqlite",
+        "迁移"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/backend/services/outliner.ts",
+      "type": "file",
+      "name": "OutlinerService",
+      "filePath": "src/backend/services/outliner.ts",
+      "summary": "承载工作区、节点树、移动排序、软删除、搜索、标签、字段和种子数据等核心业务逻辑。",
+      "tags": [
+        "后端",
+        "业务服务",
+        "大纲"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:src/backend/importExport/markdown.ts",
+      "type": "file",
+      "name": "Markdown import/export",
+      "filePath": "src/backend/importExport/markdown.ts",
+      "summary": "在 Markdown 标题/列表和大纲节点树之间转换，支持 checkbox 完成状态和标签导出。",
+      "tags": [
+        "导入导出",
+        "markdown",
+        "转换"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/backend/importExport/opml.ts",
+      "type": "file",
+      "name": "OPML import/export",
+      "filePath": "src/backend/importExport/opml.ts",
+      "summary": "使用 fast-xml-parser 在 OPML 2.0 outline XML 与 OpenOutliner 节点树之间转换。",
+      "tags": [
+        "导入导出",
+        "opml",
+        "xml"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:src/backend/server/index.ts",
+      "type": "file",
+      "name": "HTTP API server",
+      "filePath": "src/backend/server/index.ts",
+      "summary": "启动 127.0.0.1:4317 HTTP 服务，路由 REST API、导入导出请求和静态 Web/asset 文件。",
+      "tags": [
+        "后端",
+        "http",
+        "api"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/backend/cli/index.ts",
+      "type": "file",
+      "name": "CLI",
+      "filePath": "src/backend/cli/index.ts",
+      "summary": "基于 commander 暴露工作区、节点、搜索、标签、Markdown/OPML 导入导出等命令行操作。",
+      "tags": [
+        "后端",
+        "cli",
+        "自动化"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/backend/mcp/server.ts",
+      "type": "file",
+      "name": "MCP server",
+      "filePath": "src/backend/mcp/server.ts",
+      "summary": "基于 @modelcontextprotocol/sdk 注册本地大纲工具，使 LLM 客户端可以读写节点、标签、字段和导入导出。",
+      "tags": [
+        "后端",
+        "mcp",
+        "自动化"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/web/api.ts",
+      "type": "file",
+      "name": "web API client",
+      "filePath": "src/web/api.ts",
+      "summary": "定义前端共享数据类型和 fetch 包装器，统一处理 JSON、文本响应和错误消息。",
+      "tags": [
+        "前端",
+        "api-client",
+        "fetch"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/web/theme.tsx",
+      "type": "file",
+      "name": "ThemeProvider",
+      "filePath": "src/web/theme.tsx",
+      "summary": "提供 light/dark/system 主题状态，保存到 localStorage，并跟随系统配色变化更新 document class。",
+      "tags": [
+        "前端",
+        "主题",
+        "react"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:src/web/main.tsx",
+      "type": "file",
+      "name": "React entry",
+      "filePath": "src/web/main.tsx",
+      "summary": "创建 React root，将 App 包在 ThemeProvider 中渲染，并加载全局样式。",
+      "tags": [
+        "前端",
+        "入口",
+        "react"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:src/web/App.tsx",
+      "type": "file",
+      "name": "App",
+      "filePath": "src/web/App.tsx",
+      "summary": "实现主要 React UI：工作区侧栏、大纲编辑器、搜索、拖拽排序、标签管理、导入导出和主题切换。",
+      "tags": [
+        "前端",
+        "ui",
+        "大纲编辑"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:src/web/styles.css",
+      "type": "file",
+      "name": "styles.css",
+      "filePath": "src/web/styles.css",
+      "summary": "定义 OpenOutliner 的整体布局、侧栏、topbar、大纲行、检查器、标签、拖拽状态和明暗主题视觉样式。",
+      "tags": [
+        "前端",
+        "样式",
+        "布局"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:tests/outliner.test.ts",
+      "type": "file",
+      "name": "outliner tests",
+      "filePath": "tests/outliner.test.ts",
+      "summary": "使用 Vitest 和临时 SQLite 数据库覆盖节点移动、标签字段、工作区迁移，以及 Markdown/OPML 往返。",
+      "tags": [
+        "测试",
+        "vitest",
+        "sqlite"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "class",
+      "name": "OutlinerService",
+      "filePath": "src/backend/services/outliner.ts",
+      "summary": "封装所有大纲业务操作，并通过事务保持节点顺序、移动和删除的一致性。",
+      "tags": [
+        "业务服务",
+        "核心类"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        32,
+        501
+      ]
+    },
+    {
+      "id": "class:src/backend/services/outliner.ts:NotFoundError",
+      "type": "class",
+      "name": "NotFoundError",
+      "filePath": "src/backend/services/outliner.ts",
+      "summary": "将缺失资源映射为 404 状态码，供 HTTP 层复用。",
+      "tags": [
+        "错误处理"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        503,
+        505
+      ]
+    },
+    {
+      "id": "class:src/backend/services/outliner.ts:ValidationError",
+      "type": "class",
+      "name": "ValidationError",
+      "filePath": "src/backend/services/outliner.ts",
+      "summary": "将输入校验失败映射为 400 状态码，供 HTTP 层复用。",
+      "tags": [
+        "错误处理"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        507,
+        509
+      ]
+    },
+    {
+      "id": "function:src/backend/db/database.ts:getDefaultDbPath",
+      "type": "function",
+      "name": "getDefaultDbPath",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "解析 OPENOUTLINER_DB 或默认 data/openoutliner.sqlite 作为数据库路径。",
+      "tags": [
+        "数据库",
+        "配置"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        6,
+        8
+      ]
+    },
+    {
+      "id": "function:src/backend/db/database.ts:openDatabase",
+      "type": "function",
+      "name": "openDatabase",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "创建 SQLite 数据库连接，确保目录存在，设置外键和 WAL，并执行迁移。",
+      "tags": [
+        "数据库",
+        "入口"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        10,
+        21
+      ]
+    },
+    {
+      "id": "function:src/backend/db/database.ts:migrate",
+      "type": "function",
+      "name": "migrate",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "创建所有核心表、索引和兼容旧库的 icon 列迁移。",
+      "tags": [
+        "数据库",
+        "迁移"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        23,
+        90
+      ]
+    },
+    {
+      "id": "function:src/backend/importExport/markdown.ts:exportMarkdown",
+      "type": "function",
+      "name": "exportMarkdown",
+      "filePath": "src/backend/importExport/markdown.ts",
+      "summary": "将工作区根节点树输出为 Markdown 标题和嵌套列表。",
+      "tags": [
+        "导出",
+        "markdown"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        10,
+        22
+      ]
+    },
+    {
+      "id": "function:src/backend/importExport/markdown.ts:importMarkdown",
+      "type": "function",
+      "name": "importMarkdown",
+      "filePath": "src/backend/importExport/markdown.ts",
+      "summary": "解析 Markdown heading/list 行并按缩进层级创建节点。",
+      "tags": [
+        "导入",
+        "markdown"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        24,
+        50
+      ]
+    },
+    {
+      "id": "function:src/backend/importExport/opml.ts:exportOpml",
+      "type": "function",
+      "name": "exportOpml",
+      "filePath": "src/backend/importExport/opml.ts",
+      "summary": "将工作区节点树序列化为 OPML 2.0 XML。",
+      "tags": [
+        "导出",
+        "opml"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        10,
+        32
+      ]
+    },
+    {
+      "id": "function:src/backend/importExport/opml.ts:importOpml",
+      "type": "function",
+      "name": "importOpml",
+      "filePath": "src/backend/importExport/opml.ts",
+      "summary": "递归读取 OPML outline 并创建对应的大纲节点。",
+      "tags": [
+        "导入",
+        "opml"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        34,
+        63
+      ]
+    },
+    {
+      "id": "function:src/backend/server/index.ts:routeApi",
+      "type": "function",
+      "name": "routeApi",
+      "filePath": "src/backend/server/index.ts",
+      "summary": "按 HTTP method/path 分派工作区、节点、标签、字段、搜索和导入导出 API。",
+      "tags": [
+        "http",
+        "路由"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        34,
+        185
+      ]
+    },
+    {
+      "id": "function:src/backend/server/index.ts:serveStatic",
+      "type": "function",
+      "name": "serveStatic",
+      "filePath": "src/backend/server/index.ts",
+      "summary": "从 dist/web 提供生产构建文件，缺失时返回可操作错误。",
+      "tags": [
+        "http",
+        "静态资源"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        227,
+        241
+      ]
+    },
+    {
+      "id": "function:src/backend/server/index.ts:servePersonAsset",
+      "type": "function",
+      "name": "servePersonAsset",
+      "filePath": "src/backend/server/index.ts",
+      "summary": "安全地从 person 目录提供 favicon、字体和图片资源。",
+      "tags": [
+        "http",
+        "静态资源"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        243,
+        265
+      ]
+    },
+    {
+      "id": "function:src/backend/cli/index.ts:getService",
+      "type": "function",
+      "name": "getService",
+      "filePath": "src/backend/cli/index.ts",
+      "summary": "为每次 CLI action 打开数据库、创建服务并确保种子数据存在。",
+      "tags": [
+        "cli",
+        "服务初始化"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        15,
+        20
+      ]
+    },
+    {
+      "id": "function:src/backend/cli/index.ts:parseBoolean",
+      "type": "function",
+      "name": "parseBoolean",
+      "filePath": "src/backend/cli/index.ts",
+      "summary": "将 CLI 字符串参数严格解析为布尔值。",
+      "tags": [
+        "cli",
+        "参数解析"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        183,
+        187
+      ]
+    },
+    {
+      "id": "function:src/backend/mcp/server.ts:registerTool",
+      "type": "function",
+      "name": "registerTool",
+      "filePath": "src/backend/mcp/server.ts",
+      "summary": "封装 MCP tool 注册，将服务结果转换为 text content 响应。",
+      "tags": [
+        "mcp",
+        "工具注册"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        195,
+        211
+      ]
+    },
+    {
+      "id": "function:src/web/api.ts:request",
+      "type": "function",
+      "name": "request",
+      "filePath": "src/web/api.ts",
+      "summary": "封装 fetch JSON 请求、content-type header 和错误响应解析。",
+      "tags": [
+        "前端",
+        "fetch"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        57,
+        67
+      ]
+    },
+    {
+      "id": "function:src/web/theme.tsx:ThemeProvider",
+      "type": "function",
+      "name": "ThemeProvider",
+      "filePath": "src/web/theme.tsx",
+      "summary": "管理主题状态，监听系统配色，并向 React 树提供 setTheme。",
+      "tags": [
+        "前端",
+        "主题"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        19,
+        55
+      ]
+    },
+    {
+      "id": "function:src/web/theme.tsx:useTheme",
+      "type": "function",
+      "name": "useTheme",
+      "filePath": "src/web/theme.tsx",
+      "summary": "读取 ThemeProvider context，防止在 provider 外使用。",
+      "tags": [
+        "前端",
+        "hook"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        57,
+        61
+      ]
+    },
+    {
+      "id": "function:src/web/App.tsx:App",
+      "type": "function",
+      "name": "App",
+      "filePath": "src/web/App.tsx",
+      "summary": "组合应用状态、API 调用、节点编辑命令、拖拽移动逻辑和主 UI 布局。",
+      "tags": [
+        "前端",
+        "组件"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        36,
+        753
+      ]
+    },
+    {
+      "id": "function:src/web/App.tsx:NodeRow",
+      "type": "function",
+      "name": "NodeRow",
+      "filePath": "src/web/App.tsx",
+      "summary": "渲染单个大纲节点行，处理完成状态、折叠、标题编辑、键盘操作和删除。",
+      "tags": [
+        "前端",
+        "组件"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        755,
+        837
+      ]
+    },
+    {
+      "id": "function:src/web/App.tsx:flatten",
+      "type": "function",
+      "name": "flatten",
+      "filePath": "src/web/App.tsx",
+      "summary": "将未折叠的节点树展平成带深度的列表，供编辑器渲染和键盘导航使用。",
+      "tags": [
+        "前端",
+        "树遍历"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        839,
+        849
+      ]
+    },
+    {
+      "id": "function:src/web/App.tsx:updateTreeNode",
+      "type": "function",
+      "name": "updateTreeNode",
+      "filePath": "src/web/App.tsx",
+      "summary": "不可变地更新树中指定节点的本地 UI 状态。",
+      "tags": [
+        "前端",
+        "状态更新"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        851,
+        862
+      ]
+    },
+    {
+      "id": "table:src/backend/db/database.ts:workspaces",
+      "type": "table",
+      "name": "workspaces",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "保存工作区名称、图标、根节点和创建/更新时间。",
+      "tags": [
+        "sqlite",
+        "工作区"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        25,
+        32
+      ]
+    },
+    {
+      "id": "table:src/backend/db/database.ts:nodes",
+      "type": "table",
+      "name": "nodes",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "保存单父节点树、排序位置、标题正文、完成/折叠状态和软删除时间。",
+      "tags": [
+        "sqlite",
+        "节点树"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        34,
+        47
+      ]
+    },
+    {
+      "id": "table:src/backend/db/database.ts:tags",
+      "type": "table",
+      "name": "tags",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "保存工作区内唯一的标签名称和颜色。",
+      "tags": [
+        "sqlite",
+        "标签"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        59,
+        66
+      ]
+    },
+    {
+      "id": "table:src/backend/db/database.ts:node_tags",
+      "type": "table",
+      "name": "node_tags",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "维护节点与标签的多对多关联。",
+      "tags": [
+        "sqlite",
+        "标签"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        68,
+        72
+      ]
+    },
+    {
+      "id": "table:src/backend/db/database.ts:field_definitions",
+      "type": "table",
+      "name": "field_definitions",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "定义绑定到标签的 typed fields，包括类型和可选选项。",
+      "tags": [
+        "sqlite",
+        "字段"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        74,
+        84
+      ]
+    },
+    {
+      "id": "table:src/backend/db/database.ts:field_values",
+      "type": "table",
+      "name": "field_values",
+      "filePath": "src/backend/db/database.ts",
+      "summary": "保存节点在某个字段上的具体值和更新时间。",
+      "tags": [
+        "sqlite",
+        "字段"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        86,
+        92
+      ]
+    },
+    {
+      "id": "endpoint:src/backend/server/index.ts:workspaces",
+      "type": "endpoint",
+      "name": "HTTP workspaces API",
+      "filePath": "src/backend/server/index.ts",
+      "summary": "GET/POST/PATCH/DELETE /api/workspaces 及 /tree 路由负责工作区列表、创建、重命名、删除和读取节点树。",
+      "tags": [
+        "http",
+        "workspace"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        44,
+        75
+      ]
+    },
+    {
+      "id": "endpoint:src/backend/server/index.ts:nodes",
+      "type": "endpoint",
+      "name": "HTTP nodes API",
+      "filePath": "src/backend/server/index.ts",
+      "summary": "GET/POST/PATCH/DELETE /api/nodes 和 /move 路由负责节点读取、创建、更新、移动和软删除。",
+      "tags": [
+        "http",
+        "node"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        77,
+        108
+      ]
+    },
+    {
+      "id": "endpoint:src/backend/server/index.ts:tags-fields",
+      "type": "endpoint",
+      "name": "HTTP tags and fields API",
+      "filePath": "src/backend/server/index.ts",
+      "summary": "tags、node tags、fields 和 field-values 路由负责标签管理和 typed field 写入。",
+      "tags": [
+        "http",
+        "tags",
+        "fields"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        117,
+        151
+      ]
+    },
+    {
+      "id": "endpoint:src/backend/server/index.ts:import-export",
+      "type": "endpoint",
+      "name": "HTTP import/export API",
+      "filePath": "src/backend/server/index.ts",
+      "summary": "Markdown/OPML 导入导出路由连接 HTTP 请求与 importExport 模块。",
+      "tags": [
+        "http",
+        "导入导出"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        153,
+        176
+      ]
+    },
+    {
+      "id": "endpoint:src/backend/mcp/server.ts:outline-tools",
+      "type": "endpoint",
+      "name": "MCP outline tools",
+      "filePath": "src/backend/mcp/server.ts",
+      "summary": "list/search/read/create/edit/move/delete 等 MCP tools 复用 OutlinerService 管理本地大纲。",
+      "tags": [
+        "mcp",
+        "节点操作"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        15,
+        99
+      ]
+    },
+    {
+      "id": "endpoint:src/backend/mcp/server.ts:tag-field-tools",
+      "type": "endpoint",
+      "name": "MCP tag and field tools",
+      "filePath": "src/backend/mcp/server.ts",
+      "summary": "标签和字段 MCP tools 复用 OutlinerService 管理 tag、field definition 和 field value。",
+      "tags": [
+        "mcp",
+        "标签",
+        "字段"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        101,
+        151
+      ]
+    },
+    {
+      "id": "endpoint:src/backend/mcp/server.ts:import-export-tools",
+      "type": "endpoint",
+      "name": "MCP import/export tools",
+      "filePath": "src/backend/mcp/server.ts",
+      "summary": "Markdown/OPML MCP tools 连接 LLM 客户端和导入导出模块。",
+      "tags": [
+        "mcp",
+        "导入导出"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        153,
+        185
+      ]
+    },
+    {
+      "id": "concept:local-first-outline",
+      "type": "concept",
+      "name": "Local-first outline storage",
+      "summary": "应用以本地 SQLite 文件为事实来源，Web、CLI 和 MCP 都围绕同一个本地服务层读写。",
+      "tags": [
+        "概念",
+        "本地优先"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "concept:shared-outliner-service",
+      "type": "concept",
+      "name": "Shared OutlinerService boundary",
+      "summary": "OutlinerService 是跨 HTTP、CLI、MCP、导入导出和测试共享的业务边界，避免各入口重复实现树操作。",
+      "tags": [
+        "概念",
+        "服务边界"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "concept:web-outline-editing",
+      "type": "concept",
+      "name": "Keyboard-first outline editing",
+      "summary": "前端用扁平化树、局部状态 patch、键盘事件和拖拽命令实现大纲编辑体验。",
+      "tags": [
+        "概念",
+        "前端交互"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "concept:portable-import-export",
+      "type": "concept",
+      "name": "Portable outline import/export",
+      "summary": "Markdown 和 OPML 作为可移植格式，围绕同一节点树模型进行转换。",
+      "tags": [
+        "概念",
+        "互操作"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "concept:llm-automation-surface",
+      "type": "concept",
+      "name": "LLM automation surface",
+      "summary": "MCP server 将本地大纲能力包装为 LLM 可调用工具，并保持所有数据仍在本地 SQLite 中。",
+      "tags": [
+        "概念",
+        "mcp"
+      ],
+      "complexity": "moderate"
+    }
+  ],
+  "edges": [
+    {
+      "source": "document:README.md",
+      "target": "concept:local-first-outline",
+      "type": "documents",
+      "direction": "forward",
+      "description": "README 明确说明项目是本地优先的大纲笔记应用。",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "config:package.json",
+      "type": "documents",
+      "direction": "forward",
+      "description": "README 的 Quick Start 和 Development 命令对应 package.json scripts。",
+      "weight": 0.5
+    },
+    {
+      "source": "document:AGENTS.md",
+      "target": "config:package.json",
+      "type": "documents",
+      "direction": "forward",
+      "description": "AGENTS.md 描述可用 npm 命令和测试要求。",
+      "weight": 0.5
+    },
+    {
+      "source": "document:AGENTS.md",
+      "target": "file:tests/outliner.test.ts",
+      "type": "documents",
+      "direction": "forward",
+      "description": "AGENTS.md 指示 Vitest 测试约定和提交流程。",
+      "weight": 0.5
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:src/backend/cli/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "description": "bin.openoutliner 指向构建后的 CLI 入口。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:src/backend/mcp/server.ts",
+      "type": "configures",
+      "direction": "forward",
+      "description": "bin.openoutliner-mcp 指向构建后的 MCP 入口。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:src/backend/server/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "description": "server/start scripts 启动后端 HTTP 服务。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:src/web/main.tsx",
+      "type": "configures",
+      "direction": "forward",
+      "description": "web:dev 和 build:web 通过 Vite 运行前端入口。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:tests/outliner.test.ts",
+      "type": "configures",
+      "direction": "forward",
+      "description": "npm test 运行 Vitest 测试。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:tsconfig.node.json",
+      "target": "file:src/backend/server/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "description": "后端 tsconfig 覆盖 src/backend 下的 Node 代码。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:tsconfig.node.json",
+      "target": "file:src/backend/cli/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "description": "CLI 与 MCP/服务端一起按 NodeNext 编译。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:tsconfig.web.json",
+      "target": "file:src/web/App.tsx",
+      "type": "configures",
+      "direction": "forward",
+      "description": "前端 tsconfig 覆盖 React TSX 文件。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:vite.config.ts",
+      "target": "file:src/web/main.tsx",
+      "type": "configures",
+      "direction": "forward",
+      "description": "Vite 从 main.tsx 启动前端。",
+      "weight": 0.6
+    },
+    {
+      "source": "config:vite.config.ts",
+      "target": "file:src/backend/server/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "description": "Vite dev server 将 /api 代理到 4317 HTTP API。",
+      "weight": 0.6
+    },
+    {
+      "source": "file:index.html",
+      "target": "file:src/web/main.tsx",
+      "type": "imports",
+      "direction": "forward",
+      "description": "HTML shell 加载 React 入口模块。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/domain/types.ts",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "function:src/backend/db/database.ts:getDefaultDbPath",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "function:src/backend/db/database.ts:openDatabase",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "function:src/backend/db/database.ts:migrate",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "table:src/backend/db/database.ts:workspaces",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "table:src/backend/db/database.ts:nodes",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "table:src/backend/db/database.ts:tags",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "table:src/backend/db/database.ts:node_tags",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "table:src/backend/db/database.ts:field_definitions",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/db/database.ts",
+      "target": "table:src/backend/db/database.ts:field_values",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/services/outliner.ts",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/services/outliner.ts",
+      "target": "class:src/backend/services/outliner.ts:NotFoundError",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/services/outliner.ts",
+      "target": "class:src/backend/services/outliner.ts:ValidationError",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/importExport/markdown.ts",
+      "target": "function:src/backend/importExport/markdown.ts:exportMarkdown",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/importExport/markdown.ts",
+      "target": "function:src/backend/importExport/markdown.ts:importMarkdown",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/importExport/opml.ts",
+      "target": "function:src/backend/importExport/opml.ts:exportOpml",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/importExport/opml.ts",
+      "target": "function:src/backend/importExport/opml.ts:importOpml",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "function:src/backend/server/index.ts:routeApi",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "function:src/backend/server/index.ts:serveStatic",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "function:src/backend/server/index.ts:servePersonAsset",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "endpoint:src/backend/server/index.ts:workspaces",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "endpoint:src/backend/server/index.ts:nodes",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "endpoint:src/backend/server/index.ts:tags-fields",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "endpoint:src/backend/server/index.ts:import-export",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "function:src/backend/cli/index.ts:getService",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "function:src/backend/cli/index.ts:parseBoolean",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/mcp/server.ts",
+      "target": "function:src/backend/mcp/server.ts:registerTool",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/mcp/server.ts",
+      "target": "endpoint:src/backend/mcp/server.ts:outline-tools",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/mcp/server.ts",
+      "target": "endpoint:src/backend/mcp/server.ts:tag-field-tools",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/mcp/server.ts",
+      "target": "endpoint:src/backend/mcp/server.ts:import-export-tools",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/web/api.ts",
+      "target": "function:src/web/api.ts:request",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/web/theme.tsx",
+      "target": "function:src/web/theme.tsx:ThemeProvider",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/web/theme.tsx",
+      "target": "function:src/web/theme.tsx:useTheme",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/web/App.tsx",
+      "target": "function:src/web/App.tsx:App",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/web/App.tsx",
+      "target": "function:src/web/App.tsx:NodeRow",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/web/App.tsx",
+      "target": "function:src/web/App.tsx:flatten",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/web/App.tsx",
+      "target": "function:src/web/App.tsx:updateTreeNode",
+      "type": "contains",
+      "direction": "forward",
+      "description": "文件包含该结构单元。",
+      "weight": 1
+    },
+    {
+      "source": "file:src/backend/services/outliner.ts",
+      "target": "file:src/backend/db/database.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "服务层依赖数据库连接类型并直接执行 SQL。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/services/outliner.ts",
+      "target": "file:src/backend/domain/types.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "服务层输入输出使用共享领域类型。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/importExport/markdown.ts",
+      "target": "file:src/backend/services/outliner.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "Markdown 转换通过 OutlinerService 读取和创建节点。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/importExport/markdown.ts",
+      "target": "file:src/backend/domain/types.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "Markdown 导出使用 OutlineTreeNode 类型。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/importExport/opml.ts",
+      "target": "file:src/backend/services/outliner.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "OPML 转换通过 OutlinerService 读取和创建节点。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/importExport/opml.ts",
+      "target": "file:src/backend/domain/types.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "OPML 导出使用 OutlineTreeNode 类型。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "file:src/backend/db/database.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "HTTP 服务启动时打开本地 SQLite 数据库。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "file:src/backend/services/outliner.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "HTTP 路由复用 OutlinerService 和业务错误类型。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "file:src/backend/importExport/markdown.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "HTTP 导入导出路由调用 Markdown 转换。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/server/index.ts",
+      "target": "file:src/backend/importExport/opml.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "HTTP 导入导出路由调用 OPML 转换。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "file:src/backend/db/database.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "CLI action 通过 openDatabase 获取本地数据库。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "file:src/backend/services/outliner.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "CLI 命令复用 OutlinerService。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "file:src/backend/importExport/markdown.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "CLI import/export markdown 命令调用转换模块。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "file:src/backend/importExport/opml.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "CLI import/export opml 命令调用转换模块。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/mcp/server.ts",
+      "target": "file:src/backend/db/database.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "MCP server 启动时打开本地 SQLite 数据库。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/mcp/server.ts",
+      "target": "file:src/backend/services/outliner.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "MCP tools 复用 OutlinerService。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/mcp/server.ts",
+      "target": "file:src/backend/importExport/markdown.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "MCP import/export tools 调用 Markdown 转换。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/backend/mcp/server.ts",
+      "target": "file:src/backend/importExport/opml.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "MCP import/export tools 调用 OPML 转换。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/web/main.tsx",
+      "target": "file:src/web/App.tsx",
+      "type": "imports",
+      "direction": "forward",
+      "description": "React 入口渲染 App。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/web/main.tsx",
+      "target": "file:src/web/theme.tsx",
+      "type": "imports",
+      "direction": "forward",
+      "description": "React 入口用 ThemeProvider 包裹 App。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/web/main.tsx",
+      "target": "file:src/web/styles.css",
+      "type": "imports",
+      "direction": "forward",
+      "description": "React 入口加载全局样式。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/web/App.tsx",
+      "target": "file:src/web/api.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "App 通过 API client 调用后端。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:src/web/App.tsx",
+      "target": "file:src/web/theme.tsx",
+      "type": "imports",
+      "direction": "forward",
+      "description": "App 使用 useTheme 切换主题。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/outliner.test.ts",
+      "target": "file:src/backend/db/database.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "测试用临时 SQLite 数据库打开真实迁移。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/outliner.test.ts",
+      "target": "file:src/backend/services/outliner.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "测试直接覆盖 OutlinerService 行为。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/outliner.test.ts",
+      "target": "file:src/backend/importExport/markdown.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "测试覆盖 Markdown 往返。",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/outliner.test.ts",
+      "target": "file:src/backend/importExport/opml.ts",
+      "type": "imports",
+      "direction": "forward",
+      "description": "测试覆盖 OPML 往返。",
+      "weight": 0.7
+    },
+    {
+      "source": "function:src/backend/db/database.ts:openDatabase",
+      "target": "function:src/backend/db/database.ts:migrate",
+      "type": "calls",
+      "direction": "forward",
+      "description": "打开数据库后立即执行迁移。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/db/database.ts:migrate",
+      "target": "table:src/backend/db/database.ts:workspaces",
+      "type": "defines_schema",
+      "direction": "forward",
+      "description": "迁移定义 workspaces 表。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/db/database.ts:migrate",
+      "target": "table:src/backend/db/database.ts:nodes",
+      "type": "defines_schema",
+      "direction": "forward",
+      "description": "迁移定义 nodes 表和索引。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/db/database.ts:migrate",
+      "target": "table:src/backend/db/database.ts:tags",
+      "type": "defines_schema",
+      "direction": "forward",
+      "description": "迁移定义 tags 表。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/db/database.ts:migrate",
+      "target": "table:src/backend/db/database.ts:node_tags",
+      "type": "defines_schema",
+      "direction": "forward",
+      "description": "迁移定义 node_tags 关联表。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/db/database.ts:migrate",
+      "target": "table:src/backend/db/database.ts:field_definitions",
+      "type": "defines_schema",
+      "direction": "forward",
+      "description": "迁移定义 field_definitions 表。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/db/database.ts:migrate",
+      "target": "table:src/backend/db/database.ts:field_values",
+      "type": "defines_schema",
+      "direction": "forward",
+      "description": "迁移定义 field_values 表。",
+      "weight": 0.8
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:workspaces",
+      "type": "reads_from",
+      "direction": "forward",
+      "description": "服务读取工作区列表、单个工作区和根节点关系。",
+      "weight": 0.6
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:workspaces",
+      "type": "writes_to",
+      "direction": "forward",
+      "description": "服务创建、更新和删除工作区。",
+      "weight": 0.6
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:nodes",
+      "type": "reads_from",
+      "direction": "forward",
+      "description": "服务读取节点、子节点、搜索结果和递归树。",
+      "weight": 0.6
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:nodes",
+      "type": "writes_to",
+      "direction": "forward",
+      "description": "服务创建、更新、移动和软删除节点。",
+      "weight": 0.6
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:tags",
+      "type": "reads_from",
+      "direction": "forward",
+      "description": "服务读取标签和节点标签。",
+      "weight": 0.6
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:tags",
+      "type": "writes_to",
+      "direction": "forward",
+      "description": "服务创建、更新和删除标签。",
+      "weight": 0.6
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:node_tags",
+      "type": "writes_to",
+      "direction": "forward",
+      "description": "服务为节点绑定或移除标签。",
+      "weight": 0.6
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:field_definitions",
+      "type": "writes_to",
+      "direction": "forward",
+      "description": "服务创建 typed field 定义。",
+      "weight": 0.6
+    },
+    {
+      "source": "class:src/backend/services/outliner.ts:OutlinerService",
+      "target": "table:src/backend/db/database.ts:field_values",
+      "type": "writes_to",
+      "direction": "forward",
+      "description": "服务 upsert 节点字段值。",
+      "weight": 0.6
+    },
+    {
+      "source": "function:src/backend/server/index.ts:routeApi",
+      "target": "endpoint:src/backend/server/index.ts:workspaces",
+      "type": "routes",
+      "direction": "forward",
+      "description": "routeApi 匹配工作区相关 HTTP 路由。",
+      "weight": 0.5
+    },
+    {
+      "source": "function:src/backend/server/index.ts:routeApi",
+      "target": "endpoint:src/backend/server/index.ts:nodes",
+      "type": "routes",
+      "direction": "forward",
+      "description": "routeApi 匹配节点 CRUD 和移动路由。",
+      "weight": 0.5
+    },
+    {
+      "source": "function:src/backend/server/index.ts:routeApi",
+      "target": "endpoint:src/backend/server/index.ts:tags-fields",
+      "type": "routes",
+      "direction": "forward",
+      "description": "routeApi 匹配标签和字段路由。",
+      "weight": 0.5
+    },
+    {
+      "source": "function:src/backend/server/index.ts:routeApi",
+      "target": "endpoint:src/backend/server/index.ts:import-export",
+      "type": "routes",
+      "direction": "forward",
+      "description": "routeApi 匹配 Markdown/OPML 导入导出路由。",
+      "weight": 0.5
+    },
+    {
+      "source": "endpoint:src/backend/server/index.ts:workspaces",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "工作区 API 调用 list/create/getTree/update/delete workspace 方法。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/server/index.ts:nodes",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "节点 API 调用 get/list/create/update/move/delete/search 方法。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/server/index.ts:tags-fields",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "标签和字段 API 调用 tag、field definition、field value 方法。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/server/index.ts:import-export",
+      "target": "function:src/backend/importExport/markdown.ts:importMarkdown",
+      "type": "calls",
+      "direction": "forward",
+      "description": "Markdown 导入 API 调用 importMarkdown。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/server/index.ts:import-export",
+      "target": "function:src/backend/importExport/markdown.ts:exportMarkdown",
+      "type": "calls",
+      "direction": "forward",
+      "description": "Markdown 导出 API 调用 exportMarkdown。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/server/index.ts:import-export",
+      "target": "function:src/backend/importExport/opml.ts:importOpml",
+      "type": "calls",
+      "direction": "forward",
+      "description": "OPML 导入 API 调用 importOpml。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/server/index.ts:import-export",
+      "target": "function:src/backend/importExport/opml.ts:exportOpml",
+      "type": "calls",
+      "direction": "forward",
+      "description": "OPML 导出 API 调用 exportOpml。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/cli/index.ts:getService",
+      "target": "function:src/backend/db/database.ts:openDatabase",
+      "type": "calls",
+      "direction": "forward",
+      "description": "CLI 每次取服务时打开数据库。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/cli/index.ts:getService",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "CLI 创建共享业务服务。",
+      "weight": 0.8
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "CLI 各命令调用工作区、节点、搜索和标签方法。",
+      "weight": 0.8
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "function:src/backend/importExport/markdown.ts:importMarkdown",
+      "type": "calls",
+      "direction": "forward",
+      "description": "CLI markdown import 调用导入函数。",
+      "weight": 0.8
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "function:src/backend/importExport/markdown.ts:exportMarkdown",
+      "type": "calls",
+      "direction": "forward",
+      "description": "CLI markdown export 调用导出函数。",
+      "weight": 0.8
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "function:src/backend/importExport/opml.ts:importOpml",
+      "type": "calls",
+      "direction": "forward",
+      "description": "CLI opml import 调用导入函数。",
+      "weight": 0.8
+    },
+    {
+      "source": "file:src/backend/cli/index.ts",
+      "target": "function:src/backend/importExport/opml.ts:exportOpml",
+      "type": "calls",
+      "direction": "forward",
+      "description": "CLI opml export 调用导出函数。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/mcp/server.ts:registerTool",
+      "target": "endpoint:src/backend/mcp/server.ts:outline-tools",
+      "type": "routes",
+      "direction": "forward",
+      "description": "registerTool 注册节点和工作区 MCP tools。",
+      "weight": 0.5
+    },
+    {
+      "source": "function:src/backend/mcp/server.ts:registerTool",
+      "target": "endpoint:src/backend/mcp/server.ts:tag-field-tools",
+      "type": "routes",
+      "direction": "forward",
+      "description": "registerTool 注册标签和字段 MCP tools。",
+      "weight": 0.5
+    },
+    {
+      "source": "function:src/backend/mcp/server.ts:registerTool",
+      "target": "endpoint:src/backend/mcp/server.ts:import-export-tools",
+      "type": "routes",
+      "direction": "forward",
+      "description": "registerTool 注册导入导出 MCP tools。",
+      "weight": 0.5
+    },
+    {
+      "source": "endpoint:src/backend/mcp/server.ts:outline-tools",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "大纲 MCP tools 调用服务层节点和工作区方法。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/mcp/server.ts:tag-field-tools",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "标签字段 MCP tools 调用服务层标签和字段方法。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/mcp/server.ts:import-export-tools",
+      "target": "function:src/backend/importExport/markdown.ts:importMarkdown",
+      "type": "calls",
+      "direction": "forward",
+      "description": "MCP markdown import 调用转换模块。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/mcp/server.ts:import-export-tools",
+      "target": "function:src/backend/importExport/markdown.ts:exportMarkdown",
+      "type": "calls",
+      "direction": "forward",
+      "description": "MCP markdown export 调用转换模块。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/mcp/server.ts:import-export-tools",
+      "target": "function:src/backend/importExport/opml.ts:importOpml",
+      "type": "calls",
+      "direction": "forward",
+      "description": "MCP opml import 调用转换模块。",
+      "weight": 0.8
+    },
+    {
+      "source": "endpoint:src/backend/mcp/server.ts:import-export-tools",
+      "target": "function:src/backend/importExport/opml.ts:exportOpml",
+      "type": "calls",
+      "direction": "forward",
+      "description": "MCP opml export 调用转换模块。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/importExport/markdown.ts:exportMarkdown",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "Markdown 导出读取工作区和树。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/importExport/markdown.ts:importMarkdown",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "Markdown 导入创建节点。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/importExport/opml.ts:exportOpml",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "OPML 导出读取工作区和树。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/backend/importExport/opml.ts:importOpml",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "calls",
+      "direction": "forward",
+      "description": "OPML 导入递归创建节点。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/web/App.tsx:App",
+      "target": "function:src/web/api.ts:request",
+      "type": "calls",
+      "direction": "forward",
+      "description": "App 的 apiGet/apiPost/apiPatch/apiDelete 最终由 request 执行 fetch。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/web/App.tsx:App",
+      "target": "function:src/web/theme.tsx:useTheme",
+      "type": "calls",
+      "direction": "forward",
+      "description": "App 读取当前主题并提供切换命令。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/web/App.tsx:App",
+      "target": "function:src/web/App.tsx:flatten",
+      "type": "calls",
+      "direction": "forward",
+      "description": "App 将树展平以渲染节点列表。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/web/App.tsx:App",
+      "target": "function:src/web/App.tsx:updateTreeNode",
+      "type": "calls",
+      "direction": "forward",
+      "description": "App 使用本地不可变更新同步输入编辑状态。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/web/App.tsx:App",
+      "target": "function:src/web/App.tsx:NodeRow",
+      "type": "calls",
+      "direction": "forward",
+      "description": "App 为每个过滤后的节点渲染 NodeRow。",
+      "weight": 0.8
+    },
+    {
+      "source": "function:src/web/App.tsx:NodeRow",
+      "target": "endpoint:src/backend/server/index.ts:nodes",
+      "type": "triggers",
+      "direction": "forward",
+      "description": "节点行编辑、缩进、删除和拖拽最终触发节点 API。",
+      "weight": 0.6
+    },
+    {
+      "source": "function:src/web/App.tsx:App",
+      "target": "endpoint:src/backend/server/index.ts:workspaces",
+      "type": "triggers",
+      "direction": "forward",
+      "description": "工作区侧栏加载、创建、重命名和删除触发工作区 API。",
+      "weight": 0.6
+    },
+    {
+      "source": "function:src/web/App.tsx:App",
+      "target": "endpoint:src/backend/server/index.ts:tags-fields",
+      "type": "triggers",
+      "direction": "forward",
+      "description": "检查器和标签管理触发 tags/fields API。",
+      "weight": 0.6
+    },
+    {
+      "source": "function:src/web/App.tsx:App",
+      "target": "endpoint:src/backend/server/index.ts:import-export",
+      "type": "triggers",
+      "direction": "forward",
+      "description": "导入按钮和导出按钮触发 import/export API。",
+      "weight": 0.6
+    },
+    {
+      "source": "function:src/web/theme.tsx:ThemeProvider",
+      "target": "file:src/web/styles.css",
+      "type": "configures",
+      "direction": "forward",
+      "description": "ThemeProvider 切换 html 上的 light/dark class，CSS 使用变量呈现主题。",
+      "weight": 0.6
+    },
+    {
+      "source": "file:src/web/styles.css",
+      "target": "file:src/web/App.tsx",
+      "type": "configures",
+      "direction": "forward",
+      "description": "CSS class 名称与 App/NodeRow 的布局和状态类对应。",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tests/outliner.test.ts",
+      "target": "file:src/backend/services/outliner.ts",
+      "type": "tested_by",
+      "direction": "backward",
+      "description": "Vitest 覆盖节点移动、标签字段、工作区更新删除和迁移。",
+      "weight": 0.5
+    },
+    {
+      "source": "file:tests/outliner.test.ts",
+      "target": "file:src/backend/db/database.ts",
+      "type": "tested_by",
+      "direction": "backward",
+      "description": "Vitest 使用临时 SQLite 数据库覆盖迁移兼容性。",
+      "weight": 0.5
+    },
+    {
+      "source": "file:tests/outliner.test.ts",
+      "target": "file:src/backend/importExport/markdown.ts",
+      "type": "tested_by",
+      "direction": "backward",
+      "description": "Vitest 覆盖 Markdown 导入导出层级和完成状态。",
+      "weight": 0.5
+    },
+    {
+      "source": "file:tests/outliner.test.ts",
+      "target": "file:src/backend/importExport/opml.ts",
+      "type": "tested_by",
+      "direction": "backward",
+      "description": "Vitest 覆盖 OPML 导入导出层级。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:local-first-outline",
+      "target": "file:src/backend/db/database.ts",
+      "type": "related",
+      "direction": "forward",
+      "description": "SQLite 数据库实现本地优先存储。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:local-first-outline",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "related",
+      "direction": "forward",
+      "description": "服务层让所有入口共享本地数据模型。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:shared-outliner-service",
+      "target": "class:src/backend/services/outliner.ts:OutlinerService",
+      "type": "related",
+      "direction": "forward",
+      "description": "OutlinerService 是主要业务边界。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:shared-outliner-service",
+      "target": "file:src/backend/server/index.ts",
+      "type": "related",
+      "direction": "forward",
+      "description": "HTTP 入口复用业务边界。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:shared-outliner-service",
+      "target": "file:src/backend/cli/index.ts",
+      "type": "related",
+      "direction": "forward",
+      "description": "CLI 入口复用业务边界。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:shared-outliner-service",
+      "target": "file:src/backend/mcp/server.ts",
+      "type": "related",
+      "direction": "forward",
+      "description": "MCP 入口复用业务边界。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:web-outline-editing",
+      "target": "function:src/web/App.tsx:App",
+      "type": "related",
+      "direction": "forward",
+      "description": "App 实现键盘优先的大纲编辑状态机。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:web-outline-editing",
+      "target": "function:src/web/App.tsx:NodeRow",
+      "type": "related",
+      "direction": "forward",
+      "description": "NodeRow 实现单节点编辑交互。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:portable-import-export",
+      "target": "file:src/backend/importExport/markdown.ts",
+      "type": "related",
+      "direction": "forward",
+      "description": "Markdown 模块提供可移植文本格式。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:portable-import-export",
+      "target": "file:src/backend/importExport/opml.ts",
+      "type": "related",
+      "direction": "forward",
+      "description": "OPML 模块提供与大纲工具兼容的 XML 格式。",
+      "weight": 0.5
+    },
+    {
+      "source": "concept:llm-automation-surface",
+      "target": "file:src/backend/mcp/server.ts",
+      "type": "related",
+      "direction": "forward",
+      "description": "MCP server 暴露 LLM 可调用的本地工具。",
+      "weight": 0.5
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer:project-guidance-config",
+      "name": "项目文档与配置",
+      "description": "说明项目用途、协作规则、npm scripts、TypeScript 编译边界和 Vite 前端开发代理。",
+      "nodeIds": [
+        "document:AGENTS.md",
+        "document:README.md",
+        "config:package.json",
+        "config:tsconfig.node.json",
+        "config:tsconfig.web.json",
+        "config:vite.config.ts",
+        "file:index.html"
+      ]
+    },
+    {
+      "id": "layer:domain-storage-service",
+      "name": "领域模型、SQLite 与业务服务",
+      "description": "定义核心大纲数据模型、SQLite schema 和围绕节点树/标签/字段的共享业务服务。",
+      "nodeIds": [
+        "file:src/backend/domain/types.ts",
+        "file:src/backend/db/database.ts",
+        "file:src/backend/services/outliner.ts"
+      ]
+    },
+    {
+      "id": "layer:import-export",
+      "name": "导入导出",
+      "description": "把同一节点树模型转换为 Markdown 和 OPML，供 Web、CLI、MCP 和测试共享。",
+      "nodeIds": [
+        "file:src/backend/importExport/markdown.ts",
+        "file:src/backend/importExport/opml.ts"
+      ]
+    },
+    {
+      "id": "layer:backend-entrypoints",
+      "name": "后端入口与自动化接口",
+      "description": "HTTP API、CLI 和 MCP server 都以 OutlinerService 为边界暴露本地大纲操作。",
+      "nodeIds": [
+        "file:src/backend/server/index.ts",
+        "file:src/backend/cli/index.ts",
+        "file:src/backend/mcp/server.ts"
+      ]
+    },
+    {
+      "id": "layer:web-application",
+      "name": "React Web 应用",
+      "description": "前端 API client、主题 provider、React 入口、主编辑器组件和 CSS 共同实现本地大纲 UI。",
+      "nodeIds": [
+        "file:src/web/api.ts",
+        "file:src/web/theme.tsx",
+        "file:src/web/main.tsx",
+        "file:src/web/App.tsx",
+        "file:src/web/styles.css"
+      ]
+    },
+    {
+      "id": "layer:test-suite",
+      "name": "测试套件",
+      "description": "Vitest 使用临时 SQLite 数据库验证服务层、迁移和导入导出行为。",
+      "nodeIds": [
+        "file:tests/outliner.test.ts"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "从项目目标开始",
+      "description": "先看 README 和 package.json，建立 OpenOutliner 是本地优先大纲应用，以及它有哪些运行入口的全局认知。",
+      "nodeIds": [
+        "document:README.md",
+        "config:package.json"
+      ],
+      "languageLesson": "Local-first 在这里不是口号，而是所有入口都围绕同一个本地 SQLite 文件读写。"
+    },
+    {
+      "order": 2,
+      "title": "理解数据模型和存储",
+      "description": "接着看领域类型和数据库迁移，确认工作区、节点、标签、字段如何落到 SQLite schema。",
+      "nodeIds": [
+        "file:src/backend/domain/types.ts",
+        "file:src/backend/db/database.ts",
+        "table:src/backend/db/database.ts:nodes"
+      ]
+    },
+    {
+      "order": 3,
+      "title": "阅读核心业务边界",
+      "description": "OutlinerService 是最关键的代码：节点创建、排序移动、递归树、搜索、标签和字段都在这里集中实现。",
+      "nodeIds": [
+        "file:src/backend/services/outliner.ts",
+        "class:src/backend/services/outliner.ts:OutlinerService",
+        "concept:shared-outliner-service"
+      ]
+    },
+    {
+      "order": 4,
+      "title": "查看可移植格式",
+      "description": "Markdown 和 OPML 模块展示外部格式如何复用服务层，而不是绕过业务规则直接写数据库。",
+      "nodeIds": [
+        "file:src/backend/importExport/markdown.ts",
+        "file:src/backend/importExport/opml.ts",
+        "concept:portable-import-export"
+      ]
+    },
+    {
+      "order": 5,
+      "title": "串起后端入口",
+      "description": "HTTP、CLI 和 MCP 是三种入口形态，但它们都创建服务并调用同一组业务方法。",
+      "nodeIds": [
+        "file:src/backend/server/index.ts",
+        "file:src/backend/cli/index.ts",
+        "file:src/backend/mcp/server.ts",
+        "concept:llm-automation-surface"
+      ]
+    },
+    {
+      "order": 6,
+      "title": "进入前端编辑器",
+      "description": "从 main.tsx 进入 App，重点看树展平、键盘操作、拖拽移动、标签管理和导入导出如何触发 API。",
+      "nodeIds": [
+        "file:src/web/main.tsx",
+        "file:src/web/App.tsx",
+        "function:src/web/App.tsx:App",
+        "function:src/web/App.tsx:NodeRow"
+      ]
+    },
+    {
+      "order": 7,
+      "title": "用测试确认行为边界",
+      "description": "最后看 Vitest 用例，它们覆盖最容易破坏的树排序、字段标签、迁移和格式往返行为。",
+      "nodeIds": [
+        "file:tests/outliner.test.ts"
+      ]
+    }
+  ]
+}
