@@ -679,15 +679,15 @@ textarea:focus-visible {
   color: var(--muted-foreground);
   background: transparent;
   cursor: grab;
-  opacity: 0.45;
+  opacity: 0.28;
   touch-action: none;
 }
 
 .dragHandle:hover:not(:disabled),
 .dragHandle:focus-visible {
-  color: var(--foreground);
+  color: var(--muted-foreground);
   background: transparent;
-  opacity: 1;
+  opacity: 0.72;
 }
 
 .dragHandle:active {
@@ -702,7 +702,11 @@ textarea:focus-visible {
 .nodeRow:hover .dragHandle,
 .nodeRow.selected .dragHandle,
 .nodeRow.dragging .dragHandle {
-  opacity: 1;
+  opacity: 0.62;
+}
+
+.nodeRow.dragging .dragHandle {
+  opacity: 0.84;
 }
 
 .iconButton {
