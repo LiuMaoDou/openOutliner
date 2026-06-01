@@ -1,11 +1,15 @@
 import { XMLBuilder, XMLParser } from "fast-xml-parser";
 import type { OutlineTreeNode } from "../domain/types.js";
-import type { OutlinerService } from "../services/outliner.js";
+import { type OutlinerService, ValidationError } from "../services/outliner.js";
 
 interface OpmlOutline {
   "@_text"?: string;
   "@_title"?: string;
   "@_done"?: string;
+  "@_note"?: string;
+  "@__note"?: string;
+  "@_description"?: string;
+  "@__description"?: string;
   outline?: OpmlOutline | OpmlOutline[];
 }
 
@@ -22,6 +26,7 @@ export function exportOpml(service: OutlinerService, workspaceId: string): strin
   const builder = new XMLBuilder({
     ignoreAttributes: false,
     format: true,
+    suppressBooleanAttributes: false,
     suppressEmptyNode: true
   });
 
@@ -31,7 +36,7 @@ export function exportOpml(service: OutlinerService, workspaceId: string): strin
       "@_version": "2.0",
       head: { title: workspace.name },
       body: {
-        outline: root.children.map(nodeToOpml)
+        outline: nodesToOpml(root.children)
       }
     }
   });
@@ -60,6 +65,7 @@ export function importOpml(
     const node = service.createNode({
       parentId: targetParentId,
       title,
+      body: outlineBody(outline),
       done: String(outline["@_done"]).toLowerCase() === "true"
     });
     imported += 1;
@@ -75,12 +81,22 @@ export function importOpml(
   return { imported, workspaceId: workspace.id };
 }
 
-function nodeToOpml(node: OutlineTreeNode): OpmlOutline {
-  return {
-    "@_text": node.title,
-    "@_done": node.done ? "true" : "false",
-    outline: node.children.map(nodeToOpml)
+function nodesToOpml(nodes: OutlineTreeNode[]): OpmlOutline[] {
+  return nodes.flatMap(nodeToOpml);
+}
+
+function nodeToOpml(node: OutlineTreeNode): OpmlOutline[] {
+  const title = node.title.trim();
+  const children = nodesToOpml(node.children);
+  if (!title) return children;
+
+  const outline: OpmlOutline = {
+    "@_text": title,
+    "@_done": node.done ? "true" : "false"
   };
+  if (node.body.trim()) outline["@__note"] = node.body.trim();
+  if (children.length > 0) outline.outline = children;
+  return [outline];
 }
 
 function asArray<T>(value: T | T[] | undefined): T[] {
@@ -98,7 +114,23 @@ function targetWorkspace(
   input: { workspaceId?: string; parentId?: string },
   parsed: ParsedOpml
 ) {
+  if (input.parentId) {
+    const parent = service.getNode(input.parentId);
+    if (input.workspaceId && input.workspaceId !== parent.workspaceId) {
+      throw new ValidationError("Parent node must belong to the selected workspace.");
+    }
+    return service.getWorkspace(parent.workspaceId);
+  }
   if (input.workspaceId) return service.getWorkspace(input.workspaceId);
-  if (input.parentId) return service.getWorkspace(service.getNode(input.parentId).workspaceId);
   return service.createWorkspace(opmlTitle(parsed));
+}
+
+function outlineBody(outline: OpmlOutline): string {
+  return (
+    outline["@__note"] ??
+    outline["@_note"] ??
+    outline["@__description"] ??
+    outline["@_description"] ??
+    ""
+  ).trim();
 }

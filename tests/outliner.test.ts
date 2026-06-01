@@ -126,6 +126,36 @@ describe("import/export", () => {
     expect(exported).toContain("- [x] Gamma");
   });
 
+  it("round-trips Markdown body, tags, and exported workspace heading", () => {
+    const workspace = service.createWorkspace("Markdown Details");
+    const alpha = service.createNode({
+      parentId: workspace.rootNodeId,
+      title: "Alpha",
+      body: "First line\nSecond line",
+      done: true
+    });
+    service.setNodeTag(alpha.id, "project");
+    service.createNode({ parentId: alpha.id, title: "Beta" });
+    const emptyWrapper = service.createNode({ parentId: workspace.rootNodeId, title: "" });
+    service.createNode({ parentId: emptyWrapper.id, title: "Promoted" });
+
+    const exported = exportMarkdown(service, workspace.id);
+    const importedWorkspace = service.createWorkspace("Markdown Details");
+    const result = importMarkdown(service, {
+      workspaceId: importedWorkspace.id,
+      content: exported
+    });
+    const tree = service.getTree(importedWorkspace.rootNodeId);
+
+    expect(exported).not.toContain("- \n");
+    expect(result.imported).toBe(3);
+    expect(tree.children.map(node => node.title)).toEqual(["Alpha", "Promoted"]);
+    expect(tree.children[0].done).toBe(true);
+    expect(tree.children[0].body).toBe("First line\nSecond line");
+    expect(tree.children[0].tags[0].name).toBe("project");
+    expect(tree.children[0].children[0].title).toBe("Beta");
+  });
+
   it("imports and exports OPML hierarchy", () => {
     const workspace = service.createWorkspace("OPML");
 
@@ -141,6 +171,30 @@ describe("import/export", () => {
     expect(root.children[0].children[0].title).toBe("Beta");
     expect(exported).toContain('text="Alpha"');
     expect(exported).toContain('text="Beta"');
+  });
+
+  it("exports OPML without empty outline nodes and preserves notes", () => {
+    const workspace = service.createWorkspace("OPML Export");
+    const emptyWrapper = service.createNode({ parentId: workspace.rootNodeId, title: "" });
+    service.createNode({
+      parentId: emptyWrapper.id,
+      title: "Nested",
+      body: "Details",
+      done: true
+    });
+    service.createNode({ parentId: workspace.rootNodeId, title: "" });
+
+    const exported = exportOpml(service, workspace.id);
+    const result = importOpml(service, { content: exported });
+    const imported = service.getTree(service.getWorkspace(result.workspaceId).rootNodeId);
+
+    expect(exported).not.toContain('text=""');
+    expect(exported).toContain('text="Nested"');
+    expect(exported).toContain('_note="Details"');
+    expect(result.imported).toBe(1);
+    expect(imported.children[0].title).toBe("Nested");
+    expect(imported.children[0].done).toBe(true);
+    expect(imported.children[0].body).toBe("Details");
   });
 
   it("imports OPML into a new workspace and skips empty wrapper outlines", () => {
