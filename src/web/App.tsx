@@ -2,6 +2,7 @@ import {
   Check,
   CircleCheck,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   FileDown,
   FolderTree,
@@ -47,6 +48,7 @@ export function App() {
   const [managedTagName, setManagedTagName] = useState("");
   const [tags, setTags] = useState<Tag[]>([]);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const workspaceIdRef = useRef("");
   const treeRequestRef = useRef(0);
@@ -295,27 +297,42 @@ export function App() {
   };
 
   return (
-    <div className="appShell">
+    <div className={`appShell${sidebarCollapsed ? " sidebarCollapsed" : ""}`}>
       <aside className="sidebar">
         <div className="sidebarHeader">
           <div className="brand">
             <span className="brandMark">
               <FolderTree size={18} />
             </span>
-            <span>OpenOutliner</span>
+            {!sidebarCollapsed && <span>OpenOutliner</span>}
+            <button
+              className="collapseButton"
+              type="button"
+              onClick={() => setSidebarCollapsed(collapsed => !collapsed)}
+              title={sidebarCollapsed ? "Expand" : "Collapse"}
+            >
+              {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+            </button>
           </div>
-          <button className="commandButton" type="button" onClick={createWorkspace}>
-            <Plus size={15} />
-            <span>Workspace</span>
-          </button>
+          {!sidebarCollapsed ? (
+            <button className="commandButton" type="button" onClick={createWorkspace}>
+              <Plus size={15} />
+              <span>Workspace</span>
+            </button>
+          ) : (
+            <button className="sidebarCollapsedAdd" type="button" onClick={createWorkspace} title="New Workspace">
+              <Plus size={15} />
+            </button>
+          )}
         </div>
 
         <div className="workspaceGroup">
-          <div className="sidebarLabel">Workspaces</div>
+          <div className="sidebarLabel">{sidebarCollapsed ? "" : "Workspaces"}</div>
           {workspaces.map(workspace => (
             <div
               className={workspace.id === workspaceId ? "workspaceItem active" : "workspaceItem"}
               key={workspace.id}
+              title={sidebarCollapsed ? workspace.name : undefined}
               onClick={() => selectWorkspace(workspace.id)}
             >
               <span className="workspaceIcon">
@@ -326,26 +343,30 @@ export function App() {
                   strokeWidth={2.2}
                 />
               </span>
-              <input
-                value={workspace.name}
-                onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
-                onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
-                onFocus={() => selectWorkspace(workspace.id)}
-                onKeyDown={event => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                }}
-              />
-              <button
-                className="workspaceDeleteButton"
-                type="button"
-                title="Delete workspace"
-                onClick={event => {
-                  event.stopPropagation();
-                  deleteWorkspace(workspace).catch(toError(setError));
-                }}
-              >
-                <Trash2 size={14} />
-              </button>
+              {!sidebarCollapsed && (
+                <input
+                  value={workspace.name}
+                  onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
+                  onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
+                  onFocus={() => selectWorkspace(workspace.id)}
+                  onKeyDown={event => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                  }}
+                />
+              )}
+              {!sidebarCollapsed && (
+                <button
+                  className="workspaceDeleteButton"
+                  type="button"
+                  title="Delete workspace"
+                  onClick={event => {
+                    event.stopPropagation();
+                    deleteWorkspace(workspace).catch(toError(setError));
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -418,9 +439,9 @@ export function App() {
                       setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
                     }}
                     onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
-                    onToggle={async patch => {
-                      await patchNode(node.id, patch);
-                      await refresh(node.id);
+                    onToggle={patch => {
+                      setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
+                      patchNode(node.id, patch).catch(toError(setError));
                     }}
                     onCreateAfter={() => createAfter(node).catch(toError(setError))}
                     onIndent={() => indent(node).catch(toError(setError))}
@@ -607,7 +628,7 @@ function NodeRow({
   onSelect: () => void;
   onPatchLocal: (patch: Partial<OutlineTreeNode>) => void;
   onCommit: (patch: Partial<OutlineTreeNode>) => void;
-  onToggle: (patch: Partial<OutlineTreeNode>) => Promise<void>;
+  onToggle: (patch: Partial<OutlineTreeNode>) => void;
   onCreateAfter: () => void;
   onIndent: () => void;
   onOutdent: () => void;
@@ -643,6 +664,7 @@ function NodeRow({
         ref={registerInput}
         className="nodeTitle"
         value={node.title}
+        placeholder="Untitled"
         onFocus={onSelect}
         onChange={event => onPatchLocal({ title: event.target.value })}
         onBlur={event => onCommit({ title: event.target.value })}
@@ -669,7 +691,7 @@ function NodeRow({
       <div className="nodeTags">
         {node.tags.map(tag => (
           <span key={tag.id}>
-            #{tag.name}
+            {tag.name}
           </span>
         ))}
       </div>

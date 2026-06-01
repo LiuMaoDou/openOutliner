@@ -187,7 +187,7 @@ export class OutlinerService {
           parent.workspaceId,
           input.parentId,
           position,
-          input.title || "Untitled",
+          input.title ?? "",
           input.body ?? "",
           input.done ? 1 : 0,
           now,

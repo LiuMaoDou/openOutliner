@@ -115,6 +115,50 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);
   min-height: 100vh;
+  transition: grid-template-columns 200ms ease;
+}
+
+.appShell.sidebarCollapsed {
+  grid-template-columns: 54px minmax(0, 1fr);
+}
+
+.appShell.sidebarCollapsed .sidebar {
+  padding: 14px 6px;
+  align-items: center;
+}
+
+.appShell.sidebarCollapsed .sidebarHeader {
+  align-items: center;
+}
+
+.appShell.sidebarCollapsed .brand {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.appShell.sidebarCollapsed .collapseButton {
+  margin: 6px 0 0;
+}
+
+.appShell.sidebarCollapsed .sidebarCollapsedAdd {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.appShell.sidebarCollapsed .workspaceGroup {
+  width: 100%;
+}
+
+.appShell.sidebarCollapsed .workspaceItem {
+  grid-template-columns: 1fr;
+  padding: 0;
+  justify-items: center;
+}
+
+.appShell.sidebarCollapsed .workspaceIcon {
+  justify-content: center;
 }
 
 .sidebar {
@@ -145,6 +189,25 @@ textarea:focus-visible {
   font-weight: 650;
 }
 
+.collapseButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.collapseButton:hover {
+  color: var(--foreground);
+  background: var(--sidebar-accent);
+  border-color: var(--border);
+}
+
 .brandMark {
   display: inline-flex;
   align-items: center;
@@ -157,6 +220,7 @@ textarea:focus-visible {
 }
 
 .commandButton,
+.sidebarCollapsedAdd,
 .workspaceItem,
 .toolbar button,
 .iconButton,
@@ -180,7 +244,16 @@ textarea:focus-visible {
   box-shadow: var(--shadow-sm);
 }
 
-.commandButton:hover {
+.sidebarCollapsedAdd {
+  width: 100%;
+  height: 34px;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.commandButton:hover,
+.sidebarCollapsedAdd:hover {
   background: #27272a;
 }
 
@@ -218,6 +291,7 @@ textarea:focus-visible {
   min-width: 0;
   height: 28px;
   padding: 0;
+  font-weight: 600;
   color: inherit;
   background: transparent;
   border: 0;
@@ -396,7 +470,7 @@ textarea:focus-visible {
 
 .contentGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 332px;
+  grid-template-columns: minmax(0, 1fr) 264px;
   position: relative;
   min-height: 0;
   flex: 1;
