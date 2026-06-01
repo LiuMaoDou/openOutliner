@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FileDown,
   FolderTree,
+  GripVertical,
   Monitor,
   Moon,
   PanelRight,
@@ -69,7 +70,6 @@ export function App() {
   const tagsRequestRef = useRef(0);
   const draggingIdRef = useRef("");
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
-  const suppressDoneToggleRef = useRef("");
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -212,28 +212,15 @@ export function App() {
   const cycleTheme = () => setTheme(nextTheme(theme));
 
   const startNodeDrag = (node: OutlineTreeNode, event: PointerEvent<HTMLButtonElement>) => {
-    if (isSearching || event.button !== 0) return;
-    const startX = event.clientX;
-    const startY = event.clientY;
-    let hasStarted = false;
-
-    const beginDrag = () => {
-      if (hasStarted) return;
-      hasStarted = true;
-      suppressDoneToggleRef.current = node.id;
-      draggingIdRef.current = node.id;
-      dragTargetRef.current = null;
-      setSelectedId(node.id);
-      setDragState({ draggingId: node.id });
-      document.body.classList.add("isDraggingNode");
-    };
+    if (isSearching) return;
+    event.preventDefault();
+    draggingIdRef.current = node.id;
+    dragTargetRef.current = null;
+    setSelectedId(node.id);
+    setDragState({ draggingId: node.id });
+    document.body.classList.add("isDraggingNode");
 
     const move = (pointerEvent: globalThis.PointerEvent) => {
-      const distance = Math.hypot(pointerEvent.clientX - startX, pointerEvent.clientY - startY);
-      if (!hasStarted && distance < 5) return;
-      beginDrag();
-      pointerEvent.preventDefault();
-
       const targetElement = document
         .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
         ?.closest<HTMLElement>("[data-node-id]");
@@ -259,13 +246,9 @@ export function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      if (!hasStarted) return;
       const target = dragTargetRef.current?.overId ? nodeMap.get(dragTargetRef.current.overId) : undefined;
       const placement = dragTargetRef.current?.placement;
       finishNodeDrag();
-      window.setTimeout(() => {
-        if (suppressDoneToggleRef.current === node.id) suppressDoneToggleRef.current = "";
-      }, 0);
       if (target && placement) {
         moveNodeToTarget(node, target, placement).catch(toError(setError));
       }
@@ -548,10 +531,6 @@ export function App() {
                     }}
                     onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
                     onToggle={patch => {
-                      if (patch.done !== undefined && suppressDoneToggleRef.current === node.id) {
-                        suppressDoneToggleRef.current = "";
-                        return;
-                      }
                       setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
                       patchNode(node.id, patch).catch(toError(setError));
                     }}
@@ -766,9 +745,6 @@ function NodeRow({
   ]
     .filter(Boolean)
     .join(" ");
-  const checkClassName = ["checkButton", node.done ? "done" : "", canDrag ? "movable" : ""]
-    .filter(Boolean)
-    .join(" ");
 
   return (
     <div
@@ -777,14 +753,14 @@ function NodeRow({
       style={{ "--depth": depth } as CSSProperties}
     >
       <button
-        className={checkClassName}
+        className="dragHandle"
         type="button"
-        title={canDrag ? "Click to toggle, drag to move" : node.done ? "Mark open" : "Mark done"}
-        aria-pressed={node.done}
-        onPointerDown={canDrag ? onMoveStart : undefined}
-        onClick={() => onToggle({ done: !node.done })}
+        title={canDrag ? "Move node" : "Move disabled while searching"}
+        aria-label="Move node"
+        disabled={!canDrag}
+        onPointerDown={onMoveStart}
       >
-        {node.done && <Check size={15} strokeWidth={3} />}
+        <GripVertical size={15} />
       </button>
       <button
         className="iconButton disclosureButton"
@@ -794,6 +770,15 @@ function NodeRow({
         onClick={() => onToggle({ collapsed: !node.collapsed })}
       >
         {node.children.length > 0 ? node.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} /> : null}
+      </button>
+      <button
+        className={node.done ? "checkButton done" : "checkButton"}
+        type="button"
+        title={node.done ? "Mark open" : "Mark done"}
+        aria-pressed={node.done}
+        onClick={() => onToggle({ done: !node.done })}
+      >
+        {node.done && <Check size={15} strokeWidth={3} />}
       </button>
       <input
         ref={registerInput}
