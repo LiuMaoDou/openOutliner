@@ -125,10 +125,17 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow: hidden;
   background:
     linear-gradient(180deg, var(--body-wash-start), var(--body-wash-end)) 0 0 / 100% 220px no-repeat,
     var(--background);
@@ -173,7 +180,9 @@ textarea:focus-visible {
 .appShell {
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   transition: grid-template-columns 200ms ease;
 }
 
@@ -221,11 +230,15 @@ textarea:focus-visible {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
   display: flex;
   flex-direction: column;
   gap: 20px;
   min-width: 0;
+  height: 100vh;
   padding: 14px;
+  overflow-y: auto;
   color: var(--sidebar-foreground);
   background: var(--sidebar);
   border-right: 1px solid var(--border);
@@ -315,6 +328,22 @@ textarea:focus-visible {
 .commandButton:hover,
 .sidebarCollapsedAdd:hover {
   background: var(--primary-hover);
+}
+
+.dark .commandButton,
+.dark .sidebarCollapsedAdd {
+  color: var(--foreground);
+  background: rgba(39, 39, 42, 0.48);
+  border-color: rgba(82, 82, 91, 0.58);
+  box-shadow: 0 1px 10px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px) saturate(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+}
+
+.dark .commandButton:hover,
+.dark .sidebarCollapsedAdd:hover {
+  background: rgba(63, 63, 70, 0.58);
+  border-color: rgba(113, 113, 122, 0.62);
 }
 
 .workspaceGroup {
@@ -416,6 +445,9 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .topbar {
@@ -543,6 +575,7 @@ textarea:focus-visible {
   grid-template-columns: minmax(0, 1fr) 264px;
   position: relative;
   min-height: 0;
+  overflow: hidden;
   flex: 1;
 }
 
@@ -813,11 +846,15 @@ textarea:focus-visible {
 
 .inspector {
   --inspector-font-size: 0.84rem;
+  position: sticky;
+  top: 0;
   display: flex;
   flex-direction: column;
   gap: 18px;
   min-width: 0;
+  min-height: 0;
   padding: 16px;
+  overflow-y: auto;
   background: var(--surface);
   border-left: 1px solid var(--border);
   font-size: var(--inspector-font-size);
@@ -1135,11 +1172,18 @@ textarea:focus-visible {
 
   .contentGrid {
     grid-template-columns: 1fr;
+    overflow-y: auto;
   }
 
   .inspector {
+    position: relative;
+    overflow: visible;
     border-top: 1px solid var(--border);
     border-left: 0;
+  }
+
+  .outlineSurface {
+    overflow: visible;
   }
 
   .outlineHeader {
