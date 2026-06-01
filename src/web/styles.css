@@ -134,6 +134,11 @@ body {
     var(--background);
 }
 
+body.isDraggingNode {
+  cursor: grabbing;
+  user-select: none;
+}
+
 button,
 input,
 textarea {
@@ -675,6 +680,7 @@ textarea:focus-visible {
   background: transparent;
   cursor: grab;
   opacity: 0.45;
+  touch-action: none;
 }
 
 .dragHandle:hover:not(:disabled),

@@ -18,7 +18,7 @@ import {
   Upload
 } from "lucide-react";
 import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import {
   apiDelete,
   apiGet,
@@ -69,6 +69,7 @@ export function App() {
   const treeRequestRef = useRef(0);
   const tagsRequestRef = useRef(0);
   const draggingIdRef = useRef("");
+  const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -210,58 +211,69 @@ export function App() {
 
   const cycleTheme = () => setTheme(nextTheme(theme));
 
-  const startNodeDrag = (node: OutlineTreeNode, event: DragEvent<HTMLButtonElement>) => {
+  const startNodeDrag = (node: OutlineTreeNode, event: PointerEvent<HTMLButtonElement>) => {
     if (isSearching) return;
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", node.id);
+    event.preventDefault();
     draggingIdRef.current = node.id;
+    dragTargetRef.current = null;
     setSelectedId(node.id);
     setDragState({ draggingId: node.id });
-  };
+    document.body.classList.add("isDraggingNode");
 
-  const updateDragTarget = (target: OutlineTreeNode, event: DragEvent<HTMLDivElement>) => {
-    if (isSearching) return;
-    const draggingId = draggingIdRef.current || dragState?.draggingId || event.dataTransfer.getData("text/plain");
-    const source = draggingId ? nodeMap.get(draggingId) : undefined;
-    if (!source || source.id === target.id || isDescendantNode(source, target.id)) {
-      event.dataTransfer.dropEffect = "none";
-      return;
-    }
+    const move = (pointerEvent: globalThis.PointerEvent) => {
+      const targetElement = document
+        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
+        ?.closest<HTMLElement>("[data-node-id]");
+      const targetId = targetElement?.dataset.nodeId;
+      const target = targetId ? nodeMap.get(targetId) : undefined;
 
-    event.preventDefault();
-    const placement = getDropPlacement(event);
-    event.dataTransfer.dropEffect = "move";
-    setDragState(current =>
-      current?.draggingId === source.id && current.overId === target.id && current.placement === placement
-        ? current
-        : { draggingId: source.id, overId: target.id, placement }
-    );
-  };
+      if (!targetElement || !target || target.id === node.id || isDescendantNode(node, target.id)) {
+        dragTargetRef.current = null;
+        setDragState({ draggingId: node.id });
+        return;
+      }
 
-  const dropNode = async (target: OutlineTreeNode, event: DragEvent<HTMLDivElement>) => {
-    if (!tree || isSearching) return;
-    const draggingId = event.dataTransfer.getData("text/plain") || draggingIdRef.current || dragState?.draggingId;
-    const source = draggingId ? nodeMap.get(draggingId) : undefined;
-    if (!source || source.id === target.id || isDescendantNode(source, target.id)) {
+      const placement = getDropPlacement(targetElement, pointerEvent.clientY);
+      dragTargetRef.current = { overId: target.id, placement };
+      setDragState(current =>
+        current?.draggingId === node.id && current.overId === target.id && current.placement === placement
+          ? current
+          : { draggingId: node.id, overId: target.id, placement }
+      );
+    };
+
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      const target = dragTargetRef.current?.overId ? nodeMap.get(dragTargetRef.current.overId) : undefined;
+      const placement = dragTargetRef.current?.placement;
       finishNodeDrag();
-      return;
-    }
+      if (target && placement) {
+        moveNodeToTarget(node, target, placement).catch(toError(setError));
+      }
+    };
 
-    event.preventDefault();
-    const placement = getDropPlacement(event);
-    const parentId = target.parentId ?? tree.id;
-    let position = target.position + (placement === "after" ? 1 : 0);
-    if (source.parentId === parentId && source.position < position) position -= 1;
-
-    finishNodeDrag();
-    if (source.parentId === parentId && source.position === position) return;
-    await apiPost(`/api/nodes/${source.id}/move`, { parentId, position });
-    await refresh(source.id);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
   };
 
   const finishNodeDrag = () => {
     draggingIdRef.current = "";
+    dragTargetRef.current = null;
+    document.body.classList.remove("isDraggingNode");
     setDragState(null);
+  };
+
+  const moveNodeToTarget = async (source: OutlineTreeNode, target: OutlineTreeNode, placement: DropPlacement) => {
+    if (!tree || source.id === target.id || isDescendantNode(source, target.id)) return;
+    const parentId = target.parentId ?? tree.id;
+    let position = target.position + (placement === "after" ? 1 : 0);
+    if (source.parentId === parentId && source.position < position) position -= 1;
+    if (source.parentId === parentId && source.position === position) return;
+    await apiPost(`/api/nodes/${source.id}/move`, { parentId, position });
+    await refresh(source.id);
   };
 
   const selectWorkspace = useCallback((id: string) => {
@@ -527,10 +539,7 @@ export function App() {
                     onOutdent={() => outdent(node).catch(toError(setError))}
                     onFocusPrevious={() => focusRelative(node, -1)}
                     onFocusNext={() => focusRelative(node, 1)}
-                    onDragStart={event => startNodeDrag(node, event)}
-                    onDragOver={event => updateDragTarget(node, event)}
-                    onDrop={event => dropNode(node, event).catch(toError(setError))}
-                    onDragEnd={finishNodeDrag}
+                    onMoveStart={event => startNodeDrag(node, event)}
                     onDelete={async () => {
                       await apiDelete(`/api/nodes/${node.id}`);
                       await refresh(flatNodes[flatNodes.findIndex(item => item.node.id === node.id) - 1]?.node.id);
@@ -705,10 +714,7 @@ function NodeRow({
   onOutdent,
   onFocusPrevious,
   onFocusNext,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
+  onMoveStart,
   onDelete
 }: {
   node: OutlineTreeNode;
@@ -727,10 +733,7 @@ function NodeRow({
   onOutdent: () => void;
   onFocusPrevious: () => void;
   onFocusNext: () => void;
-  onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
-  onDragOver: (event: DragEvent<HTMLDivElement>) => void;
-  onDrop: (event: DragEvent<HTMLDivElement>) => void;
-  onDragEnd: () => void;
+  onMoveStart: (event: PointerEvent<HTMLButtonElement>) => void;
   onDelete: () => Promise<void>;
 }) {
   const rowClassName = [
@@ -746,19 +749,16 @@ function NodeRow({
   return (
     <div
       className={rowClassName}
+      data-node-id={node.id}
       style={{ "--depth": depth } as CSSProperties}
-      onDragOver={canDrag ? onDragOver : undefined}
-      onDrop={canDrag ? onDrop : undefined}
     >
       <button
         className="dragHandle"
         type="button"
         title={canDrag ? "Move node" : "Move disabled while searching"}
         aria-label="Move node"
-        draggable={canDrag}
         disabled={!canDrag}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
+        onPointerDown={onMoveStart}
       >
         <GripVertical size={15} />
       </button>
@@ -854,9 +854,9 @@ function isDescendantNode(node: OutlineTreeNode, id: string): boolean {
   return node.children.some(child => child.id === id || isDescendantNode(child, id));
 }
 
-function getDropPlacement(event: DragEvent<HTMLElement>): DropPlacement {
-  const bounds = event.currentTarget.getBoundingClientRect();
-  return event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement {
+  const bounds = element.getBoundingClientRect();
+  return clientY < bounds.top + bounds.height / 2 ? "before" : "after";
 }
 
 function nextTheme(theme: Theme): Theme {
