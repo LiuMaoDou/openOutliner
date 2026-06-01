@@ -33,12 +33,9 @@
 :root {
   --background: #ffffff;
   --foreground: #09090b;
-  --card: #ffffff;
-  --card-foreground: #09090b;
-  --popover: #ffffff;
-  --popover-foreground: #09090b;
   --primary: #18181b;
   --primary-foreground: #fafafa;
+  --primary-hover: #27272a;
   --secondary: #f4f4f5;
   --secondary-foreground: #18181b;
   --muted: #f4f4f5;
@@ -55,8 +52,24 @@
   --sidebar: #fafafa;
   --sidebar-foreground: #18181b;
   --sidebar-accent: #f4f4f5;
+  --topbar-background: rgba(255, 255, 255, 0.88);
+  --surface: #fcfcfc;
+  --selected: rgba(255, 255, 255, 0.58);
+  --selected-border: rgba(212, 212, 216, 0.68);
+  --body-wash-start: rgba(250, 250, 250, 0.72);
+  --body-wash-end: rgba(255, 255, 255, 0);
+  --placeholder: #a1a1aa;
+  --danger-foreground: #991b1b;
+  --danger-surface: #fef2f2;
+  --danger-border: #fecaca;
+  --tag-foreground: #3f3f46;
+  --tag-background: #f4f4f5;
+  --tag-border: #d4d4d8;
+  --soft-foreground: #52525b;
+  --drop-indicator: #18181b;
   --radius: 8px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 1px 8px rgba(24, 24, 27, 0.06);
   font-family:
     "OpenOutlinerSans", "OpenOutlinerCJK", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
@@ -65,6 +78,47 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+.dark {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
+  --primary-hover: #e4e4e7;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --destructive: #f87171;
+  --destructive-foreground: #450a0a;
+  --success: #22c55e;
+  --success-foreground: #052e16;
+  --border: #27272a;
+  --input: #3f3f46;
+  --ring: #71717a;
+  --sidebar: #09090b;
+  --sidebar-foreground: #fafafa;
+  --sidebar-accent: #18181b;
+  --topbar-background: rgba(9, 9, 11, 0.86);
+  --surface: #0f0f12;
+  --selected: rgba(39, 39, 42, 0.58);
+  --selected-border: rgba(82, 82, 91, 0.72);
+  --body-wash-start: rgba(39, 39, 42, 0.5);
+  --body-wash-end: rgba(9, 9, 11, 0);
+  --placeholder: #71717a;
+  --danger-foreground: #fecaca;
+  --danger-surface: #450a0a;
+  --danger-border: #7f1d1d;
+  --tag-foreground: #e4e4e7;
+  --tag-background: #18181b;
+  --tag-border: #3f3f46;
+  --soft-foreground: #d4d4d8;
+  --drop-indicator: #fafafa;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 1px 10px rgba(0, 0, 0, 0.28);
 }
 
 * {
@@ -76,7 +130,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    linear-gradient(180deg, rgba(250, 250, 250, 0.72), rgba(255, 255, 255, 0)) 0 0 / 100% 220px no-repeat,
+    linear-gradient(180deg, var(--body-wash-start), var(--body-wash-end)) 0 0 / 100% 220px no-repeat,
     var(--background);
 }
 
@@ -223,6 +277,7 @@ textarea:focus-visible {
 .sidebarCollapsedAdd,
 .workspaceItem,
 .toolbar button,
+.dragHandle,
 .iconButton,
 .checkButton,
 .tagInput button,
@@ -254,7 +309,7 @@ textarea:focus-visible {
 
 .commandButton:hover,
 .sidebarCollapsedAdd:hover {
-  background: #27272a;
+  background: var(--primary-hover);
 }
 
 .workspaceGroup {
@@ -281,7 +336,7 @@ textarea:focus-visible {
   width: 100%;
   min-height: 34px;
   padding: 0 4px 0 10px;
-  color: #3f3f46;
+  color: var(--soft-foreground);
   text-align: left;
   background: transparent;
 }
@@ -365,7 +420,7 @@ textarea:focus-visible {
   gap: 12px;
   min-height: 58px;
   padding: 10px 16px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--topbar-background);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(12px);
 }
@@ -421,8 +476,9 @@ textarea:focus-visible {
 
 .searchBox input::placeholder,
 .tagInput input::placeholder,
+.nodeTitle::placeholder,
 .inspector textarea::placeholder {
-  color: #a1a1aa;
+  color: var(--placeholder);
 }
 
 .toolbar {
@@ -450,22 +506,27 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
+.themeToggle {
+  width: 36px;
+  padding: 0;
+}
+
 .errorBar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 8px 16px;
-  color: #991b1b;
-  background: #fef2f2;
-  border-bottom: 1px solid #fecaca;
+  color: var(--danger-foreground);
+  background: var(--danger-surface);
+  border-bottom: 1px solid var(--danger-border);
 }
 
 .errorBar button {
   width: 30px;
   height: 30px;
-  color: #991b1b;
-  background: #ffffff;
+  color: var(--danger-foreground);
+  background: var(--background);
 }
 
 .contentGrid {
@@ -516,13 +577,38 @@ textarea:focus-visible {
 .nodeRow {
   --depth: 0;
   display: grid;
-  grid-template-columns: 26px 24px minmax(120px, 1fr) auto 30px;
+  grid-template-columns: 20px 26px 24px minmax(120px, 1fr) auto 30px;
   align-items: center;
   gap: 6px;
   min-height: 36px;
   padding-left: calc(var(--depth) * 28px);
   border: 1px solid transparent;
   border-radius: var(--radius);
+  position: relative;
+}
+
+.nodeRow::before {
+  position: absolute;
+  right: 8px;
+  left: calc((var(--depth) * 28px) + 8px);
+  height: 2px;
+  content: "";
+  background: transparent;
+  border-radius: 999px;
+}
+
+.nodeRow.drop-before::before {
+  top: -1px;
+  background: var(--drop-indicator);
+}
+
+.nodeRow.drop-after::before {
+  bottom: -1px;
+  background: var(--drop-indicator);
+}
+
+.nodeRow.dragging {
+  opacity: 0.46;
 }
 
 .emptyNodeButton,
@@ -546,7 +632,7 @@ textarea:focus-visible {
 .emptyNodeButton:hover {
   color: var(--foreground);
   background: var(--accent);
-  border-color: #d4d4d8;
+  border-color: var(--tag-border);
 }
 
 .outlineEmptyState {
@@ -559,9 +645,9 @@ textarea:focus-visible {
 }
 
 .nodeRow.selected {
-  background: rgba(255, 255, 255, 0.58);
-  border-color: rgba(212, 212, 216, 0.68);
-  box-shadow: 0 1px 8px rgba(24, 24, 27, 0.04);
+  background: var(--selected);
+  border-color: var(--selected-border);
+  box-shadow: var(--shadow-md);
   backdrop-filter: blur(10px) saturate(1.08);
   -webkit-backdrop-filter: blur(10px) saturate(1.08);
 }
@@ -569,12 +655,44 @@ textarea:focus-visible {
 .nodeRow.completed .nodeTitle {
   color: var(--muted-foreground);
   text-decoration: line-through;
-  text-decoration-color: #71717a;
+  text-decoration-color: var(--muted-foreground);
   text-decoration-thickness: 1px;
 }
 
 .nodeRow.completed .nodeTags {
   opacity: 0.72;
+}
+
+.dragHandle {
+  width: 20px;
+  height: 26px;
+  padding: 0;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: grab;
+  opacity: 0.45;
+}
+
+.dragHandle:hover:not(:disabled),
+.dragHandle:focus-visible {
+  color: var(--foreground);
+  background: transparent;
+  opacity: 1;
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.dragHandle:disabled {
+  cursor: default;
+  opacity: 0.24;
+}
+
+.nodeRow:hover .dragHandle,
+.nodeRow.selected .dragHandle,
+.nodeRow.dragging .dragHandle {
+  opacity: 1;
 }
 
 .iconButton {
@@ -614,27 +732,27 @@ textarea:focus-visible {
   height: 18px;
   color: transparent;
   background: var(--background);
-  border-color: #d4d4d8;
+  border-color: var(--tag-border);
   border-radius: 999px;
-  box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.02);
+  box-shadow: inset 0 0 0 1px var(--selected);
 }
 
 .checkButton:hover {
   background: var(--muted);
-  border-color: #a1a1aa;
+  border-color: var(--ring);
 }
 
 .checkButton.done {
-  color: #52525b;
-  background: #f4f4f5;
-  border-color: #a1a1aa;
-  box-shadow: inset 0 0 0 1px rgba(82, 82, 91, 0.08);
+  color: var(--soft-foreground);
+  background: var(--muted);
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--selected-border);
 }
 
 .checkButton.done:hover {
-  color: #3f3f46;
-  background: #e4e4e7;
-  border-color: #71717a;
+  color: var(--foreground);
+  background: var(--secondary);
+  border-color: var(--muted-foreground);
 }
 
 .nodeTitle {
@@ -672,9 +790,9 @@ textarea:focus-visible {
   align-items: center;
   min-height: 22px;
   padding: 0 7px;
-  color: #3f3f46;
-  background: #f4f4f5;
-  border: 1px solid #d4d4d8;
+  color: var(--tag-foreground);
+  background: var(--tag-background);
+  border: 1px solid var(--tag-border);
   border-radius: 999px;
   font-size: 0.76rem;
 }
@@ -686,7 +804,7 @@ textarea:focus-visible {
   gap: 18px;
   min-width: 0;
   padding: 16px;
-  background: #fcfcfc;
+  background: var(--surface);
   border-left: 1px solid var(--border);
   font-size: var(--inspector-font-size);
 }
@@ -755,16 +873,16 @@ textarea:focus-visible {
   column-gap: 10px;
   width: 100%;
   padding: 14px;
-  color: #52525b;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid #d4d4d8;
+  color: var(--soft-foreground);
+  background: var(--selected);
+  border: 1px solid var(--tag-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
 }
 
 .notesAlertIcon {
   margin-top: 1px;
-  color: #27272a;
+  color: var(--foreground);
 }
 
 .notesAlertContent {
@@ -775,7 +893,7 @@ textarea:focus-visible {
 }
 
 .notesAlertTitle {
-  color: #18181b;
+  color: var(--foreground);
   font-size: var(--inspector-font-size);
   font-weight: 700;
   line-height: 1.35;
@@ -784,7 +902,7 @@ textarea:focus-visible {
 .notesAlert textarea {
   min-height: 128px;
   padding: 0;
-  color: #52525b;
+  color: var(--soft-foreground);
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -829,7 +947,7 @@ textarea:focus-visible {
 }
 
 .tagInput button:hover {
-  background: #27272a;
+  background: var(--primary-hover);
 }
 
 .tagInput button span {
@@ -879,9 +997,9 @@ textarea:focus-visible {
   min-width: 22px;
   height: 20px;
   padding: 0 6px;
-  color: #52525b;
-  background: #f4f4f5;
-  border: 1px solid #e4e4e7;
+  color: var(--soft-foreground);
+  background: var(--tag-background);
+  border: 1px solid var(--border);
   border-radius: 999px;
   font-size: var(--inspector-font-size);
   font-weight: 650;
@@ -950,10 +1068,10 @@ textarea:focus-visible {
   height: 32px;
   padding: 0 10px;
   color: var(--secondary-foreground);
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(212, 212, 216, 0.72);
+  background: var(--selected);
+  border: 1px solid var(--selected-border);
   border-radius: var(--radius);
-  box-shadow: 0 1px 8px rgba(24, 24, 27, 0.06);
+  box-shadow: var(--shadow-md);
   backdrop-filter: blur(10px) saturate(1.08);
   -webkit-backdrop-filter: blur(10px) saturate(1.08);
 }
@@ -1023,7 +1141,7 @@ textarea:focus-visible {
   }
 
   .nodeRow {
-    grid-template-columns: 24px 22px minmax(80px, 1fr) 28px;
+    grid-template-columns: 18px 24px 22px minmax(80px, 1fr) 28px;
     padding-left: calc(var(--depth) * 18px);
   }
 

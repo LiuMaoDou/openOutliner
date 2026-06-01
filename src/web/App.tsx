@@ -6,15 +6,19 @@ import {
   ChevronRight,
   FileDown,
   FolderTree,
+  GripVertical,
+  Monitor,
+  Moon,
   PanelRight,
   Plus,
   Search,
+  Sun,
   Tag as TagIcon,
   Trash2,
   Upload
 } from "lucide-react";
 import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import {
   apiDelete,
   apiGet,
@@ -25,6 +29,7 @@ import {
   type Tag,
   type Workspace
 } from "./api";
+import { useTheme, type Theme } from "./theme";
 
 interface FlatNode {
   node: OutlineTreeNode;
@@ -35,9 +40,18 @@ interface LoadTreeOptions {
   preserveSelection?: boolean;
 }
 
+type DropPlacement = "before" | "after";
+
+interface DragState {
+  draggingId: string;
+  overId?: string;
+  placement?: DropPlacement;
+}
+
 const iconNameSet = new Set<string>(iconNames);
 
 export function App() {
+  const { theme, setTheme } = useTheme();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>("");
   const [tree, setTree] = useState<OutlineTreeNode | null>(null);
@@ -50,9 +64,11 @@ export function App() {
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+  const [dragState, setDragState] = useState<DragState | null>(null);
   const workspaceIdRef = useRef("");
   const treeRequestRef = useRef(0);
   const tagsRequestRef = useRef(0);
+  const draggingIdRef = useRef("");
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -190,6 +206,62 @@ export function App() {
       setSelectedId(next.id);
       inputRefs.current.get(next.id)?.focus();
     }
+  };
+
+  const cycleTheme = () => setTheme(nextTheme(theme));
+
+  const startNodeDrag = (node: OutlineTreeNode, event: DragEvent<HTMLButtonElement>) => {
+    if (isSearching) return;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", node.id);
+    draggingIdRef.current = node.id;
+    setSelectedId(node.id);
+    setDragState({ draggingId: node.id });
+  };
+
+  const updateDragTarget = (target: OutlineTreeNode, event: DragEvent<HTMLDivElement>) => {
+    if (isSearching) return;
+    const draggingId = draggingIdRef.current || dragState?.draggingId || event.dataTransfer.getData("text/plain");
+    const source = draggingId ? nodeMap.get(draggingId) : undefined;
+    if (!source || source.id === target.id || isDescendantNode(source, target.id)) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
+
+    event.preventDefault();
+    const placement = getDropPlacement(event);
+    event.dataTransfer.dropEffect = "move";
+    setDragState(current =>
+      current?.draggingId === source.id && current.overId === target.id && current.placement === placement
+        ? current
+        : { draggingId: source.id, overId: target.id, placement }
+    );
+  };
+
+  const dropNode = async (target: OutlineTreeNode, event: DragEvent<HTMLDivElement>) => {
+    if (!tree || isSearching) return;
+    const draggingId = event.dataTransfer.getData("text/plain") || draggingIdRef.current || dragState?.draggingId;
+    const source = draggingId ? nodeMap.get(draggingId) : undefined;
+    if (!source || source.id === target.id || isDescendantNode(source, target.id)) {
+      finishNodeDrag();
+      return;
+    }
+
+    event.preventDefault();
+    const placement = getDropPlacement(event);
+    const parentId = target.parentId ?? tree.id;
+    let position = target.position + (placement === "after" ? 1 : 0);
+    if (source.parentId === parentId && source.position < position) position -= 1;
+
+    finishNodeDrag();
+    if (source.parentId === parentId && source.position === position) return;
+    await apiPost(`/api/nodes/${source.id}/move`, { parentId, position });
+    await refresh(source.id);
+  };
+
+  const finishNodeDrag = () => {
+    draggingIdRef.current = "";
+    setDragState(null);
   };
 
   const selectWorkspace = useCallback((id: string) => {
@@ -383,6 +455,9 @@ export function App() {
             <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search" />
           </div>
           <div className="toolbar">
+            <button className="themeToggle" title={`Theme: ${theme}`} type="button" onClick={cycleTheme}>
+              {theme === "light" ? <Sun size={17} /> : theme === "dark" ? <Moon size={17} /> : <Monitor size={17} />}
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -430,6 +505,9 @@ export function App() {
                     node={node}
                     depth={depth}
                     selected={selectedId === node.id}
+                    canDrag={!isSearching}
+                    dragging={dragState?.draggingId === node.id}
+                    dropPlacement={dragState?.overId === node.id ? dragState.placement ?? null : null}
                     registerInput={element => {
                       if (element) inputRefs.current.set(node.id, element);
                       else inputRefs.current.delete(node.id);
@@ -448,6 +526,10 @@ export function App() {
                     onOutdent={() => outdent(node).catch(toError(setError))}
                     onFocusPrevious={() => focusRelative(node, -1)}
                     onFocusNext={() => focusRelative(node, 1)}
+                    onDragStart={event => startNodeDrag(node, event)}
+                    onDragOver={event => updateDragTarget(node, event)}
+                    onDrop={event => dropNode(node, event).catch(toError(setError))}
+                    onDragEnd={finishNodeDrag}
                     onDelete={async () => {
                       await apiDelete(`/api/nodes/${node.id}`);
                       await refresh(flatNodes[flatNodes.findIndex(item => item.node.id === node.id) - 1]?.node.id);
@@ -609,6 +691,9 @@ function NodeRow({
   node,
   depth,
   selected,
+  canDrag,
+  dragging,
+  dropPlacement,
   registerInput,
   onSelect,
   onPatchLocal,
@@ -619,11 +704,18 @@ function NodeRow({
   onOutdent,
   onFocusPrevious,
   onFocusNext,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
   onDelete
 }: {
   node: OutlineTreeNode;
   depth: number;
   selected: boolean;
+  canDrag: boolean;
+  dragging: boolean;
+  dropPlacement: DropPlacement | null;
   registerInput: (element: HTMLInputElement | null) => void;
   onSelect: () => void;
   onPatchLocal: (patch: Partial<OutlineTreeNode>) => void;
@@ -634,14 +726,41 @@ function NodeRow({
   onOutdent: () => void;
   onFocusPrevious: () => void;
   onFocusNext: () => void;
+  onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragOver: (event: DragEvent<HTMLDivElement>) => void;
+  onDrop: (event: DragEvent<HTMLDivElement>) => void;
+  onDragEnd: () => void;
   onDelete: () => Promise<void>;
 }) {
-  const rowClassName = ["nodeRow", selected ? "selected" : "", node.done ? "completed" : ""]
+  const rowClassName = [
+    "nodeRow",
+    selected ? "selected" : "",
+    node.done ? "completed" : "",
+    dragging ? "dragging" : "",
+    dropPlacement ? `drop-${dropPlacement}` : ""
+  ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <div className={rowClassName} style={{ "--depth": depth } as React.CSSProperties}>
+    <div
+      className={rowClassName}
+      style={{ "--depth": depth } as CSSProperties}
+      onDragOver={canDrag ? onDragOver : undefined}
+      onDrop={canDrag ? onDrop : undefined}
+    >
+      <button
+        className="dragHandle"
+        type="button"
+        title={canDrag ? "Move node" : "Move disabled while searching"}
+        aria-label="Move node"
+        draggable={canDrag}
+        disabled={!canDrag}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      >
+        <GripVertical size={15} />
+      </button>
       <button
         className="iconButton disclosureButton"
         type="button"
@@ -728,6 +847,21 @@ function updateTreeNode(
 
 function hasNode(root: OutlineTreeNode, id: string): boolean {
   return root.id === id || root.children.some(child => hasNode(child, id));
+}
+
+function isDescendantNode(node: OutlineTreeNode, id: string): boolean {
+  return node.children.some(child => child.id === id || isDescendantNode(child, id));
+}
+
+function getDropPlacement(event: DragEvent<HTMLElement>): DropPlacement {
+  const bounds = event.currentTarget.getBoundingClientRect();
+  return event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+}
+
+function nextTheme(theme: Theme): Theme {
+  if (theme === "light") return "dark";
+  if (theme === "dark") return "system";
+  return "light";
 }
 
 function randomWorkspaceIcon(): IconName {
