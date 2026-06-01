@@ -142,4 +142,40 @@ describe("import/export", () => {
     expect(exported).toContain('text="Alpha"');
     expect(exported).toContain('text="Beta"');
   });
+
+  it("imports OPML into a new workspace and skips empty wrapper outlines", () => {
+    const result = importOpml(service, {
+      content: [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<opml version="2.0">',
+        "<head><title>Study</title></head>",
+        "<body>",
+        '<outline text="万卷书" done="false">',
+        '<outline text="了凡四训" done="false"/>',
+        '<outline text="数学之美" done="false"/>',
+        "</outline>",
+        '<outline text="O R&apos;eilly" done="false"/>',
+        '<outline text="AI" done="false">',
+        '<outline text="" done="false">',
+        '<outline text="AI变现" done="false">',
+        '<outline text="OpenOutliner" done="false"/>',
+        "</outline>",
+        "</outline>",
+        "</outline>",
+        '<outline text="" done="false"/>',
+        "</body>",
+        "</opml>"
+      ].join("")
+    });
+
+    const workspace = service.getWorkspace(result.workspaceId);
+    const tree = service.getTree(workspace.rootNodeId);
+    const ai = tree.children.find(node => node.title === "AI");
+
+    expect(workspace.name).toBe("Study");
+    expect(result.imported).toBe(7);
+    expect(tree.children.map(node => node.title)).toEqual(["万卷书", "O R'eilly", "AI"]);
+    expect(ai?.children[0].title).toBe("AI变现");
+    expect(ai?.children[0].children[0].title).toBe("OpenOutliner");
+  });
 });

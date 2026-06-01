@@ -171,7 +171,8 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   }
 
   if (method === "POST" && path === "/api/import/opml") {
-    sendJson(res, importOpml(service, await readJson(req)));
+    const body = await readJson<{ workspaceId?: string; parentId?: string; content: string }>(req);
+    sendJson(res, importOpml(service, body));
     return;
   }
 

@@ -9,6 +9,13 @@ interface OpmlOutline {
   outline?: OpmlOutline | OpmlOutline[];
 }
 
+interface ParsedOpml {
+  opml?: {
+    head?: { title?: string };
+    body?: { outline?: OpmlOutline | OpmlOutline[] };
+  };
+}
+
 export function exportOpml(service: OutlinerService, workspaceId: string): string {
   const workspace = service.getWorkspace(workspaceId);
   const root = service.getTree(workspace.rootNodeId);
@@ -32,23 +39,28 @@ export function exportOpml(service: OutlinerService, workspaceId: string): strin
 
 export function importOpml(
   service: OutlinerService,
-  input: { workspaceId: string; parentId?: string; content: string }
-): { imported: number } {
-  const workspace = service.getWorkspace(input.workspaceId);
-  const parentId = input.parentId ?? workspace.rootNodeId;
+  input: { workspaceId?: string; parentId?: string; content: string }
+): { imported: number; workspaceId: string } {
   const parser = new XMLParser({ ignoreAttributes: false });
-  const parsed = parser.parse(input.content) as {
-    opml?: { body?: { outline?: OpmlOutline | OpmlOutline[] } };
-  };
+  const parsed = parser.parse(input.content) as ParsedOpml;
+  const workspace = targetWorkspace(service, input, parsed);
+  const parentId = input.parentId ?? workspace.rootNodeId;
   const outlines = asArray(parsed.opml?.body?.outline);
   let imported = 0;
 
   const importOutline = (outline: OpmlOutline, targetParentId: string): void => {
-    const title = outline["@_text"] ?? outline["@_title"] ?? "Untitled";
+    const title = (outline["@_text"] ?? outline["@_title"] ?? "").trim();
+    if (!title) {
+      for (const child of asArray(outline.outline)) {
+        importOutline(child, targetParentId);
+      }
+      return;
+    }
+
     const node = service.createNode({
       parentId: targetParentId,
       title,
-      done: outline["@_done"] === "true"
+      done: String(outline["@_done"]).toLowerCase() === "true"
     });
     imported += 1;
     for (const child of asArray(outline.outline)) {
@@ -60,7 +72,7 @@ export function importOpml(
     importOutline(outline, parentId);
   }
 
-  return { imported };
+  return { imported, workspaceId: workspace.id };
 }
 
 function nodeToOpml(node: OutlineTreeNode): OpmlOutline {
@@ -74,4 +86,19 @@ function nodeToOpml(node: OutlineTreeNode): OpmlOutline {
 function asArray<T>(value: T | T[] | undefined): T[] {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
+}
+
+function opmlTitle(parsed: ParsedOpml): string {
+  const title = parsed.opml?.head?.title?.trim();
+  return title || "Imported OPML";
+}
+
+function targetWorkspace(
+  service: OutlinerService,
+  input: { workspaceId?: string; parentId?: string },
+  parsed: ParsedOpml
+) {
+  if (input.workspaceId) return service.getWorkspace(input.workspaceId);
+  if (input.parentId) return service.getWorkspace(service.getNode(input.parentId).workspaceId);
+  return service.createWorkspace(opmlTitle(parsed));
 }

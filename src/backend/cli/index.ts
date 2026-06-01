@@ -138,7 +138,7 @@ importCommand
 importCommand
   .command("opml")
   .argument("<file>")
-  .requiredOption("--workspace <id>", "Workspace ID")
+  .option("--workspace <id>", "Workspace ID. If omitted, creates a workspace from the OPML title.")
   .option("--parent <id>", "Parent node ID")
   .action((file, options) =>
     print(
