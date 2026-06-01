@@ -507,8 +507,12 @@ textarea:focus-visible {
 }
 
 .themeToggle {
-  width: 36px;
-  padding: 0;
+  min-width: 92px;
+}
+
+.themeToggle span {
+  min-width: 42px;
+  text-align: left;
 }
 
 .errorBar {

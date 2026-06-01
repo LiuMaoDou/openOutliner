@@ -457,6 +457,7 @@ export function App() {
           <div className="toolbar">
             <button className="themeToggle" title={`Theme: ${theme}`} type="button" onClick={cycleTheme}>
               {theme === "light" ? <Sun size={17} /> : theme === "dark" ? <Moon size={17} /> : <Monitor size={17} />}
+              <span>{themeLabel(theme)}</span>
             </button>
             <input
               ref={fileInputRef}
@@ -862,6 +863,12 @@ function nextTheme(theme: Theme): Theme {
   if (theme === "light") return "dark";
   if (theme === "dark") return "system";
   return "light";
+}
+
+function themeLabel(theme: Theme): string {
+  if (theme === "light") return "Light";
+  if (theme === "dark") return "Dark";
+  return "System";
 }
 
 function randomWorkspaceIcon(): IconName {
