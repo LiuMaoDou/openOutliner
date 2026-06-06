@@ -7,6 +7,13 @@ import { openDatabase, type OpenOutlinerDb } from "../src/backend/db/database.js
 import { exportMarkdown, importMarkdown } from "../src/backend/importExport/markdown.js";
 import { exportOpml, importOpml } from "../src/backend/importExport/opml.js";
 import { OutlinerService } from "../src/backend/services/outliner.js";
+import type { OutlineTreeNode } from "../src/web/api.js";
+import {
+  insertTreeNode,
+  moveTreeNode,
+  removeTreeNode,
+  replaceTreeNode
+} from "../src/web/treeOps.js";
 
 let tempDir = "";
 let db: OpenOutlinerDb;
@@ -54,6 +61,29 @@ describe("OutlinerService", () => {
 
     expect(tree.children[0].tags[0].name).toBe("project");
     expect(tree.children[0].fieldValues[0].value).toBe("doing");
+  });
+
+  it("builds complete trees with ordered children, tags, and field values", () => {
+    const workspace = service.createWorkspace("Batch Tree");
+    const alpha = service.createNode({ parentId: workspace.rootNodeId, title: "Alpha" });
+    const beta = service.createNode({ parentId: workspace.rootNodeId, title: "Beta" });
+    const nested = service.createNode({ parentId: alpha.id, title: "Nested" });
+    const tag = service.setNodeTag(nested.id, "deep");
+    const field = service.createFieldDefinition({
+      workspaceId: workspace.id,
+      tagId: tag.id,
+      name: "Status",
+      type: "text"
+    });
+    service.setFieldValue(nested.id, field.id, "ready");
+
+    service.moveNode(beta.id, workspace.rootNodeId, 0);
+    const tree = service.getTree(workspace.rootNodeId);
+
+    expect(tree.children.map(node => node.title)).toEqual(["Beta", "Alpha"]);
+    expect(tree.children[1].children[0].title).toBe("Nested");
+    expect(tree.children[1].children[0].tags[0].name).toBe("deep");
+    expect(tree.children[1].children[0].fieldValues[0].value).toBe("ready");
   });
 
   it("updates and deletes workspaces", () => {
@@ -107,6 +137,37 @@ describe("OutlinerService", () => {
     } finally {
       migratedDb.close();
     }
+  });
+});
+
+describe("tree operations", () => {
+  it("inserts and replaces optimistic nodes while preserving sibling positions", () => {
+    const tree = testTree();
+    const inserted = insertTreeNode(tree, "root", testNode("temp-1", "Temp", "root"), 1);
+    const replaced = replaceTreeNode(inserted, "temp-1", testNode("real-1", "Real", "root"));
+
+    expect(inserted.children.map(node => node.id)).toEqual(["a", "temp-1", "b"]);
+    expect(inserted.children.map(node => node.position)).toEqual([0, 1, 2]);
+    expect(replaced.children.map(node => node.id)).toEqual(["a", "real-1", "b"]);
+    expect(replaced.children[1].title).toBe("Real");
+  });
+
+  it("removes a subtree and normalizes remaining siblings", () => {
+    const tree = testTree();
+    const next = removeTreeNode(tree, "a");
+
+    expect(next.children.map(node => node.id)).toEqual(["b"]);
+    expect(next.children[0].position).toBe(0);
+  });
+
+  it("moves nodes across parents and preserves the moved subtree", () => {
+    const tree = testTree();
+    const next = moveTreeNode(tree, "a", "b", 0);
+
+    expect(next.children.map(node => node.id)).toEqual(["b"]);
+    expect(next.children[0].children.map(node => node.id)).toEqual(["a"]);
+    expect(next.children[0].children[0].children[0].id).toBe("a-child");
+    expect(next.children[0].children[0].parentId).toBe("b");
   });
 });
 
@@ -281,3 +342,39 @@ describe("import/export", () => {
     expect(ai?.children[0].children[0].title).toBe("OpenOutliner");
   });
 });
+
+function testTree(): OutlineTreeNode {
+  return {
+    ...testNode("root", "Root", null),
+    children: [
+      {
+        ...testNode("a", "Alpha", "root", 0),
+        children: [testNode("a-child", "Nested", "a")]
+      },
+      testNode("b", "Beta", "root", 1)
+    ]
+  };
+}
+
+function testNode(
+  id: string,
+  title: string,
+  parentId: string | null,
+  position = 0
+): OutlineTreeNode {
+  return {
+    id,
+    workspaceId: "workspace",
+    parentId,
+    position,
+    title,
+    body: "",
+    done: false,
+    collapsed: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    tags: [],
+    fieldValues: [],
+    children: []
+  };
+}

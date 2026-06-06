@@ -171,8 +171,12 @@ export class OutlinerService {
 
   createNode(input: CreateNodeInput): OutlineNode {
     const parent = this.getNode(input.parentId);
-    const siblings = this.listChildren(input.parentId);
-    const position = clamp(input.position ?? siblings.length, 0, siblings.length);
+    const siblingCount = number(
+      (this.db
+        .prepare("SELECT COUNT(*) AS count FROM nodes WHERE parent_id IS ? AND deleted_at IS NULL")
+        .get(input.parentId) as Row).count
+    );
+    const position = clamp(input.position ?? siblingCount, 0, siblingCount);
     const id = randomUUID();
     const now = timestamp();
 
@@ -247,7 +251,11 @@ export class OutlinerService {
       throw new ValidationError("A node cannot be moved under one of its descendants.");
     }
 
-    const targetCount = this.listChildren(parentId).filter(child => child.id !== id).length;
+    const targetCount = number(
+      (this.db
+        .prepare("SELECT COUNT(*) AS count FROM nodes WHERE parent_id IS ? AND id != ? AND deleted_at IS NULL")
+        .get(parentId, id) as Row).count
+    );
     const targetPosition = clamp(position ?? targetCount, 0, targetCount);
     const now = timestamp();
 
@@ -345,13 +353,67 @@ export class OutlinerService {
 
   getTree(rootId: string): OutlineTreeNode {
     const root = this.getNode(rootId);
-    const build = (node: OutlineNode): OutlineTreeNode => ({
-      ...node,
-      tags: this.listNodeTags(node.id),
-      fieldValues: this.listFieldValues(node.id),
-      children: this.listChildren(node.id).map(build)
-    });
-    return build(root);
+    const nodes = (this.db
+      .prepare(
+        `SELECT * FROM nodes
+         WHERE workspace_id = ? AND deleted_at IS NULL
+         ORDER BY parent_id ASC, position ASC, created_at ASC`
+      )
+      .all(root.workspaceId) as Row[]).map(rowToNode);
+    const nodeIds = new Set(nodes.map(node => node.id));
+    const tagsByNode = new Map<string, Tag[]>();
+    const fieldValuesByNode = new Map<string, FieldValue[]>();
+
+    for (const row of this.db
+      .prepare(
+        `SELECT node_tags.node_id, tags.* FROM node_tags
+         JOIN tags ON node_tags.tag_id = tags.id
+         WHERE tags.workspace_id = ?
+         ORDER BY tags.name ASC`
+      )
+      .all(root.workspaceId) as Row[]) {
+      const nodeId = text(row.node_id);
+      if (!nodeIds.has(nodeId)) continue;
+      const tags = tagsByNode.get(nodeId) ?? [];
+      tags.push(rowToTag(row));
+      tagsByNode.set(nodeId, tags);
+    }
+
+    for (const row of this.db
+      .prepare(
+        `SELECT field_values.* FROM field_values
+         JOIN field_definitions ON field_values.field_id = field_definitions.id
+         WHERE field_definitions.workspace_id = ?
+         ORDER BY field_values.field_id ASC`
+      )
+      .all(root.workspaceId) as Row[]) {
+      const nodeId = text(row.node_id);
+      if (!nodeIds.has(nodeId)) continue;
+      const fieldValues = fieldValuesByNode.get(nodeId) ?? [];
+      fieldValues.push(rowToFieldValue(row));
+      fieldValuesByNode.set(nodeId, fieldValues);
+    }
+
+    const treeNodes = new Map<string, OutlineTreeNode>();
+    for (const node of nodes) {
+      treeNodes.set(node.id, {
+        ...node,
+        tags: tagsByNode.get(node.id) ?? [],
+        fieldValues: fieldValuesByNode.get(node.id) ?? [],
+        children: []
+      });
+    }
+
+    for (const node of nodes) {
+      if (!node.parentId) continue;
+      const parent = treeNodes.get(node.parentId);
+      const child = treeNodes.get(node.id);
+      if (parent && child) parent.children.push(child);
+    }
+
+    const tree = treeNodes.get(rootId);
+    if (!tree) throw new NotFoundError(`Node not found: ${rootId}`);
+    return tree;
   }
 
   listTags(workspaceId: string): Tag[] {

@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@tanstack/react-virtual": "^3.14.2",
     "@vitejs/plugin-react": "^5.1.1",
     "commander": "^14.0.2",
     "concurrently": "^9.2.1",

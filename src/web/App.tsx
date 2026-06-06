@@ -18,6 +18,7 @@ import {
   Upload
 } from "lucide-react";
 import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import {
   apiDelete,
@@ -30,6 +31,16 @@ import {
   type Workspace
 } from "./api";
 import { useTheme, type Theme } from "./theme";
+import {
+  findTreeNode,
+  hasNode,
+  insertTreeNode,
+  isDescendantNode,
+  moveTreeNode,
+  removeTreeNode,
+  replaceTreeNode,
+  updateTreeNode
+} from "./treeOps";
 
 interface FlatNode {
   node: OutlineTreeNode;
@@ -72,6 +83,9 @@ export function App() {
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const treeRef = useRef<OutlineTreeNode | null>(null);
+  const cancelledTempIdsRef = useRef(new Set<string>());
 
   const loadWorkspaces = useCallback(async () => {
     const next = await apiGet<Workspace[]>("/api/workspaces");
@@ -126,6 +140,10 @@ export function App() {
     setIsTagManagerOpen(false);
   }, [workspaceId]);
 
+  useEffect(() => {
+    treeRef.current = tree;
+  }, [tree]);
+
   const flatNodes = useMemo(() => (tree ? flatten(tree) : []), [tree]);
   const nodeMap = useMemo(() => {
     const map = new Map<string, OutlineTreeNode>();
@@ -142,6 +160,14 @@ export function App() {
   const filteredNodes = isSearching
     ? flatNodes.filter(({ node }) => `${node.title}\n${node.body}`.toLowerCase().includes(search.toLowerCase()))
     : flatNodes;
+  const rowVirtualizer = useVirtualizer({
+    count: filteredNodes.length,
+    getScrollElement: () => outlineSurfaceRef.current,
+    getItemKey: index => filteredNodes[index]?.node.id ?? index,
+    estimateSize: () => 38,
+    overscan: 16
+  });
+  const virtualItems = rowVirtualizer.getVirtualItems();
 
   const refresh = useCallback(
     async (focusId?: string) => {
@@ -155,49 +181,152 @@ export function App() {
   );
 
   const patchNode = async (id: string, patch: Partial<OutlineTreeNode>) => {
+    if (id.startsWith("temp-")) return;
     await apiPatch(`/api/nodes/${id}`, patch);
   };
 
-  const createAfter = async (current: OutlineTreeNode) => {
-    await patchNode(current.id, { title: current.title });
-    const created = await apiPost<OutlineTreeNode>("/api/nodes", {
-      parentId: current.parentId ?? tree?.id,
+  const focusNode = (id: string) => {
+    setSelectedId(id);
+    window.setTimeout(() => inputRefs.current.get(id)?.focus(), 30);
+  };
+
+  const createOptimisticNode = async (
+    parentId: string,
+    position: number,
+    current?: OutlineTreeNode
+  ) => {
+    if (!tree) return;
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const before = tree;
+    const tempNode: OutlineTreeNode = {
+      id: tempId,
+      workspaceId: tree.workspaceId,
+      parentId,
+      position,
       title: "",
-      position: current.position + 1
-    });
-    await refresh(created.id);
+      body: "",
+      done: false,
+      collapsed: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      tags: [],
+      fieldValues: [],
+      children: []
+    };
+
+    if (current) patchNode(current.id, { title: current.title }).catch(toError(setError));
+    setTree(insertTreeNode(before, parentId, tempNode, position));
+    focusNode(tempId);
+
+    try {
+      const created = await apiPost<OutlineTreeNode>("/api/nodes", {
+        parentId,
+        title: "",
+        position
+      });
+      if (cancelledTempIdsRef.current.has(tempId)) {
+        cancelledTempIdsRef.current.delete(tempId);
+        apiDelete(`/api/nodes/${created.id}`).catch(toError(setError));
+        return;
+      }
+      const draft = treeRef.current ? findTreeNode(treeRef.current, tempId) : undefined;
+      const replacement = draft
+        ? {
+            ...created,
+            title: draft.title,
+            body: draft.body,
+            done: draft.done,
+            collapsed: draft.collapsed,
+            tags: draft.tags,
+            fieldValues: draft.fieldValues
+          }
+        : created;
+      setTree(currentTree => (currentTree ? replaceTreeNode(currentTree, tempId, replacement) : currentTree));
+      focusNode(created.id);
+      if (draft && (draft.title || draft.body || draft.done || draft.collapsed)) {
+        patchNode(created.id, {
+          title: draft.title,
+          body: draft.body,
+          done: draft.done,
+          collapsed: draft.collapsed
+        }).catch(toError(setError));
+      }
+    } catch (error) {
+      if (cancelledTempIdsRef.current.has(tempId)) {
+        cancelledTempIdsRef.current.delete(tempId);
+        return;
+      }
+      setTree(before);
+      focusNode(current?.id ?? parentId);
+      throw error;
+    }
+  };
+
+  const deleteNodeOptimistically = async (node: OutlineTreeNode) => {
+    if (!tree || node.id === tree.id) return;
+    const before = tree;
+    const previousId = flatNodes[flatNodes.findIndex(item => item.node.id === node.id) - 1]?.node.id ?? tree.id;
+    setTree(removeTreeNode(before, node.id));
+    focusNode(previousId);
+    if (node.id.startsWith("temp-")) {
+      cancelledTempIdsRef.current.add(node.id);
+      return;
+    }
+
+    try {
+      await apiDelete(`/api/nodes/${node.id}`);
+    } catch (error) {
+      setTree(before);
+      focusNode(node.id);
+      throw error;
+    }
+  };
+
+  const moveNodeOptimistically = async (
+    source: OutlineTreeNode,
+    parentId: string,
+    position: number
+  ) => {
+    if (!tree || source.id === parentId) return;
+    const nextPosition = source.parentId === parentId && source.position < position ? position - 1 : position;
+    if (source.parentId === parentId && source.position === nextPosition) return;
+    const before = tree;
+    setTree(moveTreeNode(before, source.id, parentId, nextPosition));
+    focusNode(source.id);
+
+    try {
+      await apiPost(`/api/nodes/${source.id}/move`, { parentId, position: nextPosition });
+    } catch (error) {
+      setTree(before);
+      focusNode(source.id);
+      throw error;
+    }
+  };
+
+  const createAfter = async (current: OutlineTreeNode) => {
+    if (!tree) return;
+    const parentId = current.parentId ?? tree.id;
+    await createOptimisticNode(parentId, current.position + 1, current);
   };
 
   const createFirstNode = async () => {
     if (!tree) return;
-    const created = await apiPost<OutlineTreeNode>("/api/nodes", {
-      parentId: tree.id,
-      title: "",
-      position: 0
-    });
-    await refresh(created.id);
+    await createOptimisticNode(tree.id, 0);
   };
 
   const indent = async (current: OutlineTreeNode) => {
+    if (!tree) return;
     const index = flatNodes.findIndex(item => item.node.id === current.id);
     const previous = flatNodes[index - 1]?.node;
     if (!previous || previous.id === current.parentId) return;
-    await apiPost(`/api/nodes/${current.id}/move`, {
-      parentId: previous.id,
-      position: previous.children.length
-    });
-    await refresh(current.id);
+    await moveNodeOptimistically(current, previous.id, previous.children.length);
   };
 
   const outdent = async (current: OutlineTreeNode) => {
     if (!tree || !current.parentId || current.parentId === tree.id) return;
     const parent = nodeMap.get(current.parentId);
     if (!parent?.parentId) return;
-    await apiPost(`/api/nodes/${current.id}/move`, {
-      parentId: parent.parentId,
-      position: parent.position + 1
-    });
-    await refresh(current.id);
+    await moveNodeOptimistically(current, parent.parentId, parent.position + 1);
   };
 
   const focusRelative = (current: OutlineTreeNode, offset: number) => {
@@ -269,11 +398,8 @@ export function App() {
   const moveNodeToTarget = async (source: OutlineTreeNode, target: OutlineTreeNode, placement: DropPlacement) => {
     if (!tree || source.id === target.id || isDescendantNode(source, target.id)) return;
     const parentId = target.parentId ?? tree.id;
-    let position = target.position + (placement === "after" ? 1 : 0);
-    if (source.parentId === parentId && source.position < position) position -= 1;
-    if (source.parentId === parentId && source.position === position) return;
-    await apiPost(`/api/nodes/${source.id}/move`, { parentId, position });
-    await refresh(source.id);
+    const position = target.position + (placement === "after" ? 1 : 0);
+    await moveNodeOptimistically(source, parentId, position);
   };
 
   const selectWorkspace = useCallback((id: string) => {
@@ -513,46 +639,60 @@ export function App() {
         )}
 
         <section className={isInspectorOpen ? "contentGrid" : "contentGrid commentsClosed"}>
-          <div className="outlineSurface">
+          <div className="outlineSurface" ref={outlineSurfaceRef}>
             <div className="outlineHeader">
               <h1>{tree?.title ?? "OpenOutliner"}</h1>
             </div>
             <div className="outlineList">
               {filteredNodes.length > 0 ? (
-                filteredNodes.map(({ node, depth }) => (
-                  <NodeRow
-                    key={node.id}
-                    node={node}
-                    depth={depth}
-                    selected={selectedId === node.id}
-                    canDrag={!isSearching}
-                    dragging={dragState?.draggingId === node.id}
-                    dropPlacement={dragState?.overId === node.id ? dragState.placement ?? null : null}
-                    registerInput={element => {
-                      if (element) inputRefs.current.set(node.id, element);
-                      else inputRefs.current.delete(node.id);
-                    }}
-                    onSelect={() => setSelectedId(node.id)}
-                    onPatchLocal={patch => {
-                      setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
-                    }}
-                    onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
-                    onToggle={patch => {
-                      setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
-                      patchNode(node.id, patch).catch(toError(setError));
-                    }}
-                    onCreateAfter={() => createAfter(node).catch(toError(setError))}
-                    onIndent={() => indent(node).catch(toError(setError))}
-                    onOutdent={() => outdent(node).catch(toError(setError))}
-                    onFocusPrevious={() => focusRelative(node, -1)}
-                    onFocusNext={() => focusRelative(node, 1)}
-                    onMoveStart={event => startNodeDrag(node, event)}
-                    onDelete={async () => {
-                      await apiDelete(`/api/nodes/${node.id}`);
-                      await refresh(flatNodes[flatNodes.findIndex(item => item.node.id === node.id) - 1]?.node.id);
-                    }}
-                  />
-                ))
+                <div
+                  className="virtualOutlineList"
+                  style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+                >
+                  {virtualItems.map(virtualItem => {
+                    const item = filteredNodes[virtualItem.index];
+                    if (!item) return null;
+                    const { node, depth } = item;
+                    return (
+                      <div
+                        className="virtualOutlineRow"
+                        data-index={virtualItem.index}
+                        key={node.id}
+                        ref={rowVirtualizer.measureElement}
+                        style={{ transform: `translateY(${virtualItem.start}px)` }}
+                      >
+                        <NodeRow
+                          node={node}
+                          depth={depth}
+                          selected={selectedId === node.id}
+                          canDrag={!isSearching}
+                          dragging={dragState?.draggingId === node.id}
+                          dropPlacement={dragState?.overId === node.id ? dragState.placement ?? null : null}
+                          registerInput={element => {
+                            if (element) inputRefs.current.set(node.id, element);
+                            else inputRefs.current.delete(node.id);
+                          }}
+                          onSelect={() => setSelectedId(node.id)}
+                          onPatchLocal={patch => {
+                            setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
+                          }}
+                          onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
+                          onToggle={patch => {
+                            setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
+                            patchNode(node.id, patch).catch(toError(setError));
+                          }}
+                          onCreateAfter={() => createAfter(node).catch(toError(setError))}
+                          onIndent={() => indent(node).catch(toError(setError))}
+                          onOutdent={() => outdent(node).catch(toError(setError))}
+                          onFocusPrevious={() => focusRelative(node, -1)}
+                          onFocusNext={() => focusRelative(node, 1)}
+                          onMoveStart={event => startNodeDrag(node, event)}
+                          onDelete={() => deleteNodeOptimistically(node)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               ) : flatNodes.length === 0 && tree ? (
                 <button
                   className="emptyNodeButton"
@@ -839,26 +979,6 @@ function flatten(root: OutlineTreeNode): FlatNode[] {
   };
   visit(root, 0);
   return output;
-}
-
-function updateTreeNode(
-  root: OutlineTreeNode,
-  id: string,
-  patch: Partial<OutlineTreeNode>
-): OutlineTreeNode {
-  if (root.id === id) return { ...root, ...patch };
-  return {
-    ...root,
-    children: root.children.map(child => updateTreeNode(child, id, patch))
-  };
-}
-
-function hasNode(root: OutlineTreeNode, id: string): boolean {
-  return root.id === id || root.children.some(child => hasNode(child, id));
-}
-
-function isDescendantNode(node: OutlineTreeNode, id: string): boolean {
-  return node.children.some(child => child.id === id || isDescendantNode(child, id));
 }
 
 function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement {

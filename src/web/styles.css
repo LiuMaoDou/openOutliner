@@ -616,6 +616,18 @@ textarea:focus-visible {
   padding: 8px 0 80px;
 }
 
+.virtualOutlineList {
+  position: relative;
+  width: 100%;
+}
+
+.virtualOutlineRow {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+}
+
 .nodeRow {
   --depth: 0;
   display: grid;
