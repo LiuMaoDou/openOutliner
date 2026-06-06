@@ -55,6 +55,8 @@ const workspaceIcons = [
 ];
 
 export class OutlinerService {
+  private transactionDepth = 0;
+
   constructor(private readonly db: OpenOutlinerDb) {}
 
   ensureSeedData(): Workspace {
@@ -139,6 +141,13 @@ export class OutlinerService {
     this.getWorkspace(id);
     this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
     return { deleted: id };
+  }
+
+  replaceAllWorkspaces<T>(build: () => T): T {
+    return this.transaction(() => {
+      this.db.prepare("DELETE FROM workspaces").run();
+      return build();
+    });
   }
 
   getNode(id: string): OutlineNode {
@@ -481,6 +490,9 @@ export class OutlinerService {
   }
 
   private transaction<T>(fn: () => T): T {
+    if (this.transactionDepth > 0) return fn();
+
+    this.transactionDepth = 1;
     this.db.exec("BEGIN IMMEDIATE;");
     try {
       const result = fn();
@@ -489,6 +501,8 @@ export class OutlinerService {
     } catch (error) {
       this.db.exec("ROLLBACK;");
       throw error;
+    } finally {
+      this.transactionDepth = 0;
     }
   }
 }

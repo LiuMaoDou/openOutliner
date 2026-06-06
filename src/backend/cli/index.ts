@@ -123,7 +123,7 @@ const importCommand = program.command("import").description("Import outlines");
 importCommand
   .command("markdown")
   .argument("<file>")
-  .requiredOption("--workspace <id>", "Workspace ID")
+  .option("--workspace <id>", "Workspace ID. If omitted, replaces all workspaces from the Markdown file.")
   .option("--parent <id>", "Parent node ID")
   .action((file, options) =>
     print(
@@ -138,7 +138,7 @@ importCommand
 importCommand
   .command("opml")
   .argument("<file>")
-  .option("--workspace <id>", "Workspace ID. If omitted, creates a workspace from the OPML title.")
+  .option("--workspace <id>", "Workspace ID. If omitted, replaces all workspaces from the OPML file.")
   .option("--parent <id>", "Parent node ID")
   .action((file, options) =>
     print(
@@ -154,13 +154,13 @@ const exportCommand = program.command("export").description("Export outlines");
 
 exportCommand
   .command("markdown")
-  .requiredOption("--workspace <id>", "Workspace ID")
+  .option("--workspace <id>", "Workspace ID. If omitted, exports all workspaces.")
   .option("--out <file>", "Output file")
   .action(options => output(exportMarkdown(getService(), options.workspace), options.out));
 
 exportCommand
   .command("opml")
-  .requiredOption("--workspace <id>", "Workspace ID")
+  .option("--workspace <id>", "Workspace ID. If omitted, exports all workspaces.")
   .option("--out <file>", "Output file")
   .action(options => output(exportOpml(getService(), options.workspace), options.out));
 

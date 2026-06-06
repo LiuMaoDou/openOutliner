@@ -156,6 +156,31 @@ describe("import/export", () => {
     expect(tree.children[0].children[0].title).toBe("Beta");
   });
 
+  it("exports all workspaces as Markdown and imports by replacing all workspaces", () => {
+    const first = service.createWorkspace("First Workspace");
+    const firstNode = service.createNode({ parentId: first.rootNodeId, title: "Alpha", done: true });
+    service.setNodeTag(firstNode.id, "project");
+    service.createNode({ parentId: firstNode.id, title: "Beta" });
+    const second = service.createWorkspace("Second Workspace");
+    service.createNode({ parentId: second.rootNodeId, title: "Gamma" });
+
+    const exported = exportMarkdown(service);
+    service.createWorkspace("Stale Workspace");
+    const result = importMarkdown(service, { content: exported });
+    const workspaces = service.listWorkspaces();
+    const importedFirst = service.getTree(workspaces[0].rootNodeId);
+
+    expect(exported).toContain("# First Workspace");
+    expect(exported).toContain("# Second Workspace");
+    expect(result.imported).toBe(3);
+    expect(result.workspaces).toBe(2);
+    expect(workspaces.map(workspace => workspace.name)).toEqual(["First Workspace", "Second Workspace"]);
+    expect(importedFirst.children[0].title).toBe("Alpha");
+    expect(importedFirst.children[0].done).toBe(true);
+    expect(importedFirst.children[0].tags[0].name).toBe("project");
+    expect(importedFirst.children[0].children[0].title).toBe("Beta");
+  });
+
   it("imports and exports OPML hierarchy", () => {
     const workspace = service.createWorkspace("OPML");
 
@@ -195,6 +220,29 @@ describe("import/export", () => {
     expect(imported.children[0].title).toBe("Nested");
     expect(imported.children[0].done).toBe(true);
     expect(imported.children[0].body).toBe("Details");
+  });
+
+  it("exports all workspaces as OPML and imports by replacing all workspaces", () => {
+    const first = service.createWorkspace("OPML One", "rocket");
+    const firstNode = service.createNode({ parentId: first.rootNodeId, title: "Alpha", body: "Details" });
+    service.setNodeTag(firstNode.id, "area");
+    const second = service.createWorkspace("OPML Two", "sun");
+    service.createNode({ parentId: second.rootNodeId, title: "Beta" });
+
+    const exported = exportOpml(service);
+    service.createWorkspace("Stale OPML");
+    const result = importOpml(service, { content: exported });
+    const workspaces = service.listWorkspaces();
+    const importedFirst = service.getTree(workspaces[0].rootNodeId);
+
+    expect(exported).toContain('openoutlinerWorkspace="true"');
+    expect(result.imported).toBe(2);
+    expect(result.workspaces).toBe(2);
+    expect(workspaces.map(workspace => workspace.name)).toEqual(["OPML One", "OPML Two"]);
+    expect(workspaces.map(workspace => workspace.icon)).toEqual(["rocket", "sun"]);
+    expect(importedFirst.children[0].title).toBe("Alpha");
+    expect(importedFirst.children[0].body).toBe("Details");
+    expect(importedFirst.children[0].tags[0].name).toBe("area");
   });
 
   it("imports OPML into a new workspace and skips empty wrapper outlines", () => {

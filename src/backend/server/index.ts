@@ -161,12 +161,13 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   }
 
   if (method === "POST" && path === "/api/import/markdown") {
-    sendJson(res, importMarkdown(service, await readJson(req)));
+    const body = await readJson<{ workspaceId?: string; parentId?: string; content: string }>(req);
+    sendJson(res, importMarkdown(service, body));
     return;
   }
 
   if (method === "GET" && path === "/api/export/markdown") {
-    sendText(res, exportMarkdown(service, requiredParam(url, "workspaceId")), "text/markdown; charset=utf-8");
+    sendText(res, exportMarkdown(service, url.searchParams.get("workspaceId") ?? undefined), "text/markdown; charset=utf-8");
     return;
   }
 
@@ -177,7 +178,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   }
 
   if (method === "GET" && path === "/api/export/opml") {
-    sendText(res, exportOpml(service, requiredParam(url, "workspaceId")), "application/xml; charset=utf-8");
+    sendText(res, exportOpml(service, url.searchParams.get("workspaceId") ?? undefined), "application/xml; charset=utf-8");
     return;
   }
 

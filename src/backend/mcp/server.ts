@@ -151,9 +151,9 @@ registerTool(
 
 registerTool(
   "import_markdown",
-  "Import Markdown bullets/headings into a workspace.",
+  "Import Markdown bullets/headings. If workspaceId and parentId are omitted, replace all workspaces.",
   {
-    workspaceId: z.string(),
+    workspaceId: z.string().optional(),
     parentId: z.string().optional(),
     content: z.string()
   },
@@ -162,16 +162,16 @@ registerTool(
 
 registerTool(
   "export_markdown",
-  "Export a workspace as Markdown.",
-  { workspaceId: z.string() },
+  "Export Markdown. If workspaceId is omitted, export all workspaces.",
+  { workspaceId: z.string().optional() },
   async ({ workspaceId }) => exportMarkdown(service, workspaceId)
 );
 
 registerTool(
   "import_opml",
-  "Import OPML into a workspace.",
+  "Import OPML. If workspaceId and parentId are omitted, replace all workspaces.",
   {
-    workspaceId: z.string(),
+    workspaceId: z.string().optional(),
     parentId: z.string().optional(),
     content: z.string()
   },
@@ -180,8 +180,8 @@ registerTool(
 
 registerTool(
   "export_opml",
-  "Export a workspace as OPML.",
-  { workspaceId: z.string() },
+  "Export OPML. If workspaceId is omitted, export all workspaces.",
+  { workspaceId: z.string().optional() },
   async ({ workspaceId }) => exportOpml(service, workspaceId)
 );
 

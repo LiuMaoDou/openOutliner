@@ -1,5 +1,5 @@
 import type { OutlineTreeNode } from "../domain/types.js";
-import type { OutlinerService } from "../services/outliner.js";
+import { type OutlinerService, ValidationError } from "../services/outliner.js";
 
 interface ParsedLine {
   kind: "bullet" | "heading";
@@ -10,31 +10,76 @@ interface ParsedLine {
   body: string[];
 }
 
-export function exportMarkdown(service: OutlinerService, workspaceId: string): string {
-  const workspace = service.getWorkspace(workspaceId);
-  const root = service.getTree(workspace.rootNodeId);
-  const lines: string[] = [`# ${workspace.name}`, ""];
+interface ParsedWorkspace {
+  name: string;
+  lines: ParsedLine[];
+}
 
-  for (const child of root.children) {
-    writeNode(lines, child, 0);
+export interface MarkdownImportResult {
+  imported: number;
+  workspaceId?: string;
+  workspaceIds?: string[];
+  workspaces?: number;
+}
+
+export function exportMarkdown(service: OutlinerService, workspaceId?: string): string {
+  const workspaces = workspaceId ? [service.getWorkspace(workspaceId)] : service.listWorkspaces();
+  const lines: string[] = [];
+
+  for (const workspace of workspaces) {
+    if (lines.length > 0) lines.push("");
+    const root = service.getTree(workspace.rootNodeId);
+    lines.push(`# ${workspace.name}`, "");
+    for (const child of root.children) {
+      writeNode(lines, child, 0);
+    }
   }
 
-  return `${lines.join("\n").trimEnd()}\n`;
+  const content = lines.join("\n").trimEnd();
+  return content ? `${content}\n` : "";
 }
 
 export function importMarkdown(
   service: OutlinerService,
-  input: { workspaceId: string; parentId?: string; content: string }
-): { imported: number } {
-  const workspace = service.getWorkspace(input.workspaceId);
-  const parentId = input.parentId ?? workspace.rootNodeId;
+  input: { workspaceId?: string; parentId?: string; content: string }
+): MarkdownImportResult {
+  if (!input.workspaceId && !input.parentId) {
+    return importAllMarkdown(service, input.content);
+  }
+
+  const target = targetWorkspace(service, input);
   const parsed = parseMarkdownLines(input.content);
-  if (parsed[0]?.kind === "heading" && parsed[0].level === 0 && parsed[0].title === workspace.name) {
+  if (parsed[0]?.kind === "heading" && parsed[0].level === 0 && parsed[0].title === target.workspace.name) {
     parsed.shift();
   }
-  const stack: string[] = [parentId];
+  const imported = importParsedLines(service, target.parentId, parsed);
+  return { imported, workspaceId: target.workspace.id };
+}
+
+function importAllMarkdown(service: OutlinerService, content: string): MarkdownImportResult {
+  const parsedWorkspaces = parseMarkdownWorkspaces(content);
+  const workspaceIds: string[] = [];
   let imported = 0;
 
+  service.replaceAllWorkspaces(() => {
+    for (const parsedWorkspace of parsedWorkspaces) {
+      const workspace = service.createWorkspace(parsedWorkspace.name);
+      workspaceIds.push(workspace.id);
+      imported += importParsedLines(service, workspace.rootNodeId, parsedWorkspace.lines);
+    }
+  });
+
+  return {
+    imported,
+    workspaceId: workspaceIds[0],
+    workspaceIds,
+    workspaces: workspaceIds.length
+  };
+}
+
+function importParsedLines(service: OutlinerService, parentId: string, parsed: ParsedLine[]): number {
+  const stack: string[] = [parentId];
+  let imported = 0;
   for (const line of parsed) {
     const safeLevel = Math.max(0, Math.min(line.level, stack.length - 1));
     const node = service.createNode({
@@ -51,7 +96,47 @@ export function importMarkdown(
     imported += 1;
   }
 
-  return { imported };
+  return imported;
+}
+
+function parseMarkdownWorkspaces(content: string): ParsedWorkspace[] {
+  const parsed = parseMarkdownLines(content);
+  const workspaces: ParsedWorkspace[] = [];
+  let current: ParsedWorkspace | undefined;
+
+  for (const line of parsed) {
+    if (line.kind === "heading" && line.level === 0) {
+      current = { name: line.title || "Imported Markdown", lines: [] };
+      workspaces.push(current);
+      continue;
+    }
+
+    if (!current) {
+      current = { name: "Imported Markdown", lines: [] };
+      workspaces.push(current);
+    }
+    current.lines.push(line);
+  }
+
+  return workspaces;
+}
+
+function targetWorkspace(
+  service: OutlinerService,
+  input: { workspaceId?: string; parentId?: string }
+) {
+  if (input.parentId) {
+    const parent = service.getNode(input.parentId);
+    if (input.workspaceId && input.workspaceId !== parent.workspaceId) {
+      throw new ValidationError("Parent node must belong to the selected workspace.");
+    }
+    const workspace = service.getWorkspace(parent.workspaceId);
+    return { workspace, parentId: parent.id };
+  }
+
+  if (!input.workspaceId) throw new ValidationError("Workspace ID is required.");
+  const workspace = service.getWorkspace(input.workspaceId);
+  return { workspace, parentId: workspace.rootNodeId };
 }
 
 function writeNode(lines: string[], node: OutlineTreeNode, depth: number): void {

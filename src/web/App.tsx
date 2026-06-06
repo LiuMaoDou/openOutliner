@@ -361,9 +361,8 @@ export function App() {
   };
 
   const exportFile = async (format: "markdown" | "opml") => {
-    if (!workspaceId) return;
     const extension = format === "markdown" ? "md" : "opml";
-    const content = await apiText(`/api/export/${format}?workspaceId=${workspaceId}`);
+    const content = await apiText(`/api/export/${format}`);
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -376,18 +375,16 @@ export function App() {
   const importFile = async (file: File) => {
     const content = await file.text();
     const format = file.name.toLowerCase().endsWith(".opml") ? "opml" : "markdown";
-    const result = await apiPost<{ workspaceId?: string }>(`/api/import/${format}`, {
-      ...(workspaceId ? { workspaceId } : {}),
-      content
-    });
-    if (result.workspaceId && result.workspaceId !== workspaceIdRef.current) {
-      await loadWorkspaces();
-      selectWorkspace(result.workspaceId);
-      await loadTree(result.workspaceId);
-      await loadTags(result.workspaceId);
-      return;
-    }
-    await refresh();
+    const result = await apiPost<{ workspaceId?: string; workspaceIds?: string[] }>(`/api/import/${format}`, { content });
+    const nextWorkspaces = await loadWorkspaces();
+    const nextId =
+      result.workspaceId && nextWorkspaces.some(workspace => workspace.id === result.workspaceId)
+        ? result.workspaceId
+        : nextWorkspaces[0]?.id || "";
+    workspaceIdRef.current = nextId;
+    setWorkspaceId(nextId);
+    await loadTree(nextId);
+    await loadTags(nextId);
   };
 
   return (
