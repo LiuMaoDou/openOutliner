@@ -53,6 +53,12 @@ export interface OutlineTreeNode extends OutlineNode {
   children: OutlineTreeNode[];
 }
 
+export interface TaggedNodeResult {
+  node: OutlineNode;
+  tags: Tag[];
+  workspace: Workspace;
+}
+
 export interface CreateNodeInput {
   parentId: string;
   title: string;

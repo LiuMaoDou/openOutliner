@@ -8,6 +8,7 @@ import type {
   OutlineNode,
   OutlineTreeNode,
   Tag,
+  TaggedNodeResult,
   UpdateNodeInput,
   Workspace
 } from "../domain/types.js";
@@ -423,6 +424,65 @@ export class OutlinerService {
       .map(rowToTag);
   }
 
+  listNodesByTagName(tagName: string): TaggedNodeResult[] {
+    const normalized = tagName.trim().replace(/^#/, "");
+    if (!normalized) throw new ValidationError("Tag name is required.");
+
+    const rows = this.db
+      .prepare(
+        `SELECT
+           nodes.*,
+           tags.id AS matched_tag_id,
+           tags.workspace_id AS matched_tag_workspace_id,
+           tags.name AS matched_tag_name,
+           tags.color AS matched_tag_color,
+           tags.created_at AS matched_tag_created_at,
+           workspaces.id AS result_workspace_id,
+           workspaces.name AS result_workspace_name,
+           workspaces.icon AS result_workspace_icon,
+           workspaces.root_node_id AS result_workspace_root_node_id,
+           workspaces.created_at AS result_workspace_created_at,
+           workspaces.updated_at AS result_workspace_updated_at
+         FROM tags
+         JOIN node_tags ON node_tags.tag_id = tags.id
+         JOIN nodes ON nodes.id = node_tags.node_id
+         JOIN workspaces ON workspaces.id = nodes.workspace_id
+         WHERE tags.name = ?
+           AND nodes.deleted_at IS NULL
+           AND nodes.parent_id IS NOT NULL
+         ORDER BY workspaces.created_at ASC, nodes.updated_at DESC`
+      )
+      .all(normalized) as Row[];
+
+    const tagsByNode = new Map<string, Tag[]>();
+    const nodeIds = rows.map(row => text(row.id));
+    if (nodeIds.length > 0) {
+      const placeholders = nodeIds.map(() => "?").join(", ");
+      for (const row of this.db
+        .prepare(
+          `SELECT node_tags.node_id, tags.* FROM node_tags
+           JOIN tags ON node_tags.tag_id = tags.id
+           WHERE node_tags.node_id IN (${placeholders})
+           ORDER BY tags.name ASC`
+        )
+        .all(...nodeIds) as Row[]) {
+        const nodeId = text(row.node_id);
+        const tags = tagsByNode.get(nodeId) ?? [];
+        tags.push(rowToTag(row));
+        tagsByNode.set(nodeId, tags);
+      }
+    }
+
+    return rows.map(row => {
+      const node = rowToNode(row);
+      return {
+        node,
+        tags: tagsByNode.get(node.id) ?? [rowToMatchedTag(row)],
+        workspace: rowToResultWorkspace(row)
+      };
+    });
+  }
+
   createTag(workspaceId: string, name: string, color?: string): Tag {
     this.getWorkspace(workspaceId);
     const normalized = name.trim().replace(/^#/, "");
@@ -610,6 +670,27 @@ function rowToTag(row: Row): Tag {
     name: text(row.name),
     color: text(row.color),
     createdAt: text(row.created_at)
+  };
+}
+
+function rowToMatchedTag(row: Row): Tag {
+  return {
+    id: text(row.matched_tag_id),
+    workspaceId: text(row.matched_tag_workspace_id),
+    name: text(row.matched_tag_name),
+    color: text(row.matched_tag_color),
+    createdAt: text(row.matched_tag_created_at)
+  };
+}
+
+function rowToResultWorkspace(row: Row): Workspace {
+  return {
+    id: text(row.result_workspace_id),
+    name: text(row.result_workspace_name),
+    icon: text(row.result_workspace_icon),
+    rootNodeId: text(row.result_workspace_root_node_id),
+    createdAt: text(row.result_workspace_created_at),
+    updatedAt: text(row.result_workspace_updated_at)
   };
 }
 

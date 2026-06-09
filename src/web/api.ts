@@ -38,6 +38,12 @@ export interface OutlineTreeNode {
   children: OutlineTreeNode[];
 }
 
+export interface TaggedNodeResult {
+  node: Omit<OutlineTreeNode, "tags" | "fieldValues" | "children">;
+  tags: Tag[];
+  workspace: Workspace;
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   return request<T>(path);
 }

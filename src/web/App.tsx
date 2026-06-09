@@ -15,7 +15,8 @@ import {
   Sun,
   Tag as TagIcon,
   Trash2,
-  Upload
+  Upload,
+  X
 } from "lucide-react";
 import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -28,6 +29,7 @@ import {
   apiText,
   type OutlineTreeNode,
   type Tag,
+  type TaggedNodeResult,
   type Workspace
 } from "./api";
 import { useTheme, type Theme } from "./theme";
@@ -72,6 +74,8 @@ export function App() {
   const [tagName, setTagName] = useState("");
   const [managedTagName, setManagedTagName] = useState("");
   const [tags, setTags] = useState<Tag[]>([]);
+  const [activeTagFilter, setActiveTagFilter] = useState("");
+  const [tagResults, setTagResults] = useState<TaggedNodeResult[]>([]);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
@@ -79,6 +83,7 @@ export function App() {
   const workspaceIdRef = useRef("");
   const treeRequestRef = useRef(0);
   const tagsRequestRef = useRef(0);
+  const tagResultsRequestRef = useRef(0);
   const draggingIdRef = useRef("");
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
@@ -124,6 +129,20 @@ export function App() {
     setTags(next);
   }, []);
 
+  const loadTagResults = useCallback(async (name: string) => {
+    const requestId = ++tagResultsRequestRef.current;
+    const normalized = name.trim().replace(/^#/, "");
+    if (!normalized) {
+      setActiveTagFilter("");
+      setTagResults([]);
+      return;
+    }
+    setActiveTagFilter(normalized);
+    const next = await apiGet<TaggedNodeResult[]>(`/api/tag-results?name=${encodeURIComponent(normalized)}`);
+    if (requestId !== tagResultsRequestRef.current) return;
+    setTagResults(next);
+  }, []);
+
   useEffect(() => {
     loadWorkspaces().catch(toError(setError));
   }, [loadWorkspaces]);
@@ -157,13 +176,23 @@ export function App() {
   const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
   const isSearching = search.trim().length > 0;
+  const isTagFiltering = activeTagFilter.length > 0;
   const filteredNodes = isSearching
     ? flatNodes.filter(({ node }) => `${node.title}\n${node.body}`.toLowerCase().includes(search.toLowerCase()))
     : flatNodes;
+  const filteredTagResults = isSearching
+    ? tagResults.filter(result =>
+        `${result.node.title}\n${result.node.body}\n${result.workspace.name}`.toLowerCase().includes(search.toLowerCase())
+      )
+    : tagResults;
+  const visibleItemCount = isTagFiltering ? filteredTagResults.length : filteredNodes.length;
   const rowVirtualizer = useVirtualizer({
-    count: filteredNodes.length,
+    count: visibleItemCount,
     getScrollElement: () => outlineSurfaceRef.current,
-    getItemKey: index => filteredNodes[index]?.node.id ?? index,
+    getItemKey: index =>
+      isTagFiltering
+        ? filteredTagResults[index]?.node.id ?? `tag-result-${index}`
+        : filteredNodes[index]?.node.id ?? index,
     estimateSize: () => 38,
     overscan: 16
   });
@@ -188,6 +217,29 @@ export function App() {
   const focusNode = (id: string) => {
     setSelectedId(id);
     window.setTimeout(() => inputRefs.current.get(id)?.focus(), 30);
+  };
+
+  const clearTagFilter = () => {
+    tagResultsRequestRef.current += 1;
+    setActiveTagFilter("");
+    setTagResults([]);
+  };
+
+  const openTagResult = async (result: TaggedNodeResult) => {
+    clearTagFilter();
+    workspaceIdRef.current = result.workspace.id;
+    treeRequestRef.current += 1;
+    tagsRequestRef.current += 1;
+    setWorkspaceId(result.workspace.id);
+    setTree(null);
+    setSelectedId("");
+    setTags([]);
+    setTagName("");
+    setManagedTagName("");
+    await loadTree(result.workspace.id);
+    await loadTags(result.workspace.id);
+    setSelectedId(result.node.id);
+    window.setTimeout(() => inputRefs.current.get(result.node.id)?.focus(), 30);
   };
 
   const createOptimisticNode = async (
@@ -341,7 +393,7 @@ export function App() {
   const cycleTheme = () => setTheme(nextTheme(theme));
 
   const startNodeDrag = (node: OutlineTreeNode, event: PointerEvent<HTMLButtonElement>) => {
-    if (isSearching) return;
+    if (isSearching || isTagFiltering) return;
     event.preventDefault();
     draggingIdRef.current = node.id;
     dragTargetRef.current = null;
@@ -407,10 +459,13 @@ export function App() {
     workspaceIdRef.current = id;
     treeRequestRef.current += 1;
     tagsRequestRef.current += 1;
+    tagResultsRequestRef.current += 1;
     setWorkspaceId(id);
     setTree(null);
     setSelectedId("");
     setTags([]);
+    setActiveTagFilter("");
+    setTagResults([]);
     setTagName("");
     setManagedTagName("");
   }, []);
@@ -443,9 +498,12 @@ export function App() {
     if (workspace.id === workspaceId) {
       treeRequestRef.current += 1;
       tagsRequestRef.current += 1;
+      tagResultsRequestRef.current += 1;
       setTree(null);
       setSelectedId("");
       setTags([]);
+      setActiveTagFilter("");
+      setTagResults([]);
     }
   };
 
@@ -508,7 +566,10 @@ export function App() {
         ? result.workspaceId
         : nextWorkspaces[0]?.id || "";
     workspaceIdRef.current = nextId;
+    tagResultsRequestRef.current += 1;
     setWorkspaceId(nextId);
+    setActiveTagFilter("");
+    setTagResults([]);
     await loadTree(nextId);
     await loadTags(nextId);
   };
@@ -592,8 +653,8 @@ export function App() {
       <main className="mainPane">
         <header className="topbar">
           <div className="topbarTitle">
-            <span>{selectedWorkspace?.name ?? "Workspace"}</span>
-            <small>{flatNodes.length} nodes</small>
+            <span>{isTagFiltering ? `#${activeTagFilter}` : selectedWorkspace?.name ?? "Workspace"}</span>
+            <small>{isTagFiltering ? `${tagResults.length} results` : `${flatNodes.length} nodes`}</small>
           </div>
           <div className="searchBox">
             <Search size={17} />
@@ -641,15 +702,42 @@ export function App() {
         <section className={isInspectorOpen ? "contentGrid" : "contentGrid commentsClosed"}>
           <div className="outlineSurface" ref={outlineSurfaceRef}>
             <div className="outlineHeader">
-              <h1>{tree?.title ?? "OpenOutliner"}</h1>
+              <h1>{isTagFiltering ? `#${activeTagFilter}` : tree?.title ?? "OpenOutliner"}</h1>
+              {isTagFiltering && (
+                <button className="tagFilterClear" type="button" onClick={clearTagFilter}>
+                  <X size={15} />
+                  <span>Clear</span>
+                </button>
+              )}
             </div>
             <div className="outlineList">
-              {filteredNodes.length > 0 ? (
+              {visibleItemCount > 0 ? (
                 <div
                   className="virtualOutlineList"
                   style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
                 >
                   {virtualItems.map(virtualItem => {
+                    if (isTagFiltering) {
+                      const result = filteredTagResults[virtualItem.index];
+                      if (!result) return null;
+                      return (
+                        <div
+                          className="virtualOutlineRow"
+                          data-index={virtualItem.index}
+                          key={result.node.id}
+                          ref={rowVirtualizer.measureElement}
+                          style={{ transform: `translateY(${virtualItem.start}px)` }}
+                        >
+                          <TagResultRow
+                            result={result}
+                            selected={selectedId === result.node.id}
+                            onOpen={() => openTagResult(result).catch(toError(setError))}
+                            onTagClick={tag => loadTagResults(tag.name).catch(toError(setError))}
+                          />
+                        </div>
+                      );
+                    }
+
                     const item = filteredNodes[virtualItem.index];
                     if (!item) return null;
                     const { node, depth } = item;
@@ -665,7 +753,7 @@ export function App() {
                           node={node}
                           depth={depth}
                           selected={selectedId === node.id}
-                          canDrag={!isSearching}
+                          canDrag={!isSearching && !isTagFiltering}
                           dragging={dragState?.draggingId === node.id}
                           dropPlacement={dragState?.overId === node.id ? dragState.placement ?? null : null}
                           registerInput={element => {
@@ -687,6 +775,7 @@ export function App() {
                           onFocusPrevious={() => focusRelative(node, -1)}
                           onFocusNext={() => focusRelative(node, 1)}
                           onMoveStart={event => startNodeDrag(node, event)}
+                          onTagClick={tag => loadTagResults(tag.name).catch(toError(setError))}
                           onDelete={() => deleteNodeOptimistically(node)}
                         />
                       </div>
@@ -703,7 +792,7 @@ export function App() {
                   <span>First node</span>
                 </button>
               ) : (
-                <div className="outlineEmptyState">No matching nodes</div>
+                <div className="outlineEmptyState">{isTagFiltering ? "No tagged nodes" : "No matching nodes"}</div>
               )}
             </div>
           </div>
@@ -747,9 +836,14 @@ export function App() {
                     <label>Tags</label>
                     <div className="tagList">
                       {selectedNode.tags.map(tag => (
-                        <span className="tagPill" key={tag.id}>
+                        <button
+                          className="tagPill"
+                          type="button"
+                          key={tag.id}
+                          onClick={() => loadTagResults(tag.name).catch(toError(setError))}
+                        >
                           #{tag.name}
-                        </span>
+                        </button>
                       ))}
                     </div>
                     <div className="tagInput">
@@ -862,6 +956,7 @@ function NodeRow({
   onFocusPrevious,
   onFocusNext,
   onMoveStart,
+  onTagClick,
   onDelete
 }: {
   node: OutlineTreeNode;
@@ -881,6 +976,7 @@ function NodeRow({
   onFocusPrevious: () => void;
   onFocusNext: () => void;
   onMoveStart: (event: PointerEvent<HTMLButtonElement>) => void;
+  onTagClick: (tag: Tag) => void;
   onDelete: () => Promise<void>;
 }) {
   const rowClassName = [
@@ -957,14 +1053,43 @@ function NodeRow({
       />
       <div className="nodeTags">
         {node.tags.map(tag => (
-          <span key={tag.id}>
+          <button type="button" key={tag.id} onClick={() => onTagClick(tag)}>
             {tag.name}
-          </span>
+          </button>
         ))}
       </div>
       <button className="iconButton danger" type="button" title="Delete" onClick={() => onDelete()}>
         <Trash2 size={15} />
       </button>
+    </div>
+  );
+}
+
+function TagResultRow({
+  result,
+  selected,
+  onOpen,
+  onTagClick
+}: {
+  result: TaggedNodeResult;
+  selected: boolean;
+  onOpen: () => void;
+  onTagClick: (tag: Tag) => void;
+}) {
+  return (
+    <div className={selected ? "tagResultRow selected" : "tagResultRow"}>
+      <button className="tagResultMain" type="button" onClick={onOpen}>
+        <span className="tagResultTitle">{result.node.title || "Untitled"}</span>
+        <span className="tagResultWorkspace">{result.workspace.name}</span>
+        {result.node.body && <span className="tagResultBody">{result.node.body}</span>}
+      </button>
+      <div className="nodeTags">
+        {result.tags.map(tag => (
+          <button type="button" key={tag.id} onClick={() => onTagClick(tag)}>
+            {tag.name}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

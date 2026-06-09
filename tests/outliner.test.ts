@@ -114,6 +114,31 @@ describe("OutlinerService", () => {
     expect(service.getTree(workspace.rootNodeId).children[0].tags).toEqual([]);
   });
 
+  it("lists tagged nodes across workspaces by tag name", () => {
+    const firstWorkspace = service.createWorkspace("First");
+    const secondWorkspace = service.createWorkspace("Second");
+    const firstNode = service.createNode({ parentId: firstWorkspace.rootNodeId, title: "Alpha" });
+    const secondNode = service.createNode({ parentId: secondWorkspace.rootNodeId, title: "Beta" });
+    const otherNode = service.createNode({ parentId: secondWorkspace.rootNodeId, title: "Gamma" });
+    const deletedNode = service.createNode({ parentId: firstWorkspace.rootNodeId, title: "Deleted" });
+
+    service.setNodeTag(firstNode.id, "project");
+    service.setNodeTag(firstNode.id, "active");
+    service.setNodeTag(secondNode.id, "project");
+    service.setNodeTag(otherNode.id, "area");
+    service.setNodeTag(deletedNode.id, "project");
+    service.deleteNode(deletedNode.id);
+
+    const results = service.listNodesByTagName("project");
+
+    expect(results.map(result => result.node.title).sort()).toEqual(["Alpha", "Beta"]);
+    expect(results.map(result => result.workspace.name).sort()).toEqual(["First", "Second"]);
+    expect(results.find(result => result.node.id === firstNode.id)?.tags.map(tag => tag.name)).toEqual([
+      "active",
+      "project"
+    ]);
+  });
+
   it("migrates older workspaces with default icons", () => {
     const dbPath = join(tempDir, "old.sqlite");
     const oldDb = new DatabaseSync(dbPath);

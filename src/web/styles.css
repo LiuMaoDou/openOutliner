@@ -610,6 +610,28 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.tagFilterClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  color: var(--secondary-foreground);
+  background: var(--selected);
+  border: 1px solid var(--selected-border);
+  border-radius: var(--radius);
+}
+
+.tagFilterClear:hover {
+  background: var(--background);
+}
+
+.tagFilterClear span {
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
 .outlineList {
   max-width: 980px;
   margin: 0 auto;
@@ -843,7 +865,7 @@ textarea:focus-visible {
   gap: 5px;
 }
 
-.nodeTags span,
+.nodeTags button,
 .tagPill {
   display: inline-flex;
   align-items: center;
@@ -854,6 +876,81 @@ textarea:focus-visible {
   border: 1px solid var(--tag-border);
   border-radius: 999px;
   font-size: 0.76rem;
+}
+
+.nodeTags button,
+.tagPill {
+  cursor: pointer;
+}
+
+.nodeTags button:hover,
+.tagPill:hover {
+  color: var(--foreground);
+  background: var(--accent);
+  border-color: var(--ring);
+}
+
+.tagResultRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 4px 8px 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.tagResultRow:hover {
+  background: var(--accent);
+}
+
+.tagResultRow.selected {
+  background: var(--selected);
+  border-color: var(--selected-border);
+}
+
+.tagResultMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  color: var(--foreground);
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.tagResultMain:hover,
+.tagResultMain:focus-visible {
+  background: transparent;
+  box-shadow: none;
+}
+
+.tagResultTitle,
+.tagResultBody {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tagResultTitle {
+  font-size: 0.9rem;
+  font-weight: 620;
+}
+
+.tagResultWorkspace {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.tagResultBody {
+  grid-column: 1 / -1;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
 }
 
 .inspector {

@@ -121,6 +121,11 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
+  if (method === "GET" && path === "/api/tag-results") {
+    sendJson(res, service.listNodesByTagName(requiredParam(url, "name")));
+    return;
+  }
+
   if (method === "POST" && path === "/api/tags") {
     const body = await readJson<{ workspaceId: string; name: string; color?: string }>(req);
     sendJson(res, service.createTag(body.workspaceId, body.name, body.color), 201);
