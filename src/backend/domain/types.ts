@@ -4,7 +4,16 @@ export interface Workspace {
   id: string;
   name: string;
   icon: string;
+  folderId: string | null;
   rootNodeId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceFolder {
+  id: string;
+  name: string;
+  position: number;
   createdAt: string;
   updatedAt: string;
 }

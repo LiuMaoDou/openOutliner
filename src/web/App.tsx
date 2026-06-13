@@ -6,6 +6,8 @@ import {
   ChevronLeft,
   ChevronRight,
   FileDown,
+  Folder,
+  FolderPlus,
   FolderTree,
   Monitor,
   Moon,
@@ -43,7 +45,8 @@ import {
   type OutlineTreeNode,
   type Tag,
   type TaggedNodeResult,
-  type Workspace
+  type Workspace,
+  type WorkspaceFolder
 } from "./api";
 import { useTheme, type Theme } from "./theme";
 import {
@@ -82,6 +85,7 @@ const iconNameSet = new Set<string>(iconNames);
 export function App() {
   const { theme, setTheme } = useTheme();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>("");
   const [tree, setTree] = useState<OutlineTreeNode | null>(null);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -96,6 +100,7 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
+  const [workspaceDragTargetId, setWorkspaceDragTargetId] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const workspaceIdRef = useRef("");
   const treeRequestRef = useRef(0);
@@ -103,10 +108,13 @@ export function App() {
   const tagResultsRequestRef = useRef(0);
   const draggingIdRef = useRef("");
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
-  const inputRefs = useRef(new Map<string, HTMLInputElement>());
+  const workspaceDragTargetRef = useRef<string | null>(null);
+  const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
   const treeRef = useRef<OutlineTreeNode | null>(null);
+  const rowMeasureFrameRef = useRef<number | null>(null);
+  const rowResizeObserversRef = useRef(new Map<string, ResizeObserver>());
   const cancelledTempIdsRef = useRef(new Set<string>());
 
   const loadWorkspaces = useCallback(async () => {
@@ -117,6 +125,12 @@ export function App() {
       workspaceIdRef.current = nextId;
       return nextId;
     });
+    return next;
+  }, []);
+
+  const loadWorkspaceFolders = useCallback(async () => {
+    const next = await apiGet<WorkspaceFolder[]>("/api/workspace-folders");
+    setWorkspaceFolders(next);
     return next;
   }, []);
 
@@ -165,6 +179,10 @@ export function App() {
   }, [loadWorkspaces]);
 
   useEffect(() => {
+    loadWorkspaceFolders().catch(toError(setError));
+  }, [loadWorkspaceFolders]);
+
+  useEffect(() => {
     loadTree(workspaceId).catch(toError(setError));
   }, [loadTree, workspaceId]);
 
@@ -202,6 +220,17 @@ export function App() {
   }, [tree]);
   const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
+  const rootWorkspaces = useMemo(() => workspaces.filter(workspace => !workspace.folderId), [workspaces]);
+  const workspacesByFolder = useMemo(() => {
+    const map = new Map<string, Workspace[]>();
+    for (const folder of workspaceFolders) map.set(folder.id, []);
+    for (const workspace of workspaces) {
+      if (!workspace.folderId) continue;
+      const folderWorkspaces = map.get(workspace.folderId);
+      if (folderWorkspaces) folderWorkspaces.push(workspace);
+    }
+    return map;
+  }, [workspaceFolders, workspaces]);
   const isSearching = search.trim().length > 0;
   const isTagFiltering = activeTagFilter.length > 0;
   const filteredNodes = isSearching
@@ -224,6 +253,37 @@ export function App() {
     overscan: 16
   });
   const virtualItems = rowVirtualizer.getVirtualItems();
+  const requestRowMeasure = useCallback(() => {
+    if (rowMeasureFrameRef.current !== null) window.cancelAnimationFrame(rowMeasureFrameRef.current);
+    rowMeasureFrameRef.current = window.requestAnimationFrame(() => {
+      rowMeasureFrameRef.current = null;
+      rowVirtualizer.measure();
+    });
+  }, [rowVirtualizer]);
+
+  useEffect(
+    () => () => {
+      if (rowMeasureFrameRef.current !== null) window.cancelAnimationFrame(rowMeasureFrameRef.current);
+      rowResizeObserversRef.current.forEach(observer => observer.disconnect());
+      rowResizeObserversRef.current.clear();
+    },
+    []
+  );
+  const registerVirtualRow = useCallback(
+    (key: string, element: HTMLDivElement | null) => {
+      rowResizeObserversRef.current.get(key)?.disconnect();
+      rowResizeObserversRef.current.delete(key);
+      if (!element) return;
+
+      rowVirtualizer.measureElement(element);
+      const observer = new ResizeObserver(() => {
+        rowVirtualizer.measureElement(element);
+      });
+      observer.observe(element);
+      rowResizeObserversRef.current.set(key, observer);
+    },
+    [rowVirtualizer]
+  );
 
   const refresh = useCallback(
     async (focusId?: string) => {
@@ -511,10 +571,16 @@ export function App() {
   const createWorkspace = async () => {
     const created = await apiPost<Workspace>("/api/workspaces", {
       name: "Untitled Workspace",
-      icon: randomWorkspaceIcon()
+      icon: randomWorkspaceIcon(),
+      folderId: selectedWorkspace?.folderId ?? null
     });
     await loadWorkspaces();
     selectWorkspace(created.id);
+  };
+
+  const createWorkspaceFolder = async () => {
+    const created = await apiPost<WorkspaceFolder>("/api/workspace-folders", { name: "New Folder" });
+    setWorkspaceFolders(current => [...current, created]);
   };
 
   const updateWorkspaceName = async (workspace: Workspace, name: string) => {
@@ -527,6 +593,71 @@ export function App() {
 
   const updateWorkspaceDraft = (id: string, name: string) => {
     setWorkspaces(current => current.map(workspace => (workspace.id === id ? { ...workspace, name } : workspace)));
+  };
+
+  const moveWorkspaceToFolder = async (workspaceId: string, nextFolderId: string | null) => {
+    const workspace = workspaces.find(item => item.id === workspaceId);
+    if (!workspace || workspace.folderId === nextFolderId) return;
+    setWorkspaces(current =>
+      current.map(item => (item.id === workspace.id ? { ...item, folderId: nextFolderId } : item))
+    );
+    const updated = await apiPatch<Workspace>(`/api/workspaces/${workspace.id}`, { folderId: nextFolderId });
+    setWorkspaces(current => current.map(item => (item.id === updated.id ? updated : item)));
+  };
+
+  const startWorkspaceDrag = (workspace: Workspace, event: PointerEvent<HTMLSpanElement>) => {
+    if (sidebarCollapsed) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    workspaceDragTargetRef.current = workspace.folderId ?? "root";
+    setWorkspaceDragTargetId(workspace.folderId ?? "root");
+    document.body.classList.add("isDraggingWorkspace");
+
+    const move = (pointerEvent: globalThis.PointerEvent) => {
+      const targetElement = document
+        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
+        ?.closest<HTMLElement>("[data-workspace-folder-drop-id]");
+      const targetId = targetElement?.dataset.workspaceFolderDropId ?? null;
+      workspaceDragTargetRef.current = targetId;
+      setWorkspaceDragTargetId(targetId);
+    };
+
+    const end = () => {
+      const targetId = workspaceDragTargetRef.current;
+      const nextFolderId = targetId === "root" ? null : targetId;
+      workspaceDragTargetRef.current = null;
+      setWorkspaceDragTargetId(null);
+      document.body.classList.remove("isDraggingWorkspace");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      if (targetId !== null) moveWorkspaceToFolder(workspace.id, nextFolderId).catch(toError(setError));
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
+
+  const updateWorkspaceFolderName = async (folder: WorkspaceFolder, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const updated = await apiPatch<WorkspaceFolder>(`/api/workspace-folders/${folder.id}`, { name: trimmed });
+    setWorkspaceFolders(current => current.map(item => (item.id === updated.id ? updated : item)));
+  };
+
+  const updateWorkspaceFolderDraft = (id: string, name: string) => {
+    setWorkspaceFolders(current => current.map(folder => (folder.id === id ? { ...folder, name } : folder)));
+  };
+
+  const deleteWorkspaceFolder = async (folder: WorkspaceFolder) => {
+    if (!window.confirm(`Delete folder "${folder.name}"? Workspaces inside it will move to root.`)) return;
+    await apiDelete(`/api/workspace-folders/${folder.id}`);
+    setWorkspaceFolders(current => current.filter(item => item.id !== folder.id));
+    setWorkspaces(current =>
+      current.map(workspace => (workspace.folderId === folder.id ? { ...workspace, folderId: null } : workspace))
+    );
   };
 
   const deleteWorkspace = async (workspace: Workspace) => {
@@ -612,6 +743,52 @@ export function App() {
     await loadTags(nextId);
   };
 
+  const renderWorkspaceItem = (workspace: Workspace) => (
+    <div
+      className={workspace.id === workspaceId ? "workspaceItem active" : "workspaceItem"}
+      key={workspace.id}
+      title={sidebarCollapsed ? workspace.name : undefined}
+      onClick={() => selectWorkspace(workspace.id)}
+    >
+      <span
+        className="workspaceIcon workspaceDragHandle"
+        title={sidebarCollapsed ? workspace.name : "Drag workspace"}
+        onPointerDown={event => startWorkspaceDrag(workspace, event)}
+      >
+        <DynamicIcon
+          name={workspaceIconName(workspace.icon)}
+          fallback={() => <FolderTree size={15} />}
+          size={15}
+          strokeWidth={2.2}
+        />
+      </span>
+      {!sidebarCollapsed && (
+        <input
+          value={workspace.name}
+          onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
+          onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
+          onFocus={() => selectWorkspace(workspace.id)}
+          onKeyDown={event => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+      )}
+      {!sidebarCollapsed && (
+        <button
+          className="workspaceDeleteButton"
+          type="button"
+          title="Delete workspace"
+          onClick={event => {
+            event.stopPropagation();
+            deleteWorkspace(workspace).catch(toError(setError));
+          }}
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className={`appShell${sidebarCollapsed ? " sidebarCollapsed" : ""}`}>
       <aside className="sidebar">
@@ -643,48 +820,54 @@ export function App() {
         </div>
 
         <div className="workspaceGroup">
-          <div className="sidebarLabel">{sidebarCollapsed ? "" : "Workspaces"}</div>
-          {workspaces.map(workspace => (
-            <div
-              className={workspace.id === workspaceId ? "workspaceItem active" : "workspaceItem"}
-              key={workspace.id}
-              title={sidebarCollapsed ? workspace.name : undefined}
-              onClick={() => selectWorkspace(workspace.id)}
-            >
-              <span className="workspaceIcon">
-                <DynamicIcon
-                  name={workspaceIconName(workspace.icon)}
-                  fallback={() => <FolderTree size={15} />}
-                  size={15}
-                  strokeWidth={2.2}
-                />
-              </span>
-              {!sidebarCollapsed && (
-                <input
-                  value={workspace.name}
-                  onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
-                  onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
-                  onFocus={() => selectWorkspace(workspace.id)}
-                  onKeyDown={event => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                  }}
-                />
-              )}
-              {!sidebarCollapsed && (
-                <button
-                  className="workspaceDeleteButton"
-                  type="button"
-                  title="Delete workspace"
-                  onClick={event => {
-                    event.stopPropagation();
-                    deleteWorkspace(workspace).catch(toError(setError));
-                  }}
-                >
-                  <Trash2 size={14} />
+          {!sidebarCollapsed ? (
+            <>
+              <div className="sidebarLabel workspaceLabel">
+                <span>Workspaces</span>
+                <button type="button" title="New folder" onClick={() => createWorkspaceFolder().catch(toError(setError))}>
+                  <FolderPlus size={14} />
                 </button>
-              )}
-            </div>
-          ))}
+              </div>
+              <div
+                className={workspaceDragTargetId === "root" ? "workspaceRootDrop active" : "workspaceRootDrop"}
+                data-workspace-folder-drop-id="root"
+              >
+                {rootWorkspaces.map(renderWorkspaceItem)}
+              </div>
+              {workspaceFolders.map(folder => (
+                <div
+                  className={workspaceDragTargetId === folder.id ? "workspaceFolder dropActive" : "workspaceFolder"}
+                  key={folder.id}
+                  data-workspace-folder-drop-id={folder.id}
+                >
+                  <div className="workspaceFolderHeader">
+                    <Folder size={14} />
+                    <input
+                      value={folder.name}
+                      onChange={event => updateWorkspaceFolderDraft(folder.id, event.target.value)}
+                      onBlur={event => updateWorkspaceFolderName(folder, event.target.value).catch(toError(setError))}
+                      onKeyDown={event => {
+                        if (event.key === "Enter") event.currentTarget.blur();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      title="Delete folder"
+                      onClick={() => deleteWorkspaceFolder(folder).catch(toError(setError))}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                  {(workspacesByFolder.get(folder.id) ?? []).map(renderWorkspaceItem)}
+                  {(workspacesByFolder.get(folder.id) ?? []).length === 0 && (
+                    <div className="workspaceFolderEmpty">Empty folder</div>
+                  )}
+                </div>
+              ))}
+            </>
+          ) : (
+            workspaces.map(renderWorkspaceItem)
+          )}
         </div>
       </aside>
 
@@ -741,9 +924,13 @@ export function App() {
             <button title="Import" type="button" onClick={() => fileInputRef.current?.click()}>
               <Upload size={17} />
             </button>
-            <button title="Export OPML" type="button" onClick={() => exportFile("opml").catch(toError(setError))}>
+            <button
+              aria-label="Export OPML"
+              title="Export OPML"
+              type="button"
+              onClick={() => exportFile("opml").catch(toError(setError))}
+            >
               <FileDown size={17} />
-              <span>OPML</span>
             </button>
             <button title="Markdown shortcuts" type="button" onClick={() => setIsMarkdownHelpOpen(true)}>
               <CircleHelp size={17} />
@@ -832,7 +1019,7 @@ export function App() {
                           className="virtualOutlineRow"
                           data-index={virtualItem.index}
                           key={result.node.id}
-                          ref={rowVirtualizer.measureElement}
+                          ref={element => registerVirtualRow(result.node.id, element)}
                           style={{ transform: `translateY(${virtualItem.start}px)` }}
                         >
                           <TagResultRow
@@ -853,7 +1040,7 @@ export function App() {
                         className="virtualOutlineRow"
                         data-index={virtualItem.index}
                         key={node.id}
-                        ref={rowVirtualizer.measureElement}
+                        ref={element => registerVirtualRow(node.id, element)}
                         style={{ transform: `translateY(${virtualItem.start}px)` }}
                       >
                         <NodeRow
@@ -867,6 +1054,7 @@ export function App() {
                             if (element) inputRefs.current.set(node.id, element);
                             else inputRefs.current.delete(node.id);
                           }}
+                          onResize={requestRowMeasure}
                           onSelect={() => setSelectedId(node.id)}
                           onPatchLocal={patch => {
                             setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
@@ -1062,6 +1250,7 @@ function NodeRow({
   dragging,
   dropPlacement,
   registerInput,
+  onResize,
   onSelect,
   onPatchLocal,
   onCommit,
@@ -1081,7 +1270,8 @@ function NodeRow({
   canDrag: boolean;
   dragging: boolean;
   dropPlacement: DropPlacement | null;
-  registerInput: (element: HTMLInputElement | null) => void;
+  registerInput: (element: HTMLTextAreaElement | null) => void;
+  onResize: () => void;
   onSelect: () => void;
   onPatchLocal: (patch: Partial<OutlineTreeNode>) => void;
   onCommit: (patch: Partial<OutlineTreeNode>) => void;
@@ -1095,7 +1285,7 @@ function NodeRow({
   onTagClick: (tag: Tag) => void;
   onDelete: () => Promise<void>;
 }) {
-  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const rowClassName = [
     "nodeRow",
     selected ? "selected" : "",
@@ -1105,6 +1295,12 @@ function NodeRow({
   ]
     .filter(Boolean)
     .join(" ");
+  useEffect(() => {
+    const input = titleInputRef.current;
+    if (!input) return;
+    resizeTitleInput(input);
+    onResize();
+  }, [node.title, selected]);
 
   return (
     <div
@@ -1132,7 +1328,7 @@ function NodeRow({
         <span className="nodeDot" />
       </button>
       <div className="nodeTitleCell">
-        <input
+        <textarea
           ref={element => {
             titleInputRef.current = element;
             registerInput(element);
@@ -1140,12 +1336,21 @@ function NodeRow({
           className="nodeTitle"
           value={node.title}
           placeholder="Untitled"
-          onFocus={onSelect}
-          onChange={event => onPatchLocal({ title: event.target.value })}
+          rows={1}
+          onFocus={event => {
+            resizeTitleInput(event.currentTarget);
+            onResize();
+            onSelect();
+          }}
+          onChange={event => {
+            resizeTitleInput(event.currentTarget);
+            onResize();
+            onPatchLocal({ title: event.target.value });
+          }}
           onBlur={event => onCommit({ title: event.target.value })}
           onKeyDown={event => {
             if (handleMarkdownShortcut(event, node.title, onPatchLocal)) return;
-            if (event.key === "Enter") {
+            if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               onCreateAfter();
             } else if (event.key === "Tab") {
@@ -1260,7 +1465,7 @@ function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement 
 }
 
 function handleMarkdownShortcut(
-  event: KeyboardEvent<HTMLInputElement>,
+  event: KeyboardEvent<HTMLTextAreaElement>,
   title: string,
   onPatchLocal: (patch: Partial<OutlineTreeNode>) => void
 ): boolean {
@@ -1321,7 +1526,7 @@ function normalizeLinkHref(href: string): string {
 }
 
 async function insertMarkdownLinkFromClipboard(
-  event: KeyboardEvent<HTMLInputElement>,
+  event: KeyboardEvent<HTMLTextAreaElement>,
   title: string,
   onPatchLocal: (patch: Partial<OutlineTreeNode>) => void
 ) {
@@ -1343,6 +1548,11 @@ async function insertMarkdownLinkFromClipboard(
     input.focus();
     input.setSelectionRange(selectionStart, selectionEnd);
   }, 0);
+}
+
+function resizeTitleInput(input: HTMLTextAreaElement) {
+  input.style.height = "0px";
+  input.style.height = `${input.scrollHeight}px`;
 }
 
 async function readClipboardText() {

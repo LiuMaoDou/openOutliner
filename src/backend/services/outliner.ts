@@ -10,7 +10,8 @@ import type {
   Tag,
   TaggedNodeResult,
   UpdateNodeInput,
-  Workspace
+  Workspace,
+  WorkspaceFolder
 } from "../domain/types.js";
 
 type Row = Record<string, unknown>;
@@ -90,18 +91,59 @@ export class OutlinerService {
       .map(rowToWorkspace);
   }
 
-  createWorkspace(name: string, icon?: string): Workspace {
+  listWorkspaceFolders(): WorkspaceFolder[] {
+    return this.db
+      .prepare("SELECT * FROM workspace_folders ORDER BY position ASC, created_at ASC")
+      .all()
+      .map(rowToWorkspaceFolder);
+  }
+
+  createWorkspaceFolder(name: string): WorkspaceFolder {
+    const trimmed = name.trim();
+    if (!trimmed) throw new ValidationError("Folder name is required.");
+    const position = number((this.db.prepare("SELECT COUNT(*) AS count FROM workspace_folders").get() as Row).count);
+    const id = randomUUID();
+    const now = timestamp();
+
+    this.db
+      .prepare("INSERT INTO workspace_folders (id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run(id, trimmed, position, now, now);
+    return this.getWorkspaceFolder(id);
+  }
+
+  getWorkspaceFolder(id: string): WorkspaceFolder {
+    const row = this.db.prepare("SELECT * FROM workspace_folders WHERE id = ?").get(id) as Row | undefined;
+    if (!row) throw new NotFoundError(`Workspace folder not found: ${id}`);
+    return rowToWorkspaceFolder(row);
+  }
+
+  updateWorkspaceFolder(id: string, input: { name?: string }): WorkspaceFolder {
+    this.getWorkspaceFolder(id);
+    const name = input.name?.trim();
+    if (!name) throw new ValidationError("Folder name is required.");
+    this.db.prepare("UPDATE workspace_folders SET name = ?, updated_at = ? WHERE id = ?").run(name, timestamp(), id);
+    return this.getWorkspaceFolder(id);
+  }
+
+  deleteWorkspaceFolder(id: string): { deleted: string } {
+    this.getWorkspaceFolder(id);
+    this.db.prepare("DELETE FROM workspace_folders WHERE id = ?").run(id);
+    return { deleted: id };
+  }
+
+  createWorkspace(name: string, icon?: string, folderId?: string | null): Workspace {
     const now = timestamp();
     const workspaceId = randomUUID();
     const rootNodeId = randomUUID();
     const workspaceIcon = normalizeWorkspaceIcon(icon);
+    const normalizedFolderId = this.normalizeWorkspaceFolderId(folderId);
 
     this.transaction(() => {
       this.db
         .prepare(
-          "INSERT INTO workspaces (id, name, icon, root_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+          "INSERT INTO workspaces (id, name, icon, folder_id, root_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
         )
-        .run(workspaceId, name, workspaceIcon, rootNodeId, now, now);
+        .run(workspaceId, name, workspaceIcon, normalizedFolderId, rootNodeId, now, now);
       this.db
         .prepare(
           `INSERT INTO nodes
@@ -120,19 +162,25 @@ export class OutlinerService {
     return rowToWorkspace(row);
   }
 
-  updateWorkspace(id: string, input: { name?: string }): Workspace {
+  updateWorkspace(id: string, input: { name?: string; folderId?: string | null }): Workspace {
     const workspace = this.getWorkspace(id);
     const name = input.name?.trim();
-    if (!name) throw new ValidationError("Workspace name is required.");
+    const hasName = input.name !== undefined;
+    if (hasName && !name) throw new ValidationError("Workspace name is required.");
+    const hasFolder = input.folderId !== undefined;
+    const folderId = hasFolder ? this.normalizeWorkspaceFolderId(input.folderId) : workspace.folderId;
+    const nextName = hasName ? name ?? workspace.name : workspace.name;
     const now = timestamp();
 
     this.transaction(() => {
       this.db
-        .prepare("UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?")
-        .run(name, now, id);
-      this.db
-        .prepare("UPDATE nodes SET title = ?, updated_at = ? WHERE id = ?")
-        .run(name, now, workspace.rootNodeId);
+        .prepare("UPDATE workspaces SET name = ?, folder_id = ?, updated_at = ? WHERE id = ?")
+        .run(nextName, folderId, now, id);
+      if (hasName) {
+        this.db
+          .prepare("UPDATE nodes SET title = ?, updated_at = ? WHERE id = ?")
+          .run(nextName, now, workspace.rootNodeId);
+      }
     });
 
     return this.getWorkspace(id);
@@ -440,6 +488,7 @@ export class OutlinerService {
            workspaces.id AS result_workspace_id,
            workspaces.name AS result_workspace_name,
            workspaces.icon AS result_workspace_icon,
+           workspaces.folder_id AS result_workspace_folder_id,
            workspaces.root_node_id AS result_workspace_root_node_id,
            workspaces.created_at AS result_workspace_created_at,
            workspaces.updated_at AS result_workspace_updated_at
@@ -611,6 +660,11 @@ export class OutlinerService {
     return false;
   }
 
+  private normalizeWorkspaceFolderId(folderId?: string | null): string | null {
+    if (!folderId) return null;
+    return this.getWorkspaceFolder(folderId).id;
+  }
+
   private transaction<T>(fn: () => T): T {
     if (this.transactionDepth > 0) return fn();
 
@@ -642,7 +696,18 @@ function rowToWorkspace(row: Row): Workspace {
     id: text(row.id),
     name: text(row.name),
     icon: text(row.icon) || "folder-tree",
+    folderId: nullableText(row.folder_id),
     rootNodeId: text(row.root_node_id),
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at)
+  };
+}
+
+function rowToWorkspaceFolder(row: Row): WorkspaceFolder {
+  return {
+    id: text(row.id),
+    name: text(row.name),
+    position: number(row.position),
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at)
   };
@@ -688,6 +753,7 @@ function rowToResultWorkspace(row: Row): Workspace {
     id: text(row.result_workspace_id),
     name: text(row.result_workspace_name),
     icon: text(row.result_workspace_icon),
+    folderId: nullableText(row.result_workspace_folder_id),
     rootNodeId: text(row.result_workspace_root_node_id),
     createdAt: text(row.result_workspace_created_at),
     updatedAt: text(row.result_workspace_updated_at)

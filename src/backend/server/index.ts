@@ -52,9 +52,30 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
+  if (method === "GET" && path === "/api/workspace-folders") {
+    sendJson(res, service.listWorkspaceFolders());
+    return;
+  }
+
+  if (method === "POST" && path === "/api/workspace-folders") {
+    const body = await readJson<{ name?: string }>(req);
+    sendJson(res, service.createWorkspaceFolder(body.name ?? "New Folder"), 201);
+    return;
+  }
+
+  const workspaceFolderMatch = path.match(/^\/api\/workspace-folders\/([^/]+)$/);
+  if (method === "PATCH" && workspaceFolderMatch) {
+    sendJson(res, service.updateWorkspaceFolder(workspaceFolderMatch[1], await readJson(req)));
+    return;
+  }
+  if (method === "DELETE" && workspaceFolderMatch) {
+    sendJson(res, service.deleteWorkspaceFolder(workspaceFolderMatch[1]));
+    return;
+  }
+
   if (method === "POST" && path === "/api/workspaces") {
-    const body = await readJson<{ name?: string; icon?: string }>(req);
-    sendJson(res, service.createWorkspace(body.name?.trim() || "Untitled Workspace", body.icon), 201);
+    const body = await readJson<{ name?: string; icon?: string; folderId?: string | null }>(req);
+    sendJson(res, service.createWorkspace(body.name?.trim() || "Untitled Workspace", body.icon, body.folderId), 201);
     return;
   }
 

@@ -100,6 +100,21 @@ describe("OutlinerService", () => {
     expect(service.listWorkspaces()).toEqual([]);
   });
 
+  it("groups workspaces in folders and clears folder assignments when folders are deleted", () => {
+    const folder = service.createWorkspaceFolder("Clients");
+    const workspace = service.createWorkspace("Acme", "briefcase-business", folder.id);
+
+    expect(workspace.folderId).toBe(folder.id);
+    expect(service.listWorkspaceFolders().map(item => item.name)).toEqual(["Clients"]);
+
+    const otherFolder = service.createWorkspaceFolder("Archive");
+    const moved = service.updateWorkspace(workspace.id, { folderId: otherFolder.id });
+    expect(moved.folderId).toBe(otherFolder.id);
+
+    service.deleteWorkspaceFolder(otherFolder.id);
+    expect(service.getWorkspace(workspace.id).folderId).toBeNull();
+  });
+
   it("updates and deletes tags", () => {
     const workspace = service.createWorkspace("Tags");
     const node = service.createNode({ parentId: workspace.rootNodeId, title: "Tagged" });
