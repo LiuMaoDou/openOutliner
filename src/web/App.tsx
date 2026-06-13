@@ -1,12 +1,12 @@
 import {
   Check,
+  CircleHelp,
   CircleCheck,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   FileDown,
   FolderTree,
-  GripVertical,
   Monitor,
   Moon,
   PanelRight,
@@ -20,7 +20,20 @@ import {
 } from "lucide-react";
 import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent
+} from "react";
 import {
   apiDelete,
   apiGet,
@@ -53,10 +66,13 @@ interface LoadTreeOptions {
   preserveSelection?: boolean;
 }
 
-type DropPlacement = "before" | "after";
+type DropPlacement = "before" | "inside" | "after";
 
 interface DragState {
   draggingId: string;
+  title: string;
+  x: number;
+  y: number;
   overId?: string;
   placement?: DropPlacement;
 }
@@ -79,6 +95,7 @@ export function App() {
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+  const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const workspaceIdRef = useRef("");
   const treeRequestRef = useRef(0);
@@ -162,6 +179,16 @@ export function App() {
   useEffect(() => {
     treeRef.current = tree;
   }, [tree]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 760px)");
+    const closeInspectorForMobile = () => {
+      if (media.matches) setIsInspectorOpen(false);
+    };
+    closeInspectorForMobile();
+    media.addEventListener("change", closeInspectorForMobile);
+    return () => media.removeEventListener("change", closeInspectorForMobile);
+  }, []);
 
   const flatNodes = useMemo(() => (tree ? flatten(tree) : []), [tree]);
   const nodeMap = useMemo(() => {
@@ -395,13 +422,20 @@ export function App() {
   const startNodeDrag = (node: OutlineTreeNode, event: PointerEvent<HTMLButtonElement>) => {
     if (isSearching || isTagFiltering) return;
     event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
     draggingIdRef.current = node.id;
     dragTargetRef.current = null;
     setSelectedId(node.id);
-    setDragState({ draggingId: node.id });
+    setDragState({ draggingId: node.id, title: node.title, x: event.clientX, y: event.clientY });
     document.body.classList.add("isDraggingNode");
 
     const move = (pointerEvent: globalThis.PointerEvent) => {
+      const nextDragState = {
+        draggingId: node.id,
+        title: node.title,
+        x: pointerEvent.clientX,
+        y: pointerEvent.clientY
+      };
       const targetElement = document
         .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
         ?.closest<HTMLElement>("[data-node-id]");
@@ -410,17 +444,13 @@ export function App() {
 
       if (!targetElement || !target || target.id === node.id || isDescendantNode(node, target.id)) {
         dragTargetRef.current = null;
-        setDragState({ draggingId: node.id });
+        setDragState(nextDragState);
         return;
       }
 
       const placement = getDropPlacement(targetElement, pointerEvent.clientY);
       dragTargetRef.current = { overId: target.id, placement };
-      setDragState(current =>
-        current?.draggingId === node.id && current.overId === target.id && current.placement === placement
-          ? current
-          : { draggingId: node.id, overId: target.id, placement }
-      );
+      setDragState({ ...nextDragState, overId: target.id, placement });
     };
 
     const end = () => {
@@ -449,6 +479,14 @@ export function App() {
 
   const moveNodeToTarget = async (source: OutlineTreeNode, target: OutlineTreeNode, placement: DropPlacement) => {
     if (!tree || source.id === target.id || isDescendantNode(source, target.id)) return;
+    if (placement === "inside") {
+      if (target.collapsed) await patchNode(target.id, { collapsed: false });
+      if (source.parentId === target.id && source.position === target.children.length - 1) return;
+      await apiPost(`/api/nodes/${source.id}/move`, { parentId: target.id, position: target.children.length });
+      await refresh(source.id);
+      return;
+    }
+
     const parentId = target.parentId ?? tree.id;
     const position = target.position + (placement === "after" ? 1 : 0);
     await moveNodeOptimistically(source, parentId, position);
@@ -651,6 +689,30 @@ export function App() {
       </aside>
 
       <main className="mainPane">
+        <div className="mobileWorkspaceBar">
+          <span className="mobileWorkspaceIcon">
+            <DynamicIcon
+              name={workspaceIconName(selectedWorkspace?.icon ?? "")}
+              fallback={() => <FolderTree size={16} />}
+              size={16}
+              strokeWidth={2.2}
+            />
+          </span>
+          <select
+            aria-label="Workspace"
+            value={workspaceId}
+            onChange={event => selectWorkspace(event.target.value)}
+          >
+            {workspaces.map(workspace => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.name}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={createWorkspace} title="New Workspace">
+            <Plus size={16} />
+          </button>
+        </div>
         <header className="topbar">
           <div className="topbarTitle">
             <span>{isTagFiltering ? `#${activeTagFilter}` : selectedWorkspace?.name ?? "Workspace"}</span>
@@ -679,16 +741,61 @@ export function App() {
             <button title="Import" type="button" onClick={() => fileInputRef.current?.click()}>
               <Upload size={17} />
             </button>
-            <button title="Export Markdown" type="button" onClick={() => exportFile("markdown").catch(toError(setError))}>
-              <FileDown size={17} />
-              <span>MD</span>
-            </button>
             <button title="Export OPML" type="button" onClick={() => exportFile("opml").catch(toError(setError))}>
               <FileDown size={17} />
               <span>OPML</span>
             </button>
+            <button title="Markdown shortcuts" type="button" onClick={() => setIsMarkdownHelpOpen(true)}>
+              <CircleHelp size={17} />
+            </button>
           </div>
         </header>
+
+        {isMarkdownHelpOpen && (
+          <div className="modalBackdrop" role="presentation" onClick={() => setIsMarkdownHelpOpen(false)}>
+            <div
+              className="markdownHelpDialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="markdown-help-title"
+              onClick={event => event.stopPropagation()}
+            >
+              <div className="markdownHelpHeader">
+                <h2 id="markdown-help-title">Markdown shortcuts</h2>
+                <button type="button" onClick={() => setIsMarkdownHelpOpen(false)}>
+                  <Check size={16} />
+                </button>
+              </div>
+              <div className="markdownHelpList">
+                <div>
+                  <span>Bold</span>
+                  <code>Ctrl+B</code>
+                  <small>**text**</small>
+                </div>
+                <div>
+                  <span>Italic</span>
+                  <code>Ctrl+I</code>
+                  <small>*text*</small>
+                </div>
+                <div>
+                  <span>Strike</span>
+                  <code>Ctrl+Alt+X</code>
+                  <small>~~text~~</small>
+                </div>
+                <div>
+                  <span>Inline code</span>
+                  <code>Ctrl+E</code>
+                  <small>`code`</small>
+                </div>
+                <div>
+                  <span>Link text</span>
+                  <code>Ctrl+K</code>
+                  <small>[text](paste)</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="errorBar">
@@ -934,6 +1041,15 @@ export function App() {
           )}
         </section>
       </main>
+      {dragState && (
+        <div
+          className="dragPreview"
+          style={{ transform: `translate3d(${dragState.x + 12}px, ${dragState.y + 12}px, 0)` }}
+        >
+          <span className="nodeDot" />
+          <span>{dragState.title || "Untitled"}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -979,6 +1095,7 @@ function NodeRow({
   onTagClick: (tag: Tag) => void;
   onDelete: () => Promise<void>;
 }) {
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
   const rowClassName = [
     "nodeRow",
     selected ? "selected" : "",
@@ -996,16 +1113,6 @@ function NodeRow({
       style={{ "--depth": depth } as CSSProperties}
     >
       <button
-        className="dragHandle"
-        type="button"
-        title={canDrag ? "Move node" : "Move disabled while searching"}
-        aria-label="Move node"
-        disabled={!canDrag}
-        onPointerDown={onMoveStart}
-      >
-        <GripVertical size={15} />
-      </button>
-      <button
         className="iconButton disclosureButton"
         type="button"
         title={node.collapsed ? "Expand" : "Collapse"}
@@ -1015,42 +1122,80 @@ function NodeRow({
         {node.children.length > 0 ? node.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} /> : null}
       </button>
       <button
-        className={node.done ? "checkButton done" : "checkButton"}
+        className={node.done ? "dragHandle done" : "dragHandle"}
         type="button"
-        title={node.done ? "Mark open" : "Mark done"}
-        aria-pressed={node.done}
-        onClick={() => onToggle({ done: !node.done })}
+        title={canDrag ? "Move node" : "Move disabled while searching"}
+        aria-label="Move node"
+        disabled={!canDrag}
+        onPointerDown={onMoveStart}
       >
-        {node.done && <Check size={15} strokeWidth={3} />}
+        <span className="nodeDot" />
       </button>
-      <input
-        ref={registerInput}
-        className="nodeTitle"
-        value={node.title}
-        placeholder="Untitled"
-        onFocus={onSelect}
-        onChange={event => onPatchLocal({ title: event.target.value })}
-        onBlur={event => onCommit({ title: event.target.value })}
-        onKeyDown={event => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            onCreateAfter();
-          } else if (event.key === "Tab") {
-            event.preventDefault();
-            if (event.shiftKey) onOutdent();
-            else onIndent();
-          } else if (event.key === "ArrowUp") {
-            event.preventDefault();
-            onFocusPrevious();
-          } else if (event.key === "ArrowDown") {
-            event.preventDefault();
-            onFocusNext();
-          } else if (event.key === "Backspace" && !node.title) {
-            event.preventDefault();
-            onDelete();
-          }
-        }}
-      />
+      <div className="nodeTitleCell">
+        <input
+          ref={element => {
+            titleInputRef.current = element;
+            registerInput(element);
+          }}
+          className="nodeTitle"
+          value={node.title}
+          placeholder="Untitled"
+          onFocus={onSelect}
+          onChange={event => onPatchLocal({ title: event.target.value })}
+          onBlur={event => onCommit({ title: event.target.value })}
+          onKeyDown={event => {
+            if (handleMarkdownShortcut(event, node.title, onPatchLocal)) return;
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onCreateAfter();
+            } else if (event.key === "Tab") {
+              event.preventDefault();
+              if (event.shiftKey) onOutdent();
+              else onIndent();
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              onFocusPrevious();
+            } else if (event.key === "ArrowDown") {
+              event.preventDefault();
+              onFocusNext();
+            } else if (event.key === "Backspace" && !node.title) {
+              event.preventDefault();
+              onDelete();
+            }
+          }}
+        />
+        <button
+          className="nodeTitlePreview"
+          type="button"
+          tabIndex={-1}
+          onClick={event => {
+            if (openMarkdownLink(event)) return;
+            onSelect();
+            window.setTimeout(() => titleInputRef.current?.focus(), 0);
+          }}
+        >
+          {node.title.trim() ? (
+            <ReactMarkdown
+              allowedElements={["p", "strong", "em", "del", "code", "a", "br"]}
+              rehypePlugins={[rehypeSanitize]}
+              remarkPlugins={[remarkGfm]}
+              unwrapDisallowed
+              components={{
+                a: ({ children, href }) => (
+                  <span className="nodeTitleLink" data-href={href}>
+                    {children}
+                  </span>
+                ),
+                p: ({ children }) => <span>{children}</span>
+              }}
+            >
+              {node.title}
+            </ReactMarkdown>
+          ) : (
+            <span className="nodeTitlePlaceholder">Untitled</span>
+          )}
+        </button>
+      </div>
       <div className="nodeTags">
         {node.tags.map(tag => (
           <button type="button" key={tag.id} onClick={() => onTagClick(tag)}>
@@ -1108,7 +1253,105 @@ function flatten(root: OutlineTreeNode): FlatNode[] {
 
 function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement {
   const bounds = element.getBoundingClientRect();
-  return clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+  const offset = clientY - bounds.top;
+  if (offset < bounds.height * 0.28) return "before";
+  if (offset > bounds.height * 0.72) return "after";
+  return "inside";
+}
+
+function handleMarkdownShortcut(
+  event: KeyboardEvent<HTMLInputElement>,
+  title: string,
+  onPatchLocal: (patch: Partial<OutlineTreeNode>) => void
+): boolean {
+  if (!event.ctrlKey && !event.metaKey) return false;
+
+  const key = event.key.toLowerCase();
+  if (key === "k" && !event.shiftKey) {
+    insertMarkdownLinkFromClipboard(event, title, onPatchLocal);
+    return true;
+  }
+
+  const shortcut =
+    key === "b" && !event.shiftKey
+      ? { before: "**", after: "**", placeholder: "bold" }
+      : key === "i" && !event.shiftKey
+        ? { before: "*", after: "*", placeholder: "italic" }
+        : key === "e" && !event.shiftKey
+          ? { before: "`", after: "`", placeholder: "code" }
+          : key === "x" && (event.altKey || event.shiftKey)
+            ? { before: "~~", after: "~~", placeholder: "strike" }
+            : null;
+
+  if (!shortcut) return false;
+
+  event.preventDefault();
+  const input = event.currentTarget;
+  const start = input.selectionStart ?? title.length;
+  const end = input.selectionEnd ?? start;
+  const selected = title.slice(start, end) || shortcut.placeholder;
+  const nextTitle = `${title.slice(0, start)}${shortcut.before}${selected}${shortcut.after}${title.slice(end)}`;
+
+  onPatchLocal({ title: nextTitle });
+  window.setTimeout(() => {
+    const selectionStart = start + shortcut.before.length;
+    const selectionEnd = selectionStart + selected.length;
+    input.setSelectionRange(selectionStart, selectionEnd);
+  }, 0);
+  return true;
+}
+
+function openMarkdownLink(event: MouseEvent<HTMLButtonElement>): boolean {
+  if (!event.ctrlKey && !event.metaKey) return false;
+
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  const link = target?.closest<HTMLElement>(".nodeTitleLink");
+  const href = link?.dataset.href?.trim();
+  if (!href) return false;
+
+  event.preventDefault();
+  event.stopPropagation();
+  window.open(normalizeLinkHref(href), "_blank", "noopener,noreferrer");
+  return true;
+}
+
+function normalizeLinkHref(href: string): string {
+  if (/^(?:[a-z][a-z\d+.-]*:|#)/i.test(href)) return href;
+  return `https://${href}`;
+}
+
+async function insertMarkdownLinkFromClipboard(
+  event: KeyboardEvent<HTMLInputElement>,
+  title: string,
+  onPatchLocal: (patch: Partial<OutlineTreeNode>) => void
+) {
+  event.preventDefault();
+  const input = event.currentTarget;
+  const start = input.selectionStart ?? title.length;
+  const end = input.selectionEnd ?? start;
+  const selected = title.slice(start, end) || "link";
+  const clipboardText = await readClipboardText();
+  const href = clipboardText || "url";
+  const before = "[";
+  const after = `](${href})`;
+  const nextTitle = `${title.slice(0, start)}${before}${selected}${after}${title.slice(end)}`;
+
+  onPatchLocal({ title: nextTitle });
+  window.setTimeout(() => {
+    const selectionStart = start + before.length;
+    const selectionEnd = selectionStart + selected.length;
+    input.focus();
+    input.setSelectionRange(selectionStart, selectionEnd);
+  }, 0);
+}
+
+async function readClipboardText() {
+  try {
+    const text = await navigator.clipboard?.readText();
+    return text?.trim().replace(/\s+/g, " ") ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function nextTheme(theme: Theme): Theme {
