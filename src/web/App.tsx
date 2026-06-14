@@ -332,7 +332,9 @@ export function App() {
   const createOptimisticNode = async (
     parentId: string,
     position: number,
-    current?: OutlineTreeNode
+    current?: OutlineTreeNode,
+    title = "",
+    currentTitle = current?.title
   ) => {
     if (!tree) return;
     const tempId = `temp-${crypto.randomUUID()}`;
@@ -342,7 +344,7 @@ export function App() {
       workspaceId: tree.workspaceId,
       parentId,
       position,
-      title: "",
+      title,
       body: "",
       done: false,
       collapsed: false,
@@ -353,14 +355,14 @@ export function App() {
       children: []
     };
 
-    if (current) patchNode(current.id, { title: current.title }).catch(toError(setError));
+    if (current && currentTitle !== undefined) patchNode(current.id, { title: currentTitle }).catch(toError(setError));
     setTree(insertTreeNode(before, parentId, tempNode, position));
     focusNode(tempId);
 
     try {
       const created = await apiPost<OutlineTreeNode>("/api/nodes", {
         parentId,
-        title: "",
+        title,
         position
       });
       if (cancelledTempIdsRef.current.has(tempId)) {
@@ -442,10 +444,10 @@ export function App() {
     }
   };
 
-  const createAfter = async (current: OutlineTreeNode) => {
+  const createAfter = async (current: OutlineTreeNode, title = "", currentTitle = current.title) => {
     if (!tree) return;
     const parentId = current.parentId ?? tree.id;
-    await createOptimisticNode(parentId, current.position + 1, current);
+    await createOptimisticNode(parentId, current.position + 1, current, title, currentTitle);
   };
 
   const createFirstNode = async () => {
@@ -1064,7 +1066,9 @@ export function App() {
                             setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
                             patchNode(node.id, patch).catch(toError(setError));
                           }}
-                          onCreateAfter={() => createAfter(node).catch(toError(setError))}
+                          onCreateAfter={(title, currentTitle) =>
+                            createAfter(node, title, currentTitle).catch(toError(setError))
+                          }
                           onIndent={() => indent(node).catch(toError(setError))}
                           onOutdent={() => outdent(node).catch(toError(setError))}
                           onFocusPrevious={() => focusRelative(node, -1)}
@@ -1276,7 +1280,7 @@ function NodeRow({
   onPatchLocal: (patch: Partial<OutlineTreeNode>) => void;
   onCommit: (patch: Partial<OutlineTreeNode>) => void;
   onToggle: (patch: Partial<OutlineTreeNode>) => void;
-  onCreateAfter: () => void;
+  onCreateAfter: (title?: string, currentTitle?: string) => void;
   onIndent: () => void;
   onOutdent: () => void;
   onFocusPrevious: () => void;
@@ -1352,7 +1356,14 @@ function NodeRow({
             if (handleMarkdownShortcut(event, node.title, onPatchLocal)) return;
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              onCreateAfter();
+              const input = event.currentTarget;
+              const start = input.selectionStart ?? node.title.length;
+              const end = input.selectionEnd ?? start;
+              const currentTitle = node.title.slice(0, start);
+              const nextTitle = node.title.slice(end);
+              input.value = currentTitle;
+              onPatchLocal({ title: currentTitle });
+              onCreateAfter(nextTitle, currentTitle);
             } else if (event.key === "Tab") {
               event.preventDefault();
               if (event.shiftKey) onOutdent();
