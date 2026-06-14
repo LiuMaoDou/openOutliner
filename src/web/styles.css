@@ -1142,6 +1142,7 @@ textarea:focus-visible {
 }
 
 .nodeTitle {
+  box-sizing: border-box;
   height: auto;
   padding: 3px 7px;
   overflow: hidden;

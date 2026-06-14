@@ -113,8 +113,8 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
   const treeRef = useRef<OutlineTreeNode | null>(null);
-  const rowMeasureFrameRef = useRef<number | null>(null);
   const rowResizeObserversRef = useRef(new Map<string, ResizeObserver>());
+  const selectedIndexRef = useRef(-1);
   const cancelledTempIdsRef = useRef(new Set<string>());
 
   const loadWorkspaces = useCallback(async () => {
@@ -242,6 +242,12 @@ export function App() {
       )
     : tagResults;
   const visibleItemCount = isTagFiltering ? filteredTagResults.length : filteredNodes.length;
+  const selectedIndex = selectedId
+    ? isTagFiltering
+      ? filteredTagResults.findIndex(result => result.node.id === selectedId)
+      : filteredNodes.findIndex(({ node }) => node.id === selectedId)
+    : -1;
+  selectedIndexRef.current = selectedIndex;
   const rowVirtualizer = useVirtualizer({
     count: visibleItemCount,
     getScrollElement: () => outlineSurfaceRef.current,
@@ -249,21 +255,27 @@ export function App() {
       isTagFiltering
         ? filteredTagResults[index]?.node.id ?? `tag-result-${index}`
         : filteredNodes[index]?.node.id ?? index,
+    measureElement: element => Math.ceil(element.getBoundingClientRect().height),
     estimateSize: () => 38,
-    overscan: 16
+    overscan: 16,
+    useAnimationFrameWithResizeObserver: true
   });
   const virtualItems = rowVirtualizer.getVirtualItems();
-  const requestRowMeasure = useCallback(() => {
-    if (rowMeasureFrameRef.current !== null) window.cancelAnimationFrame(rowMeasureFrameRef.current);
-    rowMeasureFrameRef.current = window.requestAnimationFrame(() => {
-      rowMeasureFrameRef.current = null;
-      rowVirtualizer.measure();
-    });
+
+  useEffect(() => {
+    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, delta, instance) => {
+      if (item.index === selectedIndexRef.current) return false;
+      if (Math.abs(delta) < 1) return false;
+      return item.end <= (instance.scrollOffset ?? 0);
+    };
+
+    return () => {
+      rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
+    };
   }, [rowVirtualizer]);
 
   useEffect(
     () => () => {
-      if (rowMeasureFrameRef.current !== null) window.cancelAnimationFrame(rowMeasureFrameRef.current);
       rowResizeObserversRef.current.forEach(observer => observer.disconnect());
       rowResizeObserversRef.current.clear();
     },
@@ -1089,7 +1101,6 @@ export function App() {
                             if (element) inputRefs.current.set(node.id, element);
                             else inputRefs.current.delete(node.id);
                           }}
-                          onResize={requestRowMeasure}
                           onSelect={() => setSelectedId(node.id)}
                           onPatchLocal={patch => {
                             setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
@@ -1287,7 +1298,6 @@ function NodeRow({
   dragging,
   dropPlacement,
   registerInput,
-  onResize,
   onSelect,
   onPatchLocal,
   onCommit,
@@ -1308,7 +1318,6 @@ function NodeRow({
   dragging: boolean;
   dropPlacement: DropPlacement | null;
   registerInput: (element: HTMLTextAreaElement | null) => void;
-  onResize: () => void;
   onSelect: () => void;
   onPatchLocal: (patch: Partial<OutlineTreeNode>) => void;
   onCommit: (patch: Partial<OutlineTreeNode>) => void;
@@ -1336,8 +1345,7 @@ function NodeRow({
     const input = titleInputRef.current;
     if (!input) return;
     resizeTitleInput(input);
-    onResize();
-  }, [node.title, selected]);
+  }, [node.title]);
 
   return (
     <div
@@ -1374,14 +1382,11 @@ function NodeRow({
           value={node.title}
           placeholder="Untitled"
           rows={1}
-          onFocus={event => {
-            resizeTitleInput(event.currentTarget);
-            onResize();
+          onFocus={() => {
             onSelect();
           }}
           onChange={event => {
             resizeTitleInput(event.currentTarget);
-            onResize();
             onPatchLocal({ title: event.target.value });
           }}
           onBlur={event => onCommit({ title: event.target.value })}
@@ -1595,8 +1600,10 @@ async function insertMarkdownLinkFromClipboard(
 }
 
 function resizeTitleInput(input: HTMLTextAreaElement) {
-  input.style.height = "0px";
-  input.style.height = `${input.scrollHeight}px`;
+  const currentHeight = input.style.height;
+  input.style.height = "auto";
+  const nextHeight = `${input.scrollHeight}px`;
+  input.style.height = currentHeight === nextHeight ? currentHeight : nextHeight;
 }
 
 function focusTitleInput(input?: HTMLTextAreaElement | null) {
