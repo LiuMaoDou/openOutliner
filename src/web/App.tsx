@@ -310,6 +310,20 @@ export function App() {
     setSelectedId(id);
   };
 
+  const preserveOutlineScroll = () => {
+    const element = outlineSurfaceRef.current;
+    const scrollTop = element?.scrollTop;
+    if (!element || scrollTop === undefined) return () => {};
+
+    const restore = () => {
+      element.scrollTop = scrollTop;
+    };
+    window.requestAnimationFrame(restore);
+    window.setTimeout(restore, 0);
+    window.setTimeout(restore, 50);
+    return restore;
+  };
+
   const clearTagFilter = () => {
     tagResultsRequestRef.current += 1;
     setActiveTagFilter("");
@@ -436,8 +450,10 @@ export function App() {
     const nextPosition = source.parentId === parentId && source.position < position ? position - 1 : position;
     if (source.parentId === parentId && source.position === nextPosition) return;
     const before = tree;
+    const restoreScroll = preserveOutlineScroll();
     setTree(moveTreeNode(before, source.id, parentId, nextPosition));
     selectNode(source.id);
+    restoreScroll();
 
     try {
       await apiPost(`/api/nodes/${source.id}/move`, { parentId, position: nextPosition });
@@ -445,6 +461,10 @@ export function App() {
       setTree(before);
       focusNode(source.id);
       throw error;
+    } finally {
+      window.setTimeout(() => {
+        restoreScroll();
+      }, 80);
     }
   };
 
@@ -546,11 +566,19 @@ export function App() {
   const moveNodeToTarget = async (source: OutlineTreeNode, target: OutlineTreeNode, placement: DropPlacement) => {
     if (!tree || source.id === target.id || isDescendantNode(source, target.id)) return;
     if (placement === "inside") {
-      if (target.collapsed) await patchNode(target.id, { collapsed: false });
-      if (source.parentId === target.id && source.position === target.children.length - 1) return;
-      await apiPost(`/api/nodes/${source.id}/move`, { parentId: target.id, position: target.children.length });
-      await loadTree(workspaceId, { preserveSelection: true });
-      selectNode(source.id);
+      const restoreScroll = preserveOutlineScroll();
+      try {
+        if (target.collapsed) await patchNode(target.id, { collapsed: false });
+        if (source.parentId === target.id && source.position === target.children.length - 1) return;
+        await apiPost(`/api/nodes/${source.id}/move`, { parentId: target.id, position: target.children.length });
+        await loadTree(workspaceId, { preserveSelection: true });
+        selectNode(source.id);
+        restoreScroll();
+      } finally {
+        window.setTimeout(() => {
+          restoreScroll();
+        }, 80);
+      }
       return;
     }
 
