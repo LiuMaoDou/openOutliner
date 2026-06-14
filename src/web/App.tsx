@@ -368,7 +368,9 @@ export function App() {
   ) => {
     if (!tree) return;
     const tempId = `temp-${crypto.randomUUID()}`;
-    const before = tree;
+    const originalTree = tree;
+    const insertionTree =
+      current && currentTitle !== undefined ? updateTreeNode(tree, current.id, { title: currentTitle }) : tree;
     const tempNode: OutlineTreeNode = {
       id: tempId,
       workspaceId: tree.workspaceId,
@@ -386,7 +388,7 @@ export function App() {
     };
 
     if (current && currentTitle !== undefined) patchNode(current.id, { title: currentTitle }).catch(toError(setError));
-    setTree(insertTreeNode(before, parentId, tempNode, position));
+    setTree(insertTreeNode(insertionTree, parentId, tempNode, position));
     focusNode(tempId);
 
     try {
@@ -427,7 +429,7 @@ export function App() {
         cancelledTempIdsRef.current.delete(tempId);
         return;
       }
-      setTree(before);
+      setTree(originalTree);
       focusNode(current?.id ?? parentId);
       throw error;
     }

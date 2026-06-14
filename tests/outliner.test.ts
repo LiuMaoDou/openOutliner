@@ -13,7 +13,8 @@ import {
   insertTreeNode,
   moveTreeNode,
   removeTreeNode,
-  replaceTreeNode
+  replaceTreeNode,
+  updateTreeNode
 } from "../src/web/treeOps.js";
 
 let tempDir = "";
@@ -206,6 +207,14 @@ describe("tree operations", () => {
     expect(inserted.children.map(node => node.position)).toEqual([0, 1, 2]);
     expect(replaced.children.map(node => node.id)).toEqual(["a", "real-1", "b"]);
     expect(replaced.children[1].title).toBe("Real");
+  });
+
+  it("preserves a split title patch while inserting the next node", () => {
+    const tree = testTree();
+    const patched = updateTreeNode(tree, "a", { title: "配置" });
+    const inserted = insertTreeNode(patched, "root", testNode("temp-1", "核查", "root"), 1);
+
+    expect(inserted.children.map(node => node.title)).toEqual(["配置", "核查", "Beta"]);
   });
 
   it("removes a subtree and normalizes remaining siblings", () => {
