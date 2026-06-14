@@ -446,6 +446,10 @@ export function App() {
 
   const createAfter = async (current: OutlineTreeNode, title = "", currentTitle = current.title) => {
     if (!tree) return;
+    if (!current.collapsed && current.children.length > 0) {
+      await createOptimisticNode(current.id, 0, current, title, currentTitle);
+      return;
+    }
     const parentId = current.parentId ?? tree.id;
     await createOptimisticNode(parentId, current.position + 1, current, title, currentTitle);
   };
