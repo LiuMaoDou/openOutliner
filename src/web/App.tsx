@@ -1395,10 +1395,7 @@ function NodeRow({
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               const input = event.currentTarget;
-              const start = input.selectionStart ?? node.title.length;
-              const end = input.selectionEnd ?? start;
-              const currentTitle = node.title.slice(0, start);
-              const nextTitle = node.title.slice(end);
+              const { currentTitle, nextTitle } = splitTitleAtSelection(input.value, input.selectionStart);
               input.value = currentTitle;
               onPatchLocal({ title: currentTitle });
               onCreateAfter(nextTitle, currentTitle);
@@ -1608,6 +1605,14 @@ function resizeTitleInput(input: HTMLTextAreaElement) {
 
 function focusTitleInput(input?: HTMLTextAreaElement | null) {
   input?.focus({ preventScroll: true });
+}
+
+export function splitTitleAtSelection(title: string, selectionStart?: number | null) {
+  const splitIndex = Math.max(0, Math.min(selectionStart ?? title.length, title.length));
+  return {
+    currentTitle: title.slice(0, splitIndex),
+    nextTitle: title.slice(splitIndex)
+  };
 }
 
 async function readClipboardText() {

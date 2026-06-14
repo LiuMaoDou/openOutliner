@@ -8,6 +8,7 @@ import { exportMarkdown, importMarkdown } from "../src/backend/importExport/mark
 import { exportOpml, importOpml } from "../src/backend/importExport/opml.js";
 import { OutlinerService } from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
+import { splitTitleAtSelection } from "../src/web/App.js";
 import {
   insertTreeNode,
   moveTreeNode,
@@ -181,6 +182,21 @@ describe("OutlinerService", () => {
 });
 
 describe("tree operations", () => {
+  it("splits node titles at the selection start", () => {
+    expect(splitTitleAtSelection("Alpha Beta", 6)).toEqual({
+      currentTitle: "Alpha ",
+      nextTitle: "Beta"
+    });
+    expect(splitTitleAtSelection("Alpha Beta", 0)).toEqual({
+      currentTitle: "",
+      nextTitle: "Alpha Beta"
+    });
+    expect(splitTitleAtSelection("Alpha Beta", 99)).toEqual({
+      currentTitle: "Alpha Beta",
+      nextTitle: ""
+    });
+  });
+
   it("inserts and replaces optimistic nodes while preserving sibling positions", () => {
     const tree = testTree();
     const inserted = insertTreeNode(tree, "root", testNode("temp-1", "Temp", "root"), 1);
