@@ -67,7 +67,7 @@
   --tag-border: #d4d4d8;
   --soft-foreground: #52525b;
   --drop-indicator: #18181b;
-  --scrollbar-thumb: rgba(24, 24, 27, 0.25);
+  --scrollbar-thumb: rgba(24, 24, 27, 0.12);
   --radius: 8px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 1px 8px rgba(24, 24, 27, 0.06);
@@ -118,7 +118,7 @@
   --tag-border: #3f3f46;
   --soft-foreground: #d4d4d8;
   --drop-indicator: #fafafa;
-  --scrollbar-thumb: rgba(250, 250, 250, 0.25);
+  --scrollbar-thumb: rgba(250, 250, 250, 0.12);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 1px 10px rgba(0, 0, 0, 0.28);
 }

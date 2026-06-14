@@ -306,6 +306,10 @@ export function App() {
     window.setTimeout(() => inputRefs.current.get(id)?.focus(), 30);
   };
 
+  const selectNode = (id: string) => {
+    setSelectedId(id);
+  };
+
   const clearTagFilter = () => {
     tagResultsRequestRef.current += 1;
     setActiveTagFilter("");
@@ -433,7 +437,7 @@ export function App() {
     if (source.parentId === parentId && source.position === nextPosition) return;
     const before = tree;
     setTree(moveTreeNode(before, source.id, parentId, nextPosition));
-    focusNode(source.id);
+    selectNode(source.id);
 
     try {
       await apiPost(`/api/nodes/${source.id}/move`, { parentId, position: nextPosition });
@@ -545,7 +549,8 @@ export function App() {
       if (target.collapsed) await patchNode(target.id, { collapsed: false });
       if (source.parentId === target.id && source.position === target.children.length - 1) return;
       await apiPost(`/api/nodes/${source.id}/move`, { parentId: target.id, position: target.children.length });
-      await refresh(source.id);
+      await loadTree(workspaceId, { preserveSelection: true });
+      selectNode(source.id);
       return;
     }
 
