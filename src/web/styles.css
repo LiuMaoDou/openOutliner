@@ -382,7 +382,7 @@ textarea:focus-visible {
   height: 28px;
   padding: 8px 8px 4px;
   color: var(--muted-foreground);
-  font-size: 0.74rem;
+  font-size: 0.78rem;
   font-weight: 600;
   text-transform: uppercase;
 }
