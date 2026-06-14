@@ -1421,8 +1421,18 @@ function NodeRow({
           tabIndex={-1}
           onClick={event => {
             if (openMarkdownLink(event)) return;
+            const selectionStart = getPreviewSelectionStart(
+              event.currentTarget,
+              event.clientX,
+              event.clientY,
+              node.title
+            );
             onSelect();
-            window.setTimeout(() => focusTitleInput(titleInputRef.current), 0);
+            window.setTimeout(() => {
+              const input = titleInputRef.current;
+              focusTitleInput(input);
+              input?.setSelectionRange(selectionStart, selectionStart);
+            }, 0);
           }}
         >
           {node.title.trim() ? (
@@ -1613,6 +1623,95 @@ export function splitTitleAtSelection(title: string, selectionStart?: number | n
     currentTitle: title.slice(0, splitIndex),
     nextTitle: title.slice(splitIndex)
   };
+}
+
+function getPreviewSelectionStart(container: HTMLElement, clientX: number, clientY: number, title: string) {
+  const measuredOffset = getMeasuredTextOffset(container, clientX, clientY);
+  if (measuredOffset !== null) return Math.max(0, Math.min(measuredOffset, title.length));
+
+  const caret = getCaretFromPoint(container.ownerDocument, clientX, clientY);
+  if (!caret || !container.contains(caret.node)) return title.length;
+  const renderedOffset = getTextOffset(container, caret.node, caret.offset);
+  if (renderedOffset === null) return title.length;
+  return Math.max(0, Math.min(renderedOffset, title.length));
+}
+
+function getMeasuredTextOffset(root: Node, clientX: number, clientY: number) {
+  const document = root.ownerDocument;
+  if (!document) return null;
+
+  let renderedOffset = 0;
+  let bestOffset: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  const measure = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const textLength = node.textContent?.length ?? 0;
+      for (let index = 0; index < textLength; index += 1) {
+        const range = document.createRange();
+        range.setStart(node, index);
+        range.setEnd(node, index + 1);
+        const rect = range.getBoundingClientRect();
+        range.detach();
+        if (rect.width === 0 && rect.height === 0) continue;
+
+        const midpoint = rect.left + rect.width / 2;
+        const candidateOffset = clientX <= midpoint ? renderedOffset + index : renderedOffset + index + 1;
+        const verticalDistance = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+        const horizontalDistance =
+          clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
+        const distance = verticalDistance * 1000 + horizontalDistance;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestOffset = candidateOffset;
+        }
+      }
+      renderedOffset += textLength;
+      return;
+    }
+
+    for (const child of Array.from(node.childNodes)) measure(child);
+  };
+
+  measure(root);
+  return bestOffset;
+}
+
+function getCaretFromPoint(document: Document, clientX: number, clientY: number) {
+  const documentWithCaret = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  const position = documentWithCaret.caretPositionFromPoint?.(clientX, clientY);
+  if (position) return { node: position.offsetNode, offset: position.offset };
+
+  const range = documentWithCaret.caretRangeFromPoint?.(clientX, clientY);
+  if (!range) return null;
+  return { node: range.startContainer, offset: range.startOffset };
+}
+
+function getTextOffset(root: Node, target: Node, targetOffset: number) {
+  let offset = 0;
+  const visit = (node: Node): number | null => {
+    if (node === target) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return offset + Math.min(targetOffset, node.textContent?.length ?? 0);
+      }
+      return offset + Array.from(node.childNodes)
+        .slice(0, targetOffset)
+        .reduce((length, child) => length + (child.textContent?.length ?? 0), 0);
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      offset += node.textContent?.length ?? 0;
+      return null;
+    }
+    for (const child of Array.from(node.childNodes)) {
+      const result = visit(child);
+      if (result !== null) return result;
+    }
+    return null;
+  };
+  return visit(root);
 }
 
 async function readClipboardText() {
