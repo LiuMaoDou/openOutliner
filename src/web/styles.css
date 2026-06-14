@@ -894,11 +894,13 @@ textarea:focus-visible {
   max-width: 980px;
   margin: 0 auto;
   padding: 8px 0 80px;
+  overflow-anchor: none;
 }
 
 .virtualOutlineList {
   position: relative;
   width: 100%;
+  overflow-anchor: none;
 }
 
 .virtualOutlineRow {
@@ -906,6 +908,7 @@ textarea:focus-visible {
   top: 0;
   right: 0;
   left: 0;
+  overflow-anchor: none;
 }
 
 .nodeRow {

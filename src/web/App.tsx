@@ -290,7 +290,7 @@ export function App() {
       await loadTree(workspaceId, { preserveSelection: true });
       if (focusId) {
         setSelectedId(focusId);
-        window.setTimeout(() => inputRefs.current.get(focusId)?.focus(), 30);
+        window.setTimeout(() => focusTitleInput(inputRefs.current.get(focusId)), 30);
       }
     },
     [loadTree, workspaceId]
@@ -303,7 +303,7 @@ export function App() {
 
   const focusNode = (id: string) => {
     setSelectedId(id);
-    window.setTimeout(() => inputRefs.current.get(id)?.focus(), 30);
+    window.setTimeout(() => focusTitleInput(inputRefs.current.get(id)), 30);
   };
 
   const selectNode = (id: string) => {
@@ -344,7 +344,7 @@ export function App() {
     await loadTree(result.workspace.id);
     await loadTags(result.workspace.id);
     setSelectedId(result.node.id);
-    window.setTimeout(() => inputRefs.current.get(result.node.id)?.focus(), 30);
+    window.setTimeout(() => focusTitleInput(inputRefs.current.get(result.node.id)), 30);
   };
 
   const createOptimisticNode = async (
@@ -499,7 +499,7 @@ export function App() {
     const next = flatNodes[index + offset]?.node;
     if (next) {
       setSelectedId(next.id);
-      inputRefs.current.get(next.id)?.focus();
+      focusTitleInput(inputRefs.current.get(next.id));
     }
   };
 
@@ -1420,7 +1420,7 @@ function NodeRow({
           onClick={event => {
             if (openMarkdownLink(event)) return;
             onSelect();
-            window.setTimeout(() => titleInputRef.current?.focus(), 0);
+            window.setTimeout(() => focusTitleInput(titleInputRef.current), 0);
           }}
         >
           {node.title.trim() ? (
@@ -1589,7 +1589,7 @@ async function insertMarkdownLinkFromClipboard(
   window.setTimeout(() => {
     const selectionStart = start + before.length;
     const selectionEnd = selectionStart + selected.length;
-    input.focus();
+    focusTitleInput(input);
     input.setSelectionRange(selectionStart, selectionEnd);
   }, 0);
 }
@@ -1597,6 +1597,10 @@ async function insertMarkdownLinkFromClipboard(
 function resizeTitleInput(input: HTMLTextAreaElement) {
   input.style.height = "0px";
   input.style.height = `${input.scrollHeight}px`;
+}
+
+function focusTitleInput(input?: HTMLTextAreaElement | null) {
+  input?.focus({ preventScroll: true });
 }
 
 async function readClipboardText() {
