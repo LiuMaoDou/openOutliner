@@ -28,6 +28,7 @@ import remarkGfm from "remark-gfm";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -50,20 +51,54 @@ import {
 } from "./api";
 import { useTheme, type Theme } from "./theme";
 import {
-  findTreeNode,
-  hasNode,
-  insertTreeNode,
-  isDescendantNode,
-  moveTreeNode,
-  removeTreeNode,
-  replaceTreeNode,
-  updateTreeNode
-} from "./treeOps";
+  type FlatTreeState,
+  type FlatNodeData,
+  fromNestedTree,
+  computeVisibleIds,
+  updateNode,
+  insertNode,
+  removeNode,
+  moveNode,
+  getNode,
+  getParentId,
+  isDescendant,
+  hasNode
+} from "./flatTree";
 
-interface FlatNode {
-  node: OutlineTreeNode;
-  depth: number;
+/** Compute depth for each visible node id */
+function computeDepths(state: FlatTreeState, visibleIds: string[]): Map<string, number> {
+  const depths = new Map<string, number>();
+  const rootChildren = state.nodes[state.rootId]?.childIds ?? [];
+  const rootGrandchildren = new Set<string>();
+  for (const cid of rootChildren) {
+    for (const gcid of state.nodes[cid]?.childIds ?? []) {
+      rootGrandchildren.add(gcid);
+    }
+  }
+  for (const id of visibleIds) {
+    const parent = state.nodes[id]?.parentId;
+    if (parent === null || parent === state.rootId) {
+      depths.set(id, 0);
+    } else if (parent && rootChildren.includes(parent)) {
+      depths.set(id, 1);
+    } else {
+      depths.set(id, 2);
+    }
+  }
+  return depths;
 }
+
+/** Dynamic depth computation: O(1) per node by walking parentId chain */
+function getNodeDepth(state: FlatTreeState, id: string): number {
+  let depth = 0;
+  let current = state.nodes[id];
+  while (current?.parentId && current.parentId !== state.rootId) {
+    depth++;
+    current = state.nodes[current.parentId];
+  }
+  return depth;
+}
+
 
 interface LoadTreeOptions {
   preserveSelection?: boolean;
@@ -87,7 +122,8 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>("");
-  const [tree, setTree] = useState<OutlineTreeNode | null>(null);
+  const [flatState, setFlatState] = useState<FlatTreeState | null>(null);
+  const [visibleIds, setVisibleIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
@@ -112,7 +148,7 @@ export function App() {
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const treeRef = useRef<OutlineTreeNode | null>(null);
+  const flatStateRef = useRef<FlatTreeState | null>(null);
   const rowResizeObserversRef = useRef(new Map<string, ResizeObserver>());
   const selectedIndexRef = useRef(-1);
   const cancelledTempIdsRef = useRef(new Set<string>());
@@ -137,15 +173,19 @@ export function App() {
   const loadTree = useCallback(async (id: string, options: LoadTreeOptions = {}) => {
     const requestId = ++treeRequestRef.current;
     if (!id) {
-      setTree(null);
+      setFlatState(null);
+      setVisibleIds([]);
       setSelectedId("");
       return;
     }
     const next = await apiGet<OutlineTreeNode>(`/api/workspaces/${id}/tree`);
     if (requestId !== treeRequestRef.current || id !== workspaceIdRef.current) return;
-    setTree(next);
+    const { state, visibleIds: vids } = fromNestedTree(next);
+    setFlatState(state);
+    setVisibleIds(vids);
+    flatStateRef.current = state;
     setSelectedId(current =>
-      options.preserveSelection && current && hasNode(next, current) ? current : next.children[0]?.id || next.id
+      options.preserveSelection && current && hasNode(state, current) ? current : state.rootId
     );
   }, []);
 
@@ -195,8 +235,8 @@ export function App() {
   }, [workspaceId]);
 
   useEffect(() => {
-    treeRef.current = tree;
-  }, [tree]);
+    flatStateRef.current = flatState;
+  }, [flatState]);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 760px)");
@@ -208,17 +248,7 @@ export function App() {
     return () => media.removeEventListener("change", closeInspectorForMobile);
   }, []);
 
-  const flatNodes = useMemo(() => (tree ? flatten(tree) : []), [tree]);
-  const nodeMap = useMemo(() => {
-    const map = new Map<string, OutlineTreeNode>();
-    const visit = (node: OutlineTreeNode) => {
-      map.set(node.id, node);
-      node.children.forEach(visit);
-    };
-    if (tree) visit(tree);
-    return map;
-  }, [tree]);
-  const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
+  const selectedNode = selectedId && flatState ? getNode(flatState, selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
   const rootWorkspaces = useMemo(() => workspaces.filter(workspace => !workspace.folderId), [workspaces]);
   const workspacesByFolder = useMemo(() => {
@@ -233,9 +263,10 @@ export function App() {
   }, [workspaceFolders, workspaces]);
   const isSearching = search.trim().length > 0;
   const isTagFiltering = activeTagFilter.length > 0;
-  const filteredNodes = isSearching
-    ? flatNodes.filter(({ node }) => `${node.title}\n${node.body}`.toLowerCase().includes(search.toLowerCase()))
-    : flatNodes;
+  const filteredNodes = isSearching && flatState
+    ? visibleIds.map(id => getNode(flatState, id)!).filter(node => `${node.title}\n${node.body}`.toLowerCase().includes(search.toLowerCase()))
+    : visibleIds;
+  const visibleNodes = flatState ? filteredNodes.map(id => typeof id === 'string' ? { id, node: getNode(flatState, id) } : id).filter((item): item is { id: string; node: FlatNodeData } => !!item.node) : [];
   const filteredTagResults = isSearching
     ? tagResults.filter(result =>
         `${result.node.title}\n${result.node.body}\n${result.workspace.name}`.toLowerCase().includes(search.toLowerCase())
@@ -245,7 +276,7 @@ export function App() {
   const selectedIndex = selectedId
     ? isTagFiltering
       ? filteredTagResults.findIndex(result => result.node.id === selectedId)
-      : filteredNodes.findIndex(({ node }) => node.id === selectedId)
+      : filteredNodes.findIndex(id => id === selectedId)
     : -1;
   selectedIndexRef.current = selectedIndex;
   const rowVirtualizer = useVirtualizer({
@@ -254,7 +285,7 @@ export function App() {
     getItemKey: index =>
       isTagFiltering
         ? filteredTagResults[index]?.node.id ?? `tag-result-${index}`
-        : filteredNodes[index]?.node.id ?? index,
+        : filteredNodes[index] ?? index,
     measureElement: element => Math.ceil(element.getBoundingClientRect().height),
     estimateSize: () => 38,
     overscan: 16,
@@ -348,7 +379,7 @@ export function App() {
     treeRequestRef.current += 1;
     tagsRequestRef.current += 1;
     setWorkspaceId(result.workspace.id);
-    setTree(null);
+    setFlatState(null);
     setSelectedId("");
     setTags([]);
     setTagName("");
@@ -362,18 +393,18 @@ export function App() {
   const createOptimisticNode = async (
     parentId: string,
     position: number,
-    current?: OutlineTreeNode,
+    current?: FlatNodeData,
     title = "",
     currentTitle = current?.title
   ) => {
-    if (!tree) return;
+    if (!flatState) return;
     const tempId = `temp-${crypto.randomUUID()}`;
-    const originalTree = tree;
-    const insertionTree =
-      current && currentTitle !== undefined ? updateTreeNode(tree, current.id, { title: currentTitle }) : tree;
-    const tempNode: OutlineTreeNode = {
+    const originalState = flatState;
+    const preppedState =
+      current && currentTitle !== undefined ? updateNode(flatState, current.id, { title: currentTitle }) : flatState;
+    const tempNode: FlatNodeData = {
       id: tempId,
-      workspaceId: tree.workspaceId,
+      workspaceId: flatState.nodes[flatState.rootId].workspaceId,
       parentId,
       position,
       title,
@@ -384,11 +415,14 @@ export function App() {
       updatedAt: new Date().toISOString(),
       tags: [],
       fieldValues: [],
-      children: []
+      childIds: []
     };
 
     if (current && currentTitle !== undefined) patchNode(current.id, { title: currentTitle }).catch(toError(setError));
-    setTree(insertTreeNode(insertionTree, parentId, tempNode, position));
+    const newState = insertNode(preppedState, parentId, tempNode, position);
+    setFlatState(newState);
+    setVisibleIds(computeVisibleIds(newState));
+    flatStateRef.current = newState;
     focusNode(tempId);
 
     try {
@@ -402,19 +436,23 @@ export function App() {
         apiDelete(`/api/nodes/${created.id}`).catch(toError(setError));
         return;
       }
-      const draft = treeRef.current ? findTreeNode(treeRef.current, tempId) : undefined;
-      const replacement = draft
+      const draft = flatStateRef.current ? getNode(flatStateRef.current, tempId) : undefined;
+      const replacement: FlatNodeData = draft
         ? {
             ...created,
-            title: draft.title,
-            body: draft.body,
-            done: draft.done,
-            collapsed: draft.collapsed,
-            tags: draft.tags,
-            fieldValues: draft.fieldValues
+            parentId,
+            childIds: draft.childIds
           }
-        : created;
-      setTree(currentTree => (currentTree ? replaceTreeNode(currentTree, tempId, replacement) : currentTree));
+        : {
+            ...created,
+            parentId,
+            childIds: []
+          };
+      const withoutTemp = removeNode(flatStateRef.current ?? newState, tempId);
+      const withCreated = insertNode(withoutTemp, parentId, replacement, position);
+      setFlatState(withCreated);
+      setVisibleIds(computeVisibleIds(withCreated));
+      flatStateRef.current = withCreated;
       focusNode(created.id);
       if (draft && (draft.title || draft.body || draft.done || draft.collapsed)) {
         patchNode(created.id, {
@@ -429,17 +467,23 @@ export function App() {
         cancelledTempIdsRef.current.delete(tempId);
         return;
       }
-      setTree(originalTree);
+      setFlatState(originalState);
+      setVisibleIds(computeVisibleIds(originalState));
+      flatStateRef.current = originalState;
       focusNode(current?.id ?? parentId);
       throw error;
     }
   };
 
-  const deleteNodeOptimistically = async (node: OutlineTreeNode) => {
-    if (!tree || node.id === tree.id) return;
-    const before = tree;
-    const previousId = flatNodes[flatNodes.findIndex(item => item.node.id === node.id) - 1]?.node.id ?? tree.id;
-    setTree(removeTreeNode(before, node.id));
+  const deleteNodeOptimistically = async (node: FlatNodeData) => {
+    if (!flatState || node.id === flatState.rootId) return;
+    const before = flatState;
+    const prevIdx = visibleIds.indexOf(node.id);
+    const previousId = prevIdx > 0 ? visibleIds[prevIdx - 1] : flatState.rootId;
+    const newState = removeNode(before, node.id);
+    setFlatState(newState);
+    setVisibleIds(computeVisibleIds(newState));
+    flatStateRef.current = newState;
     focusNode(previousId);
     if (node.id.startsWith("temp-")) {
       cancelledTempIdsRef.current.add(node.id);
@@ -449,30 +493,37 @@ export function App() {
     try {
       await apiDelete(`/api/nodes/${node.id}`);
     } catch (error) {
-      setTree(before);
+      setFlatState(before);
+      setVisibleIds(computeVisibleIds(before));
+      flatStateRef.current = before;
       focusNode(node.id);
       throw error;
     }
   };
 
   const moveNodeOptimistically = async (
-    source: OutlineTreeNode,
+    source: FlatNodeData,
     parentId: string,
     position: number
   ) => {
-    if (!tree || source.id === parentId) return;
+    if (!flatState || source.id === parentId) return;
     const nextPosition = source.parentId === parentId && source.position < position ? position - 1 : position;
     if (source.parentId === parentId && source.position === nextPosition) return;
-    const before = tree;
+    const before = flatState;
     const restoreScroll = preserveOutlineScroll();
-    setTree(moveTreeNode(before, source.id, parentId, nextPosition));
+    const newState = moveNode(before, source.id, parentId, nextPosition);
+    setFlatState(newState);
+    setVisibleIds(computeVisibleIds(newState));
+    flatStateRef.current = newState;
     selectNode(source.id);
     restoreScroll();
 
     try {
       await apiPost(`/api/nodes/${source.id}/move`, { parentId, position: nextPosition });
     } catch (error) {
-      setTree(before);
+      setFlatState(before);
+      setVisibleIds(computeVisibleIds(before));
+      flatStateRef.current = before;
       focusNode(source.id);
       throw error;
     } finally {
@@ -482,44 +533,46 @@ export function App() {
     }
   };
 
-  const createAfter = async (current: OutlineTreeNode, title = "", currentTitle = current.title) => {
-    if (!tree) return;
-    const parentId = current.parentId ?? tree.id;
+  const createAfter = async (current: FlatNodeData, title = "", currentTitle = current.title) => {
+    if (!flatState) return;
+    const parentId = current.parentId ?? flatState.rootId;
     await createOptimisticNode(parentId, current.position + 1, current, title, currentTitle);
   };
 
   const createFirstNode = async () => {
-    if (!tree) return;
-    await createOptimisticNode(tree.id, 0);
+    if (!flatState) return;
+    await createOptimisticNode(flatState.rootId, 0);
   };
 
-  const indent = async (current: OutlineTreeNode) => {
-    if (!tree) return;
-    const index = flatNodes.findIndex(item => item.node.id === current.id);
-    const previous = flatNodes[index - 1]?.node;
-    if (!previous || previous.id === current.parentId) return;
-    await moveNodeOptimistically(current, previous.id, previous.children.length);
+  const indent = async (current: FlatNodeData) => {
+    if (!flatState) return;
+    const index = visibleIds.indexOf(current.id);
+    const prevId = index > 0 ? visibleIds[index - 1] : undefined;
+    if (!prevId || prevId === current.parentId) return;
+    const previous = getNode(flatState, prevId);
+    if (!previous) return;
+    await moveNodeOptimistically(current, prevId, previous.childIds.length);
   };
 
-  const outdent = async (current: OutlineTreeNode) => {
-    if (!tree || !current.parentId || current.parentId === tree.id) return;
-    const parent = nodeMap.get(current.parentId);
+  const outdent = async (current: FlatNodeData) => {
+    if (!flatState || !current.parentId || current.parentId === flatState.rootId) return;
+    const parent = getNode(flatState, current.parentId);
     if (!parent?.parentId) return;
     await moveNodeOptimistically(current, parent.parentId, parent.position + 1);
   };
 
-  const focusRelative = (current: OutlineTreeNode, offset: number) => {
-    const index = flatNodes.findIndex(item => item.node.id === current.id);
-    const next = flatNodes[index + offset]?.node;
-    if (next) {
-      setSelectedId(next.id);
-      focusTitleInput(inputRefs.current.get(next.id));
+  const focusRelative = (current: FlatNodeData, offset: number) => {
+    const index = visibleIds.indexOf(current.id);
+    const nextId = visibleIds[index + offset];
+    if (nextId) {
+      setSelectedId(nextId);
+      focusTitleInput(inputRefs.current.get(nextId));
     }
   };
 
   const cycleTheme = () => setTheme(nextTheme(theme));
 
-  const startNodeDrag = (node: OutlineTreeNode, event: PointerEvent<HTMLButtonElement>) => {
+  const startNodeDrag = (node: FlatNodeData, event: PointerEvent<HTMLButtonElement>) => {
     if (isSearching || isTagFiltering) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -540,9 +593,9 @@ export function App() {
         .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
         ?.closest<HTMLElement>("[data-node-id]");
       const targetId = targetElement?.dataset.nodeId;
-      const target = targetId ? nodeMap.get(targetId) : undefined;
+      const target = targetId && flatState ? getNode(flatState, targetId) : undefined;
 
-      if (!targetElement || !target || target.id === node.id || isDescendantNode(node, target.id)) {
+      if (!targetElement || !target || target.id === node.id || isDescendant(flatState, node.id, target.id)) {
         dragTargetRef.current = null;
         setDragState(nextDragState);
         return;
@@ -557,7 +610,7 @@ export function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      const target = dragTargetRef.current?.overId ? nodeMap.get(dragTargetRef.current.overId) : undefined;
+      const target = dragTargetRef.current?.overId && flatState ? getNode(flatState, dragTargetRef.current.overId) : undefined;
       const placement = dragTargetRef.current?.placement;
       finishNodeDrag();
       if (target && placement) {
@@ -577,14 +630,14 @@ export function App() {
     setDragState(null);
   };
 
-  const moveNodeToTarget = async (source: OutlineTreeNode, target: OutlineTreeNode, placement: DropPlacement) => {
-    if (!tree || source.id === target.id || isDescendantNode(source, target.id)) return;
+  const moveNodeToTarget = async (source: FlatNodeData, target: FlatNodeData, placement: DropPlacement) => {
+    if (!flatState || source.id === target.id || isDescendant(flatState, source.id, target.id)) return;
     if (placement === "inside") {
       const restoreScroll = preserveOutlineScroll();
       try {
         if (target.collapsed) await patchNode(target.id, { collapsed: false });
-        if (source.parentId === target.id && source.position === target.children.length - 1) return;
-        await apiPost(`/api/nodes/${source.id}/move`, { parentId: target.id, position: target.children.length });
+        if (source.parentId === target.id && source.position === target.childIds.length - 1) return;
+        await apiPost(`/api/nodes/${source.id}/move`, { parentId: target.id, position: target.childIds.length });
         await loadTree(workspaceId, { preserveSelection: true });
         selectNode(source.id);
         restoreScroll();
@@ -596,7 +649,7 @@ export function App() {
       return;
     }
 
-    const parentId = target.parentId ?? tree.id;
+    const parentId = target.parentId ?? flatState.rootId;
     const position = target.position + (placement === "after" ? 1 : 0);
     await moveNodeOptimistically(source, parentId, position);
   };
@@ -608,7 +661,7 @@ export function App() {
     tagsRequestRef.current += 1;
     tagResultsRequestRef.current += 1;
     setWorkspaceId(id);
-    setTree(null);
+    setFlatState(null);
     setSelectedId("");
     setTags([]);
     setActiveTagFilter("");
@@ -717,7 +770,7 @@ export function App() {
       treeRequestRef.current += 1;
       tagsRequestRef.current += 1;
       tagResultsRequestRef.current += 1;
-      setTree(null);
+      setFlatState(null);
       setSelectedId("");
       setTags([]);
       setActiveTagFilter("");
@@ -948,7 +1001,7 @@ export function App() {
         <header className="topbar">
           <div className="topbarTitle">
             <span>{isTagFiltering ? `#${activeTagFilter}` : selectedWorkspace?.name ?? "Workspace"}</span>
-            <small>{isTagFiltering ? `${tagResults.length} results` : `${flatNodes.length} nodes`}</small>
+            <small>{isTagFiltering ? `${tagResults.length} results` : `${visibleIds.length} nodes`}</small>
           </div>
           <div className="searchBox">
             <Search size={17} />
@@ -1045,7 +1098,7 @@ export function App() {
         <section className={isInspectorOpen ? "contentGrid" : "contentGrid commentsClosed"}>
           <div className="outlineSurface" ref={outlineSurfaceRef}>
             <div className="outlineHeader">
-              <h1>{isTagFiltering ? `#${activeTagFilter}` : tree?.title ?? "OpenOutliner"}</h1>
+              <h1>{isTagFiltering ? `#${activeTagFilter}` : flatState ? getNode(flatState, flatState.rootId)?.title ?? "OpenOutliner" : "OpenOutliner"}</h1>
               {isTagFiltering && (
                 <button className="tagFilterClear" type="button" onClick={clearTagFilter}>
                   <X size={15} />
@@ -1081,9 +1134,11 @@ export function App() {
                       );
                     }
 
-                    const item = filteredNodes[virtualItem.index];
-                    if (!item) return null;
-                    const { node, depth } = item;
+                    const nodeId = filteredNodes[virtualItem.index];
+                    if (!nodeId) return null;
+                    const node = flatState ? getNode(flatState, nodeId) : undefined;
+                    if (!node) return null;
+                    const depth = flatState ? getNodeDepth(flatState, nodeId) : 0;
                     return (
                       <div
                         className="virtualOutlineRow"
@@ -1105,11 +1160,16 @@ export function App() {
                           }}
                           onSelect={() => setSelectedId(node.id)}
                           onPatchLocal={patch => {
-                            setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
+                            setFlatState(s => s ? updateNode(s, node.id, patch) : s);
                           }}
                           onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
                           onToggle={patch => {
-                            setTree(current => (current ? updateTreeNode(current, node.id, patch) : current));
+                            setFlatState(s => {
+                              if (!s) return s;
+                              const next = updateNode(s, node.id, patch);
+                              setVisibleIds(computeVisibleIds(next));
+                              return next;
+                            });
                             patchNode(node.id, patch).catch(toError(setError));
                           }}
                           onCreateAfter={(title, currentTitle) =>
@@ -1127,7 +1187,7 @@ export function App() {
                     );
                   })}
                 </div>
-              ) : flatNodes.length === 0 && tree ? (
+              ) : visibleIds.length === 0 && flatState ? (
                 <button
                   className="emptyNodeButton"
                   type="button"
@@ -1166,8 +1226,8 @@ export function App() {
                       <textarea
                         value={selectedNode.body}
                         onChange={event =>
-                          setTree(current =>
-                            current ? updateTreeNode(current, selectedNode.id, { body: event.target.value }) : current
+                          setFlatState(s =>
+                            s ? updateNode(s, selectedNode.id, { body: event.target.value }) : s
                           )
                         }
                         onBlur={event =>
@@ -1313,7 +1373,7 @@ function NodeRow({
   onTagClick,
   onDelete
 }: {
-  node: OutlineTreeNode;
+  node: FlatNodeData;
   depth: number;
   selected: boolean;
   canDrag: boolean;
@@ -1321,9 +1381,9 @@ function NodeRow({
   dropPlacement: DropPlacement | null;
   registerInput: (element: HTMLTextAreaElement | null) => void;
   onSelect: () => void;
-  onPatchLocal: (patch: Partial<OutlineTreeNode>) => void;
-  onCommit: (patch: Partial<OutlineTreeNode>) => void;
-  onToggle: (patch: Partial<OutlineTreeNode>) => void;
+  onPatchLocal: (patch: Partial<FlatNodeData>) => void;
+  onCommit: (patch: Partial<FlatNodeData>) => void;
+  onToggle: (patch: Partial<FlatNodeData>) => void;
   onCreateAfter: (title?: string, currentTitle?: string) => void;
   onIndent: () => void;
   onOutdent: () => void;
@@ -1334,10 +1394,44 @@ function NodeRow({
   onDelete: () => Promise<void>;
 }) {
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [localTitle, setLocalTitle] = useState(node.title);
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync external title changes (drag, undo, etc.) into local state
+  useEffect(() => {
+    if (node.title !== localTitle) setLocalTitle(node.title);
+  }, [node.title]);
+
+  // Flush local title to global state
+  const flushTitle = useCallback((title: string) => {
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    onPatchLocal({ title });
+  }, [onPatchLocal]);
+
+  // Debounced sync during typing
+  const syncTitleDebounced = useCallback((title: string) => {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      onPatchLocal({ title });
+      syncTimerRef.current = null;
+    }, 300);
+  }, [onPatchLocal]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    };
+  }, []);
+
   const rowClassName = [
     "nodeRow",
     selected ? "selected" : "",
     node.done ? "completed" : "",
+    node.collapsed && node.childIds.length > 0 ? "collapsedChildren" : "",
     dragging ? "dragging" : "",
     dropPlacement ? `drop-${dropPlacement}` : ""
   ]
@@ -1347,25 +1441,34 @@ function NodeRow({
     const input = titleInputRef.current;
     if (!input) return;
     resizeTitleInput(input);
-  }, [node.title]);
+  }, [localTitle]);
 
   return (
     <div
       className={rowClassName}
       data-node-id={node.id}
       style={{ "--depth": depth } as CSSProperties}
+      onClick={event => {
+        const target = event.target as HTMLElement;
+        if (target.closest(".disclosureButton") || target.closest(".dragHandle") || target.closest(".iconButton.danger")) return;
+        const input = titleInputRef.current;
+        if (input) {
+          onSelect();
+          input.focus({ preventScroll: true });
+        }
+      }}
     >
       <button
         className="iconButton disclosureButton"
         type="button"
         title={node.collapsed ? "Expand" : "Collapse"}
-        disabled={node.children.length === 0}
+        disabled={node.childIds.length === 0}
         onClick={() => onToggle({ collapsed: !node.collapsed })}
       >
-        {node.children.length > 0 ? node.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} /> : null}
+        {node.childIds.length > 0 ? node.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} /> : null}
       </button>
       <button
-        className={node.done ? "dragHandle done" : "dragHandle"}
+        className={["dragHandle", node.done && "done", node.collapsed && node.childIds.length > 0 && "collapsed"].filter(Boolean).join(" ")}
         type="button"
         title={canDrag ? "Move node" : "Move disabled while searching"}
         aria-label="Move node"
@@ -1381,25 +1484,30 @@ function NodeRow({
             registerInput(element);
           }}
           className="nodeTitle"
-          value={node.title}
+          value={localTitle}
           placeholder="Untitled"
           rows={1}
           onFocus={() => {
             onSelect();
           }}
           onChange={event => {
+            const value = event.target.value;
+            setLocalTitle(value);
             resizeTitleInput(event.currentTarget);
-            onPatchLocal({ title: event.target.value });
+            syncTitleDebounced(value);
           }}
-          onBlur={event => onCommit({ title: event.target.value })}
+          onBlur={event => {
+            flushTitle(event.target.value);
+            onCommit({ title: event.target.value });
+          }}
           onKeyDown={event => {
-            if (handleMarkdownShortcut(event, node.title, onPatchLocal)) return;
+            if (handleMarkdownShortcut(event, localTitle, onPatchLocal)) return;
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               const input = event.currentTarget;
-              const { currentTitle, nextTitle } = splitTitleAtSelection(input.value, input.selectionStart);
-              input.value = currentTitle;
-              onPatchLocal({ title: currentTitle });
+              const { currentTitle, nextTitle } = splitTitleAtSelection(localTitle, input.selectionStart);
+              setLocalTitle(currentTitle);
+              flushTitle(currentTitle);
               onCreateAfter(nextTitle, currentTitle);
             } else if (event.key === "Tab") {
               event.preventDefault();
@@ -1411,7 +1519,7 @@ function NodeRow({
             } else if (event.key === "ArrowDown") {
               event.preventDefault();
               onFocusNext();
-            } else if (event.key === "Backspace" && !node.title) {
+            } else if (event.key === "Backspace" && !localTitle) {
               event.preventDefault();
               onDelete();
             }
@@ -1422,19 +1530,20 @@ function NodeRow({
           type="button"
           tabIndex={-1}
           onClick={event => {
+            event.stopPropagation();
             if (openMarkdownLink(event)) return;
-            const selectionStart = getPreviewSelectionStart(
-              event.currentTarget,
-              event.clientX,
-              event.clientY,
-              node.title
-            );
             onSelect();
-            window.setTimeout(() => {
-              const input = titleInputRef.current;
-              focusTitleInput(input);
-              input?.setSelectionRange(selectionStart, selectionStart);
-            }, 0);
+            const input = titleInputRef.current;
+            if (input) {
+              const selectionStart = getPreviewSelectionStart(
+                event.currentTarget,
+                event.clientX,
+                event.clientY,
+                node.title
+              );
+              input.focus({ preventScroll: true });
+              input.setSelectionRange(selectionStart, selectionStart);
+            }
           }}
         >
           {node.title.trim() ? (
@@ -1502,18 +1611,6 @@ function TagResultRow({
   );
 }
 
-function flatten(root: OutlineTreeNode): FlatNode[] {
-  const output: FlatNode[] = [];
-  const visit = (node: OutlineTreeNode, depth: number) => {
-    for (const child of node.children) {
-      output.push({ node: child, depth });
-      if (!child.collapsed) visit(child, depth + 1);
-    }
-  };
-  visit(root, 0);
-  return output;
-}
-
 function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement {
   const bounds = element.getBoundingClientRect();
   const offset = clientY - bounds.top;
@@ -1525,7 +1622,7 @@ function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement 
 function handleMarkdownShortcut(
   event: KeyboardEvent<HTMLTextAreaElement>,
   title: string,
-  onPatchLocal: (patch: Partial<OutlineTreeNode>) => void
+  onPatchLocal: (patch: Partial<FlatNodeData>) => void
 ): boolean {
   if (!event.ctrlKey && !event.metaKey) return false;
 
@@ -1586,7 +1683,7 @@ function normalizeLinkHref(href: string): string {
 async function insertMarkdownLinkFromClipboard(
   event: KeyboardEvent<HTMLTextAreaElement>,
   title: string,
-  onPatchLocal: (patch: Partial<OutlineTreeNode>) => void
+  onPatchLocal: (patch: Partial<FlatNodeData>) => void
 ) {
   event.preventDefault();
   const input = event.currentTarget;
