@@ -25,7 +25,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import {
+import React, {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -264,7 +264,7 @@ export function App() {
   const isSearching = search.trim().length > 0;
   const isTagFiltering = activeTagFilter.length > 0;
   const filteredNodes = isSearching && flatState
-    ? visibleIds.map(id => getNode(flatState, id)!).filter(node => `${node.title}\n${node.body}`.toLowerCase().includes(search.toLowerCase()))
+    ? visibleIds.map(id => getNode(flatState, id)).filter((n): n is FlatNodeData => !!n && `${n.title}\n${n.body}`.toLowerCase().includes(search.toLowerCase())).map(n => n.id)
     : visibleIds;
   const visibleNodes = flatState ? filteredNodes.map(id => typeof id === 'string' ? { id, node: getNode(flatState, id) } : id).filter((item): item is { id: string; node: FlatNodeData } => !!item.node) : [];
   const filteredTagResults = isSearching
@@ -397,14 +397,16 @@ export function App() {
     title = "",
     currentTitle = current?.title
   ) => {
-    if (!flatState) return;
+    // Use flatStateRef to avoid stale closure when called together with onPatchLocal
+    const currentFlatState = flatStateRef.current;
+    if (!currentFlatState) return;
     const tempId = `temp-${crypto.randomUUID()}`;
-    const originalState = flatState;
+    const originalState = currentFlatState;
     const preppedState =
-      current && currentTitle !== undefined ? updateNode(flatState, current.id, { title: currentTitle }) : flatState;
+      current && currentTitle !== undefined ? updateNode(currentFlatState, current.id, { title: currentTitle }) : currentFlatState;
     const tempNode: FlatNodeData = {
       id: tempId,
-      workspaceId: flatState.nodes[flatState.rootId].workspaceId,
+      workspaceId: currentFlatState.nodes[currentFlatState.rootId].workspaceId,
       parentId,
       position,
       title,
@@ -423,7 +425,7 @@ export function App() {
     setFlatState(newState);
     setVisibleIds(computeVisibleIds(newState));
     flatStateRef.current = newState;
-    focusNode(tempId);
+    setSelectedId(tempId);
 
     try {
       const created = await apiPost<OutlineTreeNode>("/api/nodes", {
@@ -437,23 +439,30 @@ export function App() {
         return;
       }
       const draft = flatStateRef.current ? getNode(flatStateRef.current, tempId) : undefined;
-      const replacement: FlatNodeData = draft
-        ? {
-            ...created,
-            parentId,
-            childIds: draft.childIds
-          }
-        : {
-            ...created,
-            parentId,
-            childIds: []
-          };
-      const withoutTemp = removeNode(flatStateRef.current ?? newState, tempId);
+      const replacement: FlatNodeData = {
+        id: created.id,
+        workspaceId: created.workspaceId,
+        parentId,
+        position: created.position ?? draft?.position ?? 0,
+        title: created.title ?? "",
+        body: created.body ?? "",
+        done: created.done ?? false,
+        collapsed: created.collapsed ?? false,
+        createdAt: created.createdAt ?? new Date().toISOString(),
+        updatedAt: created.updatedAt ?? new Date().toISOString(),
+        tags: draft?.tags ?? created.tags ?? [],
+        fieldValues: draft?.fieldValues ?? created.fieldValues ?? [],
+        childIds: draft?.childIds ?? [],
+      };
+      const currentRef = flatStateRef.current ?? newState;
+      const withoutTemp = removeNode(currentRef, tempId);
       const withCreated = insertNode(withoutTemp, parentId, replacement, position);
+      // Batch: state + visible + selected in one shot
       setFlatState(withCreated);
       setVisibleIds(computeVisibleIds(withCreated));
       flatStateRef.current = withCreated;
-      focusNode(created.id);
+      setSelectedId(created.id);
+      window.setTimeout(() => focusTitleInput(inputRefs.current.get(created.id)), 0);
       if (draft && (draft.title || draft.body || draft.done || draft.collapsed)) {
         patchNode(created.id, {
           title: draft.title,
@@ -534,8 +543,9 @@ export function App() {
   };
 
   const createAfter = async (current: FlatNodeData, title = "", currentTitle = current.title) => {
-    if (!flatState) return;
-    const parentId = current.parentId ?? flatState.rootId;
+    const currentFlatState = flatStateRef.current;
+    if (!currentFlatState) return;
+    const parentId = current.parentId ?? currentFlatState.rootId;
     await createOptimisticNode(parentId, current.position + 1, current, title, currentTitle);
   };
 
@@ -1506,6 +1516,7 @@ function NodeRow({
               event.preventDefault();
               const input = event.currentTarget;
               const { currentTitle, nextTitle } = splitTitleAtSelection(localTitle, input.selectionStart);
+              // Batch all state updates: flush current title + create new node
               setLocalTitle(currentTitle);
               flushTitle(currentTitle);
               onCreateAfter(nextTitle, currentTitle);
@@ -1569,7 +1580,7 @@ function NodeRow({
         </button>
       </div>
       <div className="nodeTags">
-        {node.tags.map(tag => (
+        {(node.tags || []).map(tag => (
           <button type="button" key={tag.id} onClick={() => onTagClick(tag)}>
             {tag.name}
           </button>
@@ -1601,7 +1612,7 @@ function TagResultRow({
         {result.node.body && <span className="tagResultBody">{result.node.body}</span>}
       </button>
       <div className="nodeTags">
-        {result.tags.map(tag => (
+        {(result.tags || []).map(tag => (
           <button type="button" key={tag.id} onClick={() => onTagClick(tag)}>
             {tag.name}
           </button>

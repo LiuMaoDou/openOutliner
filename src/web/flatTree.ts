@@ -138,6 +138,7 @@ export function insertNode(
   node: FlatNodeData,
   position: number
 ): FlatTreeState {
+  if (!state.nodes[parentId]) return state;
   const next = cloneState(state);
   cloneNode(next, parentId);
   const parent = next.nodes[parentId];
