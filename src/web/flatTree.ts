@@ -45,20 +45,26 @@ export function fromNestedTree(root: OutlineTreeNode): {
   const nodes: Record<string, FlatNodeData> = {};
   const visibleIds: string[] = [];
 
-  const visit = (node: OutlineTreeNode, parentId: string | null, depth: number): void => {
+  const visit = (
+    node: OutlineTreeNode,
+    parentId: string | null,
+    depth: number,
+    visible: boolean
+  ): void => {
     const { children, ...rest } = node;
     const childIds = children.map(c => c.id);
     nodes[node.id] = { ...rest, parentId, childIds };
-    if (depth > 0) visibleIds.push(node.id);
+    if (depth > 0 && visible) visibleIds.push(node.id);
+    const childVisible = visible && !node.collapsed;
     children.forEach(child => {
-      visit(child, node.id, depth + 1);
+      visit(child, node.id, depth + 1, childVisible);
     });
   };
 
   const { children, ...rootRest } = root;
   const rootChildIds = children.map(c => c.id);
   nodes[root.id] = { ...rootRest, parentId: null, childIds: rootChildIds };
-  children.forEach(child => visit(child, root.id, 1));
+  children.forEach(child => visit(child, root.id, 1, !root.collapsed));
 
   return { state: { nodes, rootId: root.id }, visibleIds };
 }

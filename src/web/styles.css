@@ -204,6 +204,10 @@ textarea:focus-visible {
   box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
 }
 
+.searchBox input:focus-visible {
+  box-shadow: none;
+}
+
 .appShell {
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);
@@ -641,15 +645,14 @@ textarea:focus-visible {
   height: 36px;
   padding: 0 11px;
   color: var(--muted-foreground);
-  background: var(--background);
-  border: 1px solid var(--input);
+  background: var(--secondary);
+  border: 1px solid transparent;
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
 }
 
 .searchBox:focus-within {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 3px rgba(161, 161, 170, 0.22);
+  border-color: var(--input);
+  box-shadow: none;
 }
 
 .searchBox input {
@@ -992,7 +995,7 @@ textarea:focus-visible {
 }
 
 .nodeRow:hover {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .nodeRow.selected {

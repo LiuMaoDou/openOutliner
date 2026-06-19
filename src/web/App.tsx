@@ -328,6 +328,17 @@ export function App() {
     [rowVirtualizer]
   );
 
+  const focusWhenReady = useCallback((nodeId: string, attempts = 0) => {
+    const input = inputRefs.current.get(nodeId);
+    if (input) {
+      input.focus({ preventScroll: true });
+      return;
+    }
+    if (attempts < 10) {
+      window.requestAnimationFrame(() => focusWhenReady(nodeId, attempts + 1));
+    }
+  }, []);
+
   const refresh = useCallback(
     async (focusId?: string) => {
       await loadTree(workspaceId, { preserveSelection: true });
@@ -426,6 +437,7 @@ export function App() {
     setVisibleIds(computeVisibleIds(newState));
     flatStateRef.current = newState;
     setSelectedId(tempId);
+    focusWhenReady(tempId);
 
     try {
       const created = await apiPost<OutlineTreeNode>("/api/nodes", {
@@ -462,7 +474,7 @@ export function App() {
       setVisibleIds(computeVisibleIds(withCreated));
       flatStateRef.current = withCreated;
       setSelectedId(created.id);
-      window.setTimeout(() => focusTitleInput(inputRefs.current.get(created.id)), 0);
+      focusWhenReady(created.id);
       if (draft && (draft.title || draft.body || draft.done || draft.collapsed)) {
         patchNode(created.id, {
           title: draft.title,
@@ -832,7 +844,8 @@ export function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `openoutliner.${extension}`;
+    const date = new Date().toISOString().slice(0, 10);
+    link.download = `${date}.${extension}`;
     link.click();
     URL.revokeObjectURL(url);
   };
