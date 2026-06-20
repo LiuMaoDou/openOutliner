@@ -10,6 +10,11 @@ import { OutlinerService } from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import { splitTitleAtSelection } from "../src/web/App.js";
 import {
+  fromNestedTree,
+  moveNode as moveFlatNode,
+  computeVisibleIds
+} from "../src/web/flatTree.js";
+import {
   insertTreeNode,
   moveTreeNode,
   removeTreeNode,
@@ -233,6 +238,17 @@ describe("tree operations", () => {
     expect(next.children[0].children.map(node => node.id)).toEqual(["a"]);
     expect(next.children[0].children[0].children[0].id).toBe("a-child");
     expect(next.children[0].children[0].parentId).toBe("b");
+  });
+
+  it("moves flat tree nodes without dropping descendants", () => {
+    const { state } = fromNestedTree(testTree());
+    const next = moveFlatNode(state, "a", "b", 0);
+
+    expect(next.nodes["a"].parentId).toBe("b");
+    expect(next.nodes["a-child"].parentId).toBe("a");
+    expect(next.nodes["a"].childIds).toEqual(["a-child"]);
+    expect(next.nodes["b"].childIds).toEqual(["a"]);
+    expect(computeVisibleIds(next)).toEqual(["b", "a", "a-child"]);
   });
 });
 

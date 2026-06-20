@@ -186,12 +186,25 @@ export function moveNode(
 ): FlatTreeState {
   const node = state.nodes[id];
   if (!node || id === state.rootId || id === newParentId) return state;
+  if (!node.parentId || !state.nodes[newParentId]) return state;
 
   // Check if newParent is a descendant of node (circular move)
   if (isDescendant(state, id, newParentId)) return state;
 
-  const next = removeNode(state, id);
-  return insertNode(next, newParentId, { ...node, parentId: newParentId }, position);
+  const next = cloneState(state);
+  cloneNode(next, node.parentId);
+  if (node.parentId !== newParentId) cloneNode(next, newParentId);
+
+  const oldParent = next.nodes[node.parentId];
+  const newParent = next.nodes[newParentId];
+  oldParent.childIds = oldParent.childIds.filter(cid => cid !== id);
+  const nextPosition = Math.max(0, Math.min(position, newParent.childIds.length));
+  newParent.childIds.splice(nextPosition, 0, id);
+  next.nodes[id] = { ...node, parentId: newParentId, position: nextPosition };
+
+  normalizePositions(next, node.parentId);
+  normalizePositions(next, newParentId);
+  return next;
 }
 
 // ─── Queries ──────────────────────────────────────────────────────

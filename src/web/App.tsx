@@ -65,29 +65,6 @@ import {
   hasNode
 } from "./flatTree";
 
-/** Compute depth for each visible node id */
-function computeDepths(state: FlatTreeState, visibleIds: string[]): Map<string, number> {
-  const depths = new Map<string, number>();
-  const rootChildren = state.nodes[state.rootId]?.childIds ?? [];
-  const rootGrandchildren = new Set<string>();
-  for (const cid of rootChildren) {
-    for (const gcid of state.nodes[cid]?.childIds ?? []) {
-      rootGrandchildren.add(gcid);
-    }
-  }
-  for (const id of visibleIds) {
-    const parent = state.nodes[id]?.parentId;
-    if (parent === null || parent === state.rootId) {
-      depths.set(id, 0);
-    } else if (parent && rootChildren.includes(parent)) {
-      depths.set(id, 1);
-    } else {
-      depths.set(id, 2);
-    }
-  }
-  return depths;
-}
-
 /** Dynamic depth computation: O(1) per node by walking parentId chain */
 function getNodeDepth(state: FlatTreeState, id: string): number {
   let depth = 0;
@@ -617,7 +594,7 @@ export function App() {
       const targetId = targetElement?.dataset.nodeId;
       const target = targetId && flatState ? getNode(flatState, targetId) : undefined;
 
-      if (!targetElement || !target || target.id === node.id || isDescendant(flatState, node.id, target.id)) {
+      if (!flatState || !targetElement || !target || target.id === node.id || isDescendant(flatState, node.id, target.id)) {
         dragTargetRef.current = null;
         setDragState(nextDragState);
         return;
