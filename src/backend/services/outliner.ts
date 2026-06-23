@@ -374,6 +374,48 @@ export class OutlinerService {
     return { deleted: rows.map(row => text(row.id)) };
   }
 
+  restoreNode(id: string): OutlineTreeNode {
+    const row = this.db
+      .prepare("SELECT * FROM nodes WHERE id = ? AND deleted_at IS NOT NULL")
+      .get(id) as Row | undefined;
+    if (!row) throw new ValidationError("Node is not deleted.");
+
+    const node = rowToNode(row);
+    const workspace = this.getWorkspace(node.workspaceId);
+    if (workspace.rootNodeId === id) throw new ValidationError("Workspace root nodes cannot be restored.");
+    if (!node.parentId) throw new ValidationError("Deleted node parent is missing.");
+
+    const parent = this.db
+      .prepare("SELECT * FROM nodes WHERE id = ? AND deleted_at IS NULL")
+      .get(node.parentId) as Row | undefined;
+    if (!parent) throw new ValidationError("Deleted node parent is not active.");
+
+    const now = timestamp();
+    this.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE nodes
+           SET position = position + 1, updated_at = ?
+           WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position >= ?`
+        )
+        .run(now, node.workspaceId, node.parentId, node.position);
+
+      this.db
+        .prepare(
+          `WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM nodes WHERE id = ?
+            UNION ALL
+            SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
+            WHERE nodes.deleted_at IS NOT NULL
+          )
+          UPDATE nodes SET deleted_at = NULL, updated_at = ? WHERE id IN (SELECT id FROM subtree)`
+        )
+        .run(id, now);
+    });
+
+    return this.getTree(id);
+  }
+
   searchNodes(query: string, workspaceId?: string, limit = 25): OutlineNode[] {
     const like = `%${query.trim()}%`;
     if (!query.trim()) return [];

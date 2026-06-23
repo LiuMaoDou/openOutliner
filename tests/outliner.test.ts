@@ -93,6 +93,35 @@ describe("OutlinerService", () => {
     expect(tree.children[1].children[0].fieldValues[0].value).toBe("ready");
   });
 
+  it("restores a deleted node subtree at its original sibling position", () => {
+    const workspace = service.createWorkspace("Restore");
+    const alpha = service.createNode({ parentId: workspace.rootNodeId, title: "Alpha" });
+    const beta = service.createNode({ parentId: workspace.rootNodeId, title: "Beta" });
+    const gamma = service.createNode({ parentId: workspace.rootNodeId, title: "Gamma" });
+    const child = service.createNode({ parentId: beta.id, title: "Beta child" });
+
+    service.deleteNode(beta.id);
+    expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Alpha", "Gamma"]);
+
+    const restored = service.restoreNode(beta.id);
+    const tree = service.getTree(workspace.rootNodeId);
+
+    expect(restored.title).toBe("Beta");
+    expect(restored.children.map(node => node.id)).toEqual([child.id]);
+    expect(tree.children.map(node => node.title)).toEqual(["Alpha", "Beta", "Gamma"]);
+    expect(tree.children.map(node => node.position)).toEqual([0, 1, 2]);
+    expect(service.getNode(child.id).title).toBe("Beta child");
+    expect(service.getNode(gamma.id).position).toBe(2);
+    expect(service.getNode(alpha.id).position).toBe(0);
+  });
+
+  it("rejects restoring a node that is not deleted", () => {
+    const workspace = service.createWorkspace("Restore validation");
+    const node = service.createNode({ parentId: workspace.rootNodeId, title: "Active" });
+
+    expect(() => service.restoreNode(node.id)).toThrow("Node is not deleted.");
+  });
+
   it("updates and deletes workspaces", () => {
     const workspace = service.createWorkspace("Draft", "rocket");
     const renamed = service.updateWorkspace(workspace.id, { name: "Personal" });

@@ -121,6 +121,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
+  const restoreMatch = path.match(/^\/api\/nodes\/([^/]+)\/restore$/);
+  if (method === "POST" && restoreMatch) {
+    sendJson(res, service.restoreNode(restoreMatch[1]));
+    return;
+  }
+
   const moveMatch = path.match(/^\/api\/nodes\/([^/]+)\/move$/);
   if (method === "POST" && moveMatch) {
     const body = await readJson<{ parentId: string; position?: number }>(req);
