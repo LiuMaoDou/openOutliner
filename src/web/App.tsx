@@ -17,6 +17,7 @@ import {
   Sun,
   Tag as TagIcon,
   Trash2,
+  Undo2,
   Upload,
   X
 } from "lucide-react";
@@ -92,6 +93,14 @@ interface DragState {
   placement?: DropPlacement;
 }
 
+interface PendingDelete {
+  nodeId: string;
+  workspaceId: string;
+  snapshot: FlatTreeState;
+  focusAfterDeleteId: string;
+  createdAt: number;
+}
+
 const iconNameSet = new Set<string>(iconNames);
 
 export function App() {
@@ -115,6 +124,7 @@ export function App() {
   const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
   const [workspaceDragTargetId, setWorkspaceDragTargetId] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const workspaceIdRef = useRef("");
   const treeRequestRef = useRef(0);
   const tagsRequestRef = useRef(0);
@@ -209,7 +219,16 @@ export function App() {
 
   useEffect(() => {
     setIsTagManagerOpen(false);
+    setPendingDelete(null);
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    const timer = window.setTimeout(() => setPendingDelete(current =>
+      current?.createdAt === pendingDelete.createdAt ? null : current
+    ), 6000);
+    return () => window.clearTimeout(timer);
+  }, [pendingDelete]);
 
   useEffect(() => {
     flatStateRef.current = flatState;
@@ -476,6 +495,7 @@ export function App() {
   const deleteNodeOptimistically = async (node: FlatNodeData) => {
     if (!flatState || node.id === flatState.rootId) return;
     const before = flatState;
+    const currentWorkspaceId = workspaceId;
     const prevIdx = visibleIds.indexOf(node.id);
     const previousId = prevIdx > 0 ? visibleIds[prevIdx - 1] : flatState.rootId;
     const newState = removeNode(before, node.id);
@@ -490,11 +510,35 @@ export function App() {
 
     try {
       await apiDelete(`/api/nodes/${node.id}`);
+      setPendingDelete({
+        nodeId: node.id,
+        workspaceId: currentWorkspaceId,
+        snapshot: before,
+        focusAfterDeleteId: previousId,
+        createdAt: Date.now()
+      });
     } catch (error) {
       setFlatState(before);
       setVisibleIds(computeVisibleIds(before));
       flatStateRef.current = before;
       focusNode(node.id);
+      throw error;
+    }
+  };
+
+  const undoPendingDelete = async () => {
+    const pending = pendingDelete;
+    if (!pending || pending.workspaceId !== workspaceIdRef.current) return;
+    setPendingDelete(null);
+    try {
+      await apiPost<OutlineTreeNode>(`/api/nodes/${pending.nodeId}/restore`, {});
+      setFlatState(pending.snapshot);
+      setVisibleIds(computeVisibleIds(pending.snapshot));
+      flatStateRef.current = pending.snapshot;
+      setSelectedId(pending.nodeId);
+      focusWhenReady(pending.nodeId);
+    } catch (error) {
+      focusNode(pending.focusAfterDeleteId);
       throw error;
     }
   };
@@ -1091,6 +1135,16 @@ export function App() {
             <span>{error}</span>
             <button type="button" onClick={() => setError("")}>
               <Check size={16} />
+            </button>
+          </div>
+        )}
+
+        {pendingDelete && pendingDelete.workspaceId === workspaceId && (
+          <div className="undoBar" role="status" aria-live="polite">
+            <span>Deleted node</span>
+            <button type="button" onClick={() => undoPendingDelete().catch(toError(setError))}>
+              <Undo2 size={15} />
+              <span>Undo</span>
             </button>
           </div>
         )}
