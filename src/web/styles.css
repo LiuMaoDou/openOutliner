@@ -329,7 +329,8 @@ textarea:focus-visible {
 .dragHandle,
 .iconButton,
 .tagInput button,
-.errorBar button {
+.errorBar button,
+.undoBar button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -721,6 +722,40 @@ textarea:focus-visible {
   height: 30px;
   color: var(--danger-foreground);
   background: var(--background);
+}
+
+.undoBar {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  padding: 8px 10px 8px 14px;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+.undoBar > span {
+  font-size: 0.88rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.undoBar button {
+  min-width: 82px;
+  height: 32px;
+  color: var(--foreground);
+  background: var(--background);
+}
+
+.undoBar button:hover {
+  background: var(--accent);
 }
 
 .modalBackdrop {
