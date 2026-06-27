@@ -60,6 +60,7 @@ import {
   insertNode,
   removeNode,
   moveNode,
+  moveNodeInside,
   getNode,
   getParentId,
   isDescendant,
@@ -548,25 +549,28 @@ export function App() {
     parentId: string,
     position: number
   ) => {
-    if (!flatState || source.id === parentId) return;
-    const nextPosition = source.parentId === parentId && source.position < position ? position - 1 : position;
-    if (source.parentId === parentId && source.position === nextPosition) return;
-    const before = flatState;
+    const before = flatStateRef.current;
+    if (!before || source.id === parentId) return;
+    const currentSource = getNode(before, source.id);
+    if (!currentSource) return;
+    const nextPosition =
+      currentSource.parentId === parentId && currentSource.position < position ? position - 1 : position;
+    if (currentSource.parentId === parentId && currentSource.position === nextPosition) return;
     const restoreScroll = preserveOutlineScroll();
-    const newState = moveNode(before, source.id, parentId, nextPosition);
+    const newState = moveNode(before, currentSource.id, parentId, nextPosition);
     setFlatState(newState);
     setVisibleIds(computeVisibleIds(newState));
     flatStateRef.current = newState;
-    selectNode(source.id);
+    selectNode(currentSource.id);
     restoreScroll();
 
     try {
-      await apiPost(`/api/nodes/${source.id}/move`, { parentId, position: nextPosition });
+      await apiPost(`/api/nodes/${currentSource.id}/move`, { parentId, position: nextPosition });
     } catch (error) {
       setFlatState(before);
       setVisibleIds(computeVisibleIds(before));
       flatStateRef.current = before;
-      focusNode(source.id);
+      focusNode(currentSource.id);
       throw error;
     } finally {
       window.setTimeout(() => {
@@ -676,14 +680,33 @@ export function App() {
   const moveNodeToTarget = async (source: FlatNodeData, target: FlatNodeData, placement: DropPlacement) => {
     if (!flatState || source.id === target.id || isDescendant(flatState, source.id, target.id)) return;
     if (placement === "inside") {
+      const before = flatStateRef.current;
+      if (!before) return;
+      const currentSource = getNode(before, source.id);
+      const currentTarget = getNode(before, target.id);
+      if (!currentSource || !currentTarget || isDescendant(before, currentSource.id, currentTarget.id)) return;
       const restoreScroll = preserveOutlineScroll();
+      const newState = moveNodeInside(before, currentSource.id, currentTarget.id);
+      if (newState === before) return;
+      setFlatState(newState);
+      setVisibleIds(computeVisibleIds(newState));
+      flatStateRef.current = newState;
+      selectNode(currentSource.id);
+      restoreScroll();
+
       try {
-        if (target.collapsed) await patchNode(target.id, { collapsed: false });
-        if (source.parentId === target.id && source.position === target.childIds.length - 1) return;
-        await apiPost(`/api/nodes/${source.id}/move`, { parentId: target.id, position: target.childIds.length });
-        await loadTree(workspaceId, { preserveSelection: true });
-        selectNode(source.id);
+        if (currentTarget.collapsed) await patchNode(currentTarget.id, { collapsed: false });
+        await apiPost(`/api/nodes/${currentSource.id}/move`, {
+          parentId: currentTarget.id,
+          position: currentTarget.childIds.length
+        });
         restoreScroll();
+      } catch (error) {
+        setFlatState(before);
+        setVisibleIds(computeVisibleIds(before));
+        flatStateRef.current = before;
+        focusNode(currentSource.id);
+        throw error;
       } finally {
         window.setTimeout(() => {
           restoreScroll();
@@ -1214,7 +1237,12 @@ export function App() {
                           }}
                           onSelect={() => setSelectedId(node.id)}
                           onPatchLocal={patch => {
-                            setFlatState(s => s ? updateNode(s, node.id, patch) : s);
+                            setFlatState(s => {
+                              if (!s) return s;
+                              const next = updateNode(s, node.id, patch);
+                              flatStateRef.current = next;
+                              return next;
+                            });
                           }}
                           onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
                           onToggle={patch => {
@@ -1222,6 +1250,7 @@ export function App() {
                               if (!s) return s;
                               const next = updateNode(s, node.id, patch);
                               setVisibleIds(computeVisibleIds(next));
+                              flatStateRef.current = next;
                               return next;
                             });
                             patchNode(node.id, patch).catch(toError(setError));
@@ -1280,9 +1309,12 @@ export function App() {
                       <textarea
                         value={selectedNode.body}
                         onChange={event =>
-                          setFlatState(s =>
-                            s ? updateNode(s, selectedNode.id, { body: event.target.value }) : s
-                          )
+                          setFlatState(s => {
+                            if (!s) return s;
+                            const next = updateNode(s, selectedNode.id, { body: event.target.value });
+                            flatStateRef.current = next;
+                            return next;
+                          })
                         }
                         onBlur={event =>
                           patchNode(selectedNode.id, { body: event.target.value }).catch(toError(setError))
