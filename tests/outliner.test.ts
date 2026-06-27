@@ -8,7 +8,11 @@ import { exportMarkdown, importMarkdown } from "../src/backend/importExport/mark
 import { exportOpml, importOpml } from "../src/backend/importExport/opml.js";
 import { OutlinerService } from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
-import { splitTitleAtSelection } from "../src/web/App.js";
+import {
+  createWorkspaceRequestBody,
+  nextCollapsedWorkspaceFolderIds,
+  splitTitleAtSelection
+} from "../src/web/App.js";
 import {
   fromNestedTree,
   moveNode as moveFlatNode,
@@ -494,6 +498,30 @@ describe("import/export", () => {
     expect(tree.children.map(node => node.title)).toEqual(["万卷书", "O R'eilly", "AI"]);
     expect(ai?.children[0].title).toBe("AI变现");
     expect(ai?.children[0].children[0].title).toBe("OpenOutliner");
+  });
+});
+
+describe("workspace creation request body", () => {
+  it("uses an explicit folder id when creating a workspace for a folder", () => {
+    expect(createWorkspaceRequestBody(null, "project-folder")).toMatchObject({
+      name: "Untitled Workspace",
+      folderId: "project-folder"
+    });
+  });
+
+  it("falls back to the selected workspace folder when no explicit folder is provided", () => {
+    expect(createWorkspaceRequestBody({ folderId: "current-folder" }, undefined)).toMatchObject({
+      name: "Untitled Workspace",
+      folderId: "current-folder"
+    });
+  });
+});
+
+describe("workspace folder collapse state", () => {
+  it("toggles folder ids in the collapsed set", () => {
+    const collapsed = nextCollapsedWorkspaceFolderIds(new Set<string>(), "folder-a");
+    expect([...collapsed]).toEqual(["folder-a"]);
+    expect([...nextCollapsedWorkspaceFolderIds(collapsed, "folder-a")]).toEqual([]);
   });
 });
 

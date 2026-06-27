@@ -124,6 +124,7 @@ export function App() {
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
   const [workspaceDragTargetId, setWorkspaceDragTargetId] = useState<string | null>(null);
+  const [collapsedWorkspaceFolderIds, setCollapsedWorkspaceFolderIds] = useState<Set<string>>(() => new Set());
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const workspaceIdRef = useRef("");
@@ -736,12 +737,11 @@ export function App() {
     setManagedTagName("");
   }, []);
 
-  const createWorkspace = async () => {
-    const created = await apiPost<Workspace>("/api/workspaces", {
-      name: "Untitled Workspace",
-      icon: randomWorkspaceIcon(),
-      folderId: selectedWorkspace?.folderId ?? null
-    });
+  const createWorkspace = async (folderId?: string | null) => {
+    const created = await apiPost<Workspace>(
+      "/api/workspaces",
+      createWorkspaceRequestBody(selectedWorkspace, folderId)
+    );
     await loadWorkspaces();
     selectWorkspace(created.id);
   };
@@ -819,10 +819,19 @@ export function App() {
     setWorkspaceFolders(current => current.map(folder => (folder.id === id ? { ...folder, name } : folder)));
   };
 
+  const toggleWorkspaceFolder = (id: string) => {
+    setCollapsedWorkspaceFolderIds(current => nextCollapsedWorkspaceFolderIds(current, id));
+  };
+
   const deleteWorkspaceFolder = async (folder: WorkspaceFolder) => {
     if (!window.confirm(`Delete folder "${folder.name}"? Workspaces inside it will move to root.`)) return;
     await apiDelete(`/api/workspace-folders/${folder.id}`);
     setWorkspaceFolders(current => current.filter(item => item.id !== folder.id));
+    setCollapsedWorkspaceFolderIds(current => {
+      const next = new Set(current);
+      next.delete(folder.id);
+      return next;
+    });
     setWorkspaces(current =>
       current.map(workspace => (workspace.folderId === folder.id ? { ...workspace, folderId: null } : workspace))
     );
@@ -977,12 +986,17 @@ export function App() {
             </button>
           </div>
           {!sidebarCollapsed ? (
-            <button className="commandButton" type="button" onClick={createWorkspace}>
+            <button className="commandButton" type="button" onClick={() => createWorkspace().catch(toError(setError))}>
               <Plus size={15} />
               <span>Workspace</span>
             </button>
           ) : (
-            <button className="sidebarCollapsedAdd" type="button" onClick={createWorkspace} title="New Workspace">
+            <button
+              className="sidebarCollapsedAdd"
+              type="button"
+              onClick={() => createWorkspace().catch(toError(setError))}
+              title="New Workspace"
+            >
               <Plus size={15} />
             </button>
           )}
@@ -1003,36 +1017,56 @@ export function App() {
               >
                 {rootWorkspaces.map(renderWorkspaceItem)}
               </div>
-              {workspaceFolders.map(folder => (
-                <div
-                  className={workspaceDragTargetId === folder.id ? "workspaceFolder dropActive" : "workspaceFolder"}
-                  key={folder.id}
-                  data-workspace-folder-drop-id={folder.id}
-                >
-                  <div className="workspaceFolderHeader">
-                    <Folder size={14} />
-                    <input
-                      value={folder.name}
-                      onChange={event => updateWorkspaceFolderDraft(folder.id, event.target.value)}
-                      onBlur={event => updateWorkspaceFolderName(folder, event.target.value).catch(toError(setError))}
-                      onKeyDown={event => {
-                        if (event.key === "Enter") event.currentTarget.blur();
-                      }}
-                    />
-                    <button
-                      type="button"
-                      title="Delete folder"
-                      onClick={() => deleteWorkspaceFolder(folder).catch(toError(setError))}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+              {workspaceFolders.map(folder => {
+                const isCollapsed = collapsedWorkspaceFolderIds.has(folder.id);
+                const folderWorkspaces = workspacesByFolder.get(folder.id) ?? [];
+                return (
+                  <div
+                    className={workspaceDragTargetId === folder.id ? "workspaceFolder dropActive" : "workspaceFolder"}
+                    key={folder.id}
+                    data-workspace-folder-drop-id={folder.id}
+                  >
+                    <div className="workspaceFolderHeader">
+                      <button
+                        type="button"
+                        className="workspaceFolderCollapse"
+                        title={isCollapsed ? "Expand folder" : "Collapse folder"}
+                        aria-expanded={!isCollapsed}
+                        onClick={() => toggleWorkspaceFolder(folder.id)}
+                      >
+                        {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                      </button>
+                      <Folder size={14} />
+                      <input
+                        value={folder.name}
+                        onChange={event => updateWorkspaceFolderDraft(folder.id, event.target.value)}
+                        onBlur={event => updateWorkspaceFolderName(folder, event.target.value).catch(toError(setError))}
+                        onKeyDown={event => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        title="New workspace in folder"
+                        onClick={() => createWorkspace(folder.id).catch(toError(setError))}
+                      >
+                        <Plus size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        title="Delete folder"
+                        onClick={() => deleteWorkspaceFolder(folder).catch(toError(setError))}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    {!isCollapsed && folderWorkspaces.map(renderWorkspaceItem)}
+                    {!isCollapsed && folderWorkspaces.length === 0 && (
+                      <div className="workspaceFolderEmpty">Empty folder</div>
+                    )}
                   </div>
-                  {(workspacesByFolder.get(folder.id) ?? []).map(renderWorkspaceItem)}
-                  {(workspacesByFolder.get(folder.id) ?? []).length === 0 && (
-                    <div className="workspaceFolderEmpty">Empty folder</div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </>
           ) : (
             workspaces.map(renderWorkspaceItem)
@@ -1061,7 +1095,7 @@ export function App() {
               </option>
             ))}
           </select>
-          <button type="button" onClick={createWorkspace} title="New Workspace">
+          <button type="button" onClick={() => createWorkspace().catch(toError(setError))} title="New Workspace">
             <Plus size={16} />
           </button>
         </div>
@@ -1923,6 +1957,27 @@ function themeLabel(theme: Theme): string {
 
 function randomWorkspaceIcon(): IconName {
   return iconNames[Math.floor(Math.random() * iconNames.length)] ?? "folder-tree";
+}
+
+export function createWorkspaceRequestBody(
+  selectedWorkspace: Pick<Workspace, "folderId"> | null | undefined,
+  folderId?: string | null
+) {
+  return {
+    name: "Untitled Workspace",
+    icon: randomWorkspaceIcon(),
+    folderId: folderId !== undefined ? folderId : selectedWorkspace?.folderId ?? null
+  };
+}
+
+export function nextCollapsedWorkspaceFolderIds(current: Set<string>, folderId: string): Set<string> {
+  const next = new Set(current);
+  if (next.has(folderId)) {
+    next.delete(folderId);
+  } else {
+    next.add(folderId);
+  }
+  return next;
 }
 
 function workspaceIconName(icon: string): IconName {

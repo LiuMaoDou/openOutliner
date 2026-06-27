@@ -505,7 +505,7 @@ textarea:focus-visible {
 
 .workspaceFolderHeader {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 24px;
+  grid-template-columns: 20px 20px minmax(0, 1fr) 24px 24px;
   align-items: center;
   min-height: 24px;
   padding: 0 4px 0 10px;
@@ -547,6 +547,10 @@ textarea:focus-visible {
   width: 22px;
   height: 22px;
   opacity: 0;
+}
+
+.workspaceFolderHeader .workspaceFolderCollapse {
+  opacity: 1;
 }
 
 .workspaceFolderHeader:hover button,
