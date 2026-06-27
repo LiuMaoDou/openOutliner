@@ -152,6 +152,26 @@ describe("OutlinerService", () => {
     expect(service.getWorkspace(workspace.id).folderId).toBeNull();
   });
 
+  it("creates a workspace under a named folder", () => {
+    const workspace = service.createWorkspaceInFolder("Launch Plan", "Projects", "rocket");
+
+    const folder = service.listWorkspaceFolders()[0];
+    expect(folder.name).toBe("Projects");
+    expect(workspace.name).toBe("Launch Plan");
+    expect(workspace.icon).toBe("rocket");
+    expect(workspace.folderId).toBe(folder.id);
+    expect(service.getNode(workspace.rootNodeId).title).toBe("Launch Plan");
+  });
+
+  it("reuses an existing folder when creating a workspace under a named folder", () => {
+    const folder = service.createWorkspaceFolder("Projects");
+
+    const workspace = service.createWorkspaceInFolder("Roadmap", "Projects");
+
+    expect(service.listWorkspaceFolders()).toHaveLength(1);
+    expect(workspace.folderId).toBe(folder.id);
+  });
+
   it("updates and deletes tags", () => {
     const workspace = service.createWorkspace("Tags");
     const node = service.createNode({ parentId: workspace.rootNodeId, title: "Tagged" });

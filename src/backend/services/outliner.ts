@@ -131,6 +131,16 @@ export class OutlinerService {
     return { deleted: id };
   }
 
+  createWorkspaceInFolder(name: string, folderName: string, icon?: string): Workspace {
+    const trimmedFolderName = folderName.trim();
+    if (!trimmedFolderName) throw new ValidationError("Folder name is required.");
+
+    return this.transaction(() => {
+      const folder = this.findWorkspaceFolderByName(trimmedFolderName) ?? this.createWorkspaceFolder(trimmedFolderName);
+      return this.createWorkspace(name, icon, folder.id);
+    });
+  }
+
   createWorkspace(name: string, icon?: string, folderId?: string | null): Workspace {
     const now = timestamp();
     const workspaceId = randomUUID();
@@ -705,6 +715,13 @@ export class OutlinerService {
   private normalizeWorkspaceFolderId(folderId?: string | null): string | null {
     if (!folderId) return null;
     return this.getWorkspaceFolder(folderId).id;
+  }
+
+  private findWorkspaceFolderByName(name: string): WorkspaceFolder | null {
+    const row = this.db
+      .prepare("SELECT * FROM workspace_folders WHERE name = ? ORDER BY position ASC, created_at ASC LIMIT 1")
+      .get(name) as Row | undefined;
+    return row ? rowToWorkspaceFolder(row) : null;
   }
 
   private transaction<T>(fn: () => T): T {
