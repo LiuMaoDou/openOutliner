@@ -12,6 +12,7 @@ import { splitTitleAtSelection } from "../src/web/App.js";
 import {
   fromNestedTree,
   moveNode as moveFlatNode,
+  moveNodeInside,
   computeVisibleIds
 } from "../src/web/flatTree.js";
 import {
@@ -278,6 +279,29 @@ describe("tree operations", () => {
     expect(next.nodes["a"].childIds).toEqual(["a-child"]);
     expect(next.nodes["b"].childIds).toEqual(["a"]);
     expect(computeVisibleIds(next)).toEqual(["b", "a", "a-child"]);
+  });
+
+  it("moves flat tree nodes inside a target without dropping existing target content", () => {
+    const { state } = fromNestedTree({
+      ...testTree(),
+      children: [
+        testNode("a", "Unsaved local Alpha", "root", 0),
+        {
+          ...testNode("b", "Beta", "root", 1),
+          collapsed: true,
+          children: [testNode("b-child", "Existing child", "b", 0)]
+        }
+      ]
+    });
+
+    const next = moveNodeInside(state, "a", "b");
+
+    expect(next.nodes["a"].title).toBe("Unsaved local Alpha");
+    expect(next.nodes["a"].parentId).toBe("b");
+    expect(next.nodes["b"].collapsed).toBe(false);
+    expect(next.nodes["b"].childIds).toEqual(["b-child", "a"]);
+    expect(next.nodes["b-child"].title).toBe("Existing child");
+    expect(computeVisibleIds(next)).toEqual(["b", "b-child", "a"]);
   });
 });
 

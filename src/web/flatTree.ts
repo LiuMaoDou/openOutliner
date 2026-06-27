@@ -207,6 +207,18 @@ export function moveNode(
   return next;
 }
 
+export function moveNodeInside(
+  state: FlatTreeState,
+  id: string,
+  newParentId: string
+): FlatTreeState {
+  const parent = state.nodes[newParentId];
+  if (!parent) return state;
+  const expanded = parent.collapsed ? updateNode(state, newParentId, { collapsed: false }) : state;
+  const currentParent = expanded.nodes[newParentId];
+  return moveNode(expanded, id, newParentId, currentParent.childIds.length);
+}
+
 // ─── Queries ──────────────────────────────────────────────────────
 
 export function getNode(state: FlatTreeState, id: string): FlatNodeData | undefined {
