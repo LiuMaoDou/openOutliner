@@ -503,6 +503,10 @@ textarea:focus-visible {
   padding-top: 3px;
 }
 
+.workspaceFolder .workspaceItem {
+  padding-left: 34px;
+}
+
 .workspaceFolderHeader {
   display: grid;
   grid-template-columns: 20px 20px minmax(0, 1fr) 24px 24px;
