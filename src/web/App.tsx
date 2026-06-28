@@ -1029,14 +1029,13 @@ export function App() {
                     <div className="workspaceFolderHeader">
                       <button
                         type="button"
-                        className="workspaceFolderCollapse"
+                        className="workspaceFolderIconButton"
                         title={isCollapsed ? "Expand folder" : "Collapse folder"}
                         aria-expanded={!isCollapsed}
                         onClick={() => toggleWorkspaceFolder(folder.id)}
                       >
-                        {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                        <Folder size={14} />
                       </button>
-                      <Folder size={14} />
                       <input
                         value={folder.name}
                         onChange={event => updateWorkspaceFolderDraft(folder.id, event.target.value)}
