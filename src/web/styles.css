@@ -429,6 +429,27 @@ textarea:focus-visible {
   color: var(--soft-foreground);
   text-align: left;
   background: transparent;
+  position: relative;
+}
+
+.workspaceItem::before {
+  position: absolute;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  content: "";
+  background: transparent;
+  border-radius: 999px;
+}
+
+.workspaceItem.drop-before::before {
+  top: -1px;
+  background: var(--drop-indicator);
+}
+
+.workspaceItem.drop-after::before {
+  bottom: -1px;
+  background: var(--drop-indicator);
 }
 
 .workspaceItem input {

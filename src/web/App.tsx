@@ -85,6 +85,15 @@ interface LoadTreeOptions {
 }
 
 type DropPlacement = "before" | "inside" | "after";
+type WorkspaceDropPlacement = "before" | "after";
+
+interface WorkspaceDragTarget {
+  folderId: string | null;
+  position: number;
+  markerId: string;
+  overWorkspaceId?: string;
+  placement?: WorkspaceDropPlacement;
+}
 
 interface DragState {
   draggingId: string;
@@ -124,7 +133,7 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
-  const [workspaceDragTargetId, setWorkspaceDragTargetId] = useState<string | null>(null);
+  const [workspaceDragTarget, setWorkspaceDragTarget] = useState<WorkspaceDragTarget | null>(null);
   const [collapsedWorkspaceFolderIds, setCollapsedWorkspaceFolderIds] = useState<Set<string>>(() => new Set());
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
@@ -134,7 +143,7 @@ export function App() {
   const tagResultsRequestRef = useRef(0);
   const draggingIdRef = useRef("");
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
-  const workspaceDragTargetRef = useRef<string | null>(null);
+  const workspaceDragTargetRef = useRef<WorkspaceDragTarget | null>(null);
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -764,14 +773,22 @@ export function App() {
     setWorkspaces(current => current.map(workspace => (workspace.id === id ? { ...workspace, name } : workspace)));
   };
 
-  const moveWorkspaceToFolder = async (workspaceId: string, nextFolderId: string | null) => {
-    const workspace = workspaces.find(item => item.id === workspaceId);
-    if (!workspace || workspace.folderId === nextFolderId) return;
-    setWorkspaces(current =>
-      current.map(item => (item.id === workspace.id ? { ...item, folderId: nextFolderId } : item))
-    );
-    const updated = await apiPatch<Workspace>(`/api/workspaces/${workspace.id}`, { folderId: nextFolderId });
-    setWorkspaces(current => current.map(item => (item.id === updated.id ? updated : item)));
+  const moveWorkspaceOptimistically = async (workspace: Workspace, nextFolderId: string | null, position: number) => {
+    const nextPosition =
+      workspace.folderId === nextFolderId && workspace.position < position ? position - 1 : position;
+    if (workspace.folderId === nextFolderId && workspace.position === nextPosition) return;
+    const before = workspaces;
+    setWorkspaces(current => reorderWorkspaces(current, workspace.id, nextFolderId, nextPosition));
+    try {
+      await apiPatch<Workspace>(`/api/workspaces/${workspace.id}`, {
+        folderId: nextFolderId,
+        position: nextPosition
+      });
+      await loadWorkspaces();
+    } catch (error) {
+      setWorkspaces(before);
+      throw error;
+    }
   };
 
   const startWorkspaceDrag = (workspace: Workspace, event: PointerEvent<HTMLSpanElement>) => {
@@ -779,29 +796,56 @@ export function App() {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    workspaceDragTargetRef.current = workspace.folderId ?? "root";
-    setWorkspaceDragTargetId(workspace.folderId ?? "root");
+    workspaceDragTargetRef.current = {
+      folderId: workspace.folderId,
+      markerId: workspace.folderId ?? "root",
+      position: Number.MAX_SAFE_INTEGER
+    };
+    setWorkspaceDragTarget(workspaceDragTargetRef.current);
     document.body.classList.add("isDraggingWorkspace");
 
     const move = (pointerEvent: globalThis.PointerEvent) => {
+      const workspaceElement = document
+        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
+        ?.closest<HTMLElement>("[data-workspace-drop-id]");
+      if (workspaceElement && workspaceElement.dataset.workspaceDropId !== workspace.id) {
+        const placement = getWorkspaceDropPlacement(workspaceElement, pointerEvent.clientY);
+        const position = Number(workspaceElement.dataset.workspacePosition ?? "0") + (placement === "after" ? 1 : 0);
+        workspaceDragTargetRef.current = {
+          folderId: workspaceElement.dataset.workspaceFolderId || null,
+          markerId: workspaceElement.dataset.workspaceDropId ?? "",
+          overWorkspaceId: workspaceElement.dataset.workspaceDropId,
+          placement,
+          position
+        };
+        setWorkspaceDragTarget(workspaceDragTargetRef.current);
+        return;
+      }
+
       const targetElement = document
         .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
         ?.closest<HTMLElement>("[data-workspace-folder-drop-id]");
       const targetId = targetElement?.dataset.workspaceFolderDropId ?? null;
-      workspaceDragTargetRef.current = targetId;
-      setWorkspaceDragTargetId(targetId);
+      workspaceDragTargetRef.current =
+        targetId === null
+          ? null
+          : {
+              folderId: targetId === "root" ? null : targetId,
+              markerId: targetId,
+              position: Number.MAX_SAFE_INTEGER
+            };
+      setWorkspaceDragTarget(workspaceDragTargetRef.current);
     };
 
     const end = () => {
-      const targetId = workspaceDragTargetRef.current;
-      const nextFolderId = targetId === "root" ? null : targetId;
+      const target = workspaceDragTargetRef.current;
       workspaceDragTargetRef.current = null;
-      setWorkspaceDragTargetId(null);
+      setWorkspaceDragTarget(null);
       document.body.classList.remove("isDraggingWorkspace");
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      if (targetId !== null) moveWorkspaceToFolder(workspace.id, nextFolderId).catch(toError(setError));
+      if (target) moveWorkspaceOptimistically(workspace, target.folderId, target.position).catch(toError(setError));
     };
 
     window.addEventListener("pointermove", move);
@@ -924,9 +968,20 @@ export function App() {
 
   const renderWorkspaceItem = (workspace: Workspace) => (
     <div
-      className={workspace.id === workspaceId ? "workspaceItem active" : "workspaceItem"}
+      className={[
+        "workspaceItem",
+        workspace.id === workspaceId && "active",
+        workspaceDragTarget?.overWorkspaceId === workspace.id &&
+          workspaceDragTarget.placement &&
+          `drop-${workspaceDragTarget.placement}`
+      ]
+        .filter(Boolean)
+        .join(" ")}
       key={workspace.id}
       title={sidebarCollapsed ? workspace.name : undefined}
+      data-workspace-drop-id={workspace.id}
+      data-workspace-folder-id={workspace.folderId ?? ""}
+      data-workspace-position={workspace.position}
       onClick={() => selectWorkspace(workspace.id)}
     >
       <span
@@ -1013,7 +1068,7 @@ export function App() {
                 </button>
               </div>
               <div
-                className={workspaceDragTargetId === "root" ? "workspaceRootDrop active" : "workspaceRootDrop"}
+                className={workspaceDragTarget?.markerId === "root" ? "workspaceRootDrop active" : "workspaceRootDrop"}
                 data-workspace-folder-drop-id="root"
               >
                 {rootWorkspaces.map(renderWorkspaceItem)}
@@ -1023,7 +1078,9 @@ export function App() {
                 const folderWorkspaces = workspacesByFolder.get(folder.id) ?? [];
                 return (
                   <div
-                    className={workspaceDragTargetId === folder.id ? "workspaceFolder dropActive" : "workspaceFolder"}
+                    className={
+                      workspaceDragTarget?.markerId === folder.id ? "workspaceFolder dropActive" : "workspaceFolder"
+                    }
                     key={folder.id}
                     data-workspace-folder-drop-id={folder.id}
                   >
@@ -1742,6 +1799,42 @@ function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement 
   if (offset < bounds.height * 0.28) return "before";
   if (offset > bounds.height * 0.72) return "after";
   return "inside";
+}
+
+function getWorkspaceDropPlacement(element: HTMLElement, clientY: number): WorkspaceDropPlacement {
+  const bounds = element.getBoundingClientRect();
+  return clientY - bounds.top < bounds.height / 2 ? "before" : "after";
+}
+
+function reorderWorkspaces(
+  workspaces: Workspace[],
+  workspaceId: string,
+  folderId: string | null,
+  position: number
+): Workspace[] {
+  const moving = workspaces.find(workspace => workspace.id === workspaceId);
+  if (!moving) return workspaces;
+
+  const withoutMoving = workspaces.filter(workspace => workspace.id !== workspaceId);
+  const siblings = withoutMoving.filter(workspace => workspace.folderId === folderId);
+  const nextPosition = Math.max(0, Math.min(position, siblings.length));
+  const normalized = withoutMoving.map(workspace => {
+    if (workspace.folderId === moving.folderId && workspace.position > moving.position) {
+      return { ...workspace, position: workspace.position - 1 };
+    }
+    if (workspace.folderId === folderId && workspace.position >= nextPosition) {
+      return { ...workspace, position: workspace.position + 1 };
+    }
+    return workspace;
+  });
+
+  normalized.push({ ...moving, folderId, position: nextPosition });
+  return normalized.sort((a, b) => {
+    const folderCompare = (a.folderId ?? "").localeCompare(b.folderId ?? "");
+    if (folderCompare !== 0) return folderCompare;
+    if (a.position !== b.position) return a.position - b.position;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
 }
 
 function handleMarkdownShortcut(

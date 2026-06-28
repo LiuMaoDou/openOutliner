@@ -114,7 +114,7 @@ function normalizeWorkspacePositions(db: OpenOutlinerDb): void {
     const folderKey = row.folder_id === null ? "root" : String(row.folder_id);
     const position = positions.get(folderKey) ?? 0;
     positions.set(folderKey, position + 1);
-    update.run(position, row.id);
+    update.run(position, String(row.id));
   }
 }
 

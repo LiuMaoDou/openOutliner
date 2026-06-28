@@ -588,6 +588,7 @@ export class OutlinerService {
            workspaces.name AS result_workspace_name,
            workspaces.icon AS result_workspace_icon,
            workspaces.folder_id AS result_workspace_folder_id,
+           workspaces.position AS result_workspace_position,
            workspaces.root_node_id AS result_workspace_root_node_id,
            workspaces.created_at AS result_workspace_created_at,
            workspaces.updated_at AS result_workspace_updated_at
@@ -867,6 +868,7 @@ function rowToResultWorkspace(row: Row): Workspace {
     name: text(row.result_workspace_name),
     icon: text(row.result_workspace_icon),
     folderId: nullableText(row.result_workspace_folder_id),
+    position: number(row.result_workspace_position),
     rootNodeId: text(row.result_workspace_root_node_id),
     createdAt: text(row.result_workspace_created_at),
     updatedAt: text(row.result_workspace_updated_at)

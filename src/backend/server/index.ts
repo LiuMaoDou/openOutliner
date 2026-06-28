@@ -88,7 +88,18 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
 
   const workspaceMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
   if (method === "PATCH" && workspaceMatch) {
-    sendJson(res, service.updateWorkspace(workspaceMatch[1], await readJson(req)));
+    const body = await readJson<{ name?: string; folderId?: string | null; position?: number }>(req);
+    if (body.folderId !== undefined || body.position !== undefined) {
+      const current = service.getWorkspace(workspaceMatch[1]);
+      const moved = service.moveWorkspace(
+        workspaceMatch[1],
+        body.folderId !== undefined ? body.folderId : current.folderId,
+        body.position ?? Number.MAX_SAFE_INTEGER
+      );
+      sendJson(res, body.name !== undefined ? service.updateWorkspace(moved.id, { name: body.name }) : moved);
+      return;
+    }
+    sendJson(res, service.updateWorkspace(workspaceMatch[1], body));
     return;
   }
   if (method === "DELETE" && workspaceMatch) {
