@@ -5,6 +5,7 @@ export interface Workspace {
   name: string;
   icon: string;
   folderId: string | null;
+  position: number;
   rootNodeId: string;
   createdAt: string;
   updatedAt: string;

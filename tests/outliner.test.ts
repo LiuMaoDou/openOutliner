@@ -156,6 +156,39 @@ describe("OutlinerService", () => {
     expect(service.getWorkspace(workspace.id).folderId).toBeNull();
   });
 
+  it("moves workspaces within the root workspace list", () => {
+    const alpha = service.createWorkspace("Alpha");
+    const beta = service.createWorkspace("Beta");
+    const gamma = service.createWorkspace("Gamma");
+
+    service.moveWorkspace(gamma.id, null, 0);
+
+    const workspaces = service.listWorkspaces();
+    expect(workspaces.map(workspace => workspace.name)).toEqual(["Gamma", "Alpha", "Beta"]);
+    expect(workspaces.map(workspace => workspace.position)).toEqual([0, 1, 2]);
+    expect(service.getWorkspace(alpha.id).position).toBe(1);
+    expect(service.getWorkspace(beta.id).position).toBe(2);
+  });
+
+  it("moves workspaces inside folders and across folder boundaries", () => {
+    const folder = service.createWorkspaceFolder("Projects");
+    const alpha = service.createWorkspace("Alpha", undefined, folder.id);
+    const beta = service.createWorkspace("Beta", undefined, folder.id);
+    const gamma = service.createWorkspace("Gamma", undefined, folder.id);
+    const root = service.createWorkspace("Root");
+
+    service.moveWorkspace(gamma.id, folder.id, 0);
+    service.moveWorkspace(root.id, folder.id, 1);
+    service.moveWorkspace(alpha.id, null, 0);
+
+    const folderWorkspaces = service.listWorkspaces().filter(workspace => workspace.folderId === folder.id);
+    const rootWorkspaces = service.listWorkspaces().filter(workspace => workspace.folderId === null);
+    expect(folderWorkspaces.map(workspace => workspace.name)).toEqual(["Gamma", "Root", "Beta"]);
+    expect(folderWorkspaces.map(workspace => workspace.position)).toEqual([0, 1, 2]);
+    expect(rootWorkspaces.map(workspace => workspace.name)).toEqual(["Alpha"]);
+    expect(rootWorkspaces.map(workspace => workspace.position)).toEqual([0]);
+  });
+
   it("creates a workspace under a named folder", () => {
     const workspace = service.createWorkspaceInFolder("Launch Plan", "Projects", "rocket");
 

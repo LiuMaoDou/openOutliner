@@ -86,7 +86,7 @@ export class OutlinerService {
 
   listWorkspaces(): Workspace[] {
     return this.db
-      .prepare("SELECT * FROM workspaces ORDER BY created_at ASC")
+      .prepare("SELECT * FROM workspaces ORDER BY folder_id ASC, position ASC, created_at ASC")
       .all()
       .map(rowToWorkspace);
   }
@@ -147,13 +147,14 @@ export class OutlinerService {
     const rootNodeId = randomUUID();
     const workspaceIcon = normalizeWorkspaceIcon(icon);
     const normalizedFolderId = this.normalizeWorkspaceFolderId(folderId);
+    const position = this.countWorkspacesInFolder(normalizedFolderId);
 
     this.transaction(() => {
       this.db
         .prepare(
-          "INSERT INTO workspaces (id, name, icon, folder_id, root_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+          "INSERT INTO workspaces (id, name, icon, folder_id, position, root_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        .run(workspaceId, name, workspaceIcon, normalizedFolderId, rootNodeId, now, now);
+        .run(workspaceId, name, workspaceIcon, normalizedFolderId, position, rootNodeId, now, now);
       this.db
         .prepare(
           `INSERT INTO nodes
@@ -196,9 +197,55 @@ export class OutlinerService {
     return this.getWorkspace(id);
   }
 
+  moveWorkspace(id: string, folderId: string | null, position: number): Workspace {
+    const workspace = this.getWorkspace(id);
+    const nextFolderId = this.normalizeWorkspaceFolderId(folderId);
+    const targetCount = number(
+      (this.db
+        .prepare("SELECT COUNT(*) AS count FROM workspaces WHERE folder_id IS ? AND id != ?")
+        .get(nextFolderId, id) as Row).count
+    );
+    const targetPosition = clamp(position, 0, targetCount);
+    const now = timestamp();
+
+    this.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE workspaces
+           SET position = position - 1, updated_at = ?
+           WHERE folder_id IS ? AND position > ?`
+        )
+        .run(now, workspace.folderId, workspace.position);
+
+      this.db
+        .prepare(
+          `UPDATE workspaces
+           SET position = position + 1, updated_at = ?
+           WHERE folder_id IS ? AND id != ? AND position >= ?`
+        )
+        .run(now, nextFolderId, id, targetPosition);
+
+      this.db
+        .prepare("UPDATE workspaces SET folder_id = ?, position = ?, updated_at = ? WHERE id = ?")
+        .run(nextFolderId, targetPosition, now, id);
+    });
+
+    return this.getWorkspace(id);
+  }
+
   deleteWorkspace(id: string): { deleted: string } {
-    this.getWorkspace(id);
-    this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
+    const workspace = this.getWorkspace(id);
+    const now = timestamp();
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
+      this.db
+        .prepare(
+          `UPDATE workspaces
+           SET position = position - 1, updated_at = ?
+           WHERE folder_id IS ? AND position > ?`
+        )
+        .run(now, workspace.folderId, workspace.position);
+    });
     return { deleted: id };
   }
 
@@ -717,6 +764,12 @@ export class OutlinerService {
     return this.getWorkspaceFolder(folderId).id;
   }
 
+  private countWorkspacesInFolder(folderId: string | null): number {
+    return number(
+      (this.db.prepare("SELECT COUNT(*) AS count FROM workspaces WHERE folder_id IS ?").get(folderId) as Row).count
+    );
+  }
+
   private findWorkspaceFolderByName(name: string): WorkspaceFolder | null {
     const row = this.db
       .prepare("SELECT * FROM workspace_folders WHERE name = ? ORDER BY position ASC, created_at ASC LIMIT 1")
@@ -756,6 +809,7 @@ function rowToWorkspace(row: Row): Workspace {
     name: text(row.name),
     icon: text(row.icon) || "folder-tree",
     folderId: nullableText(row.folder_id),
+    position: number(row.position),
     rootNodeId: text(row.root_node_id),
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at)
