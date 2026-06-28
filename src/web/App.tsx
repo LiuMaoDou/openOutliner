@@ -7,6 +7,7 @@ import {
   ChevronRight,
   FileDown,
   FolderClosed,
+  FolderOpen,
   FolderPlus,
   FolderTree,
   Monitor,
@@ -1034,7 +1035,7 @@ export function App() {
                         aria-expanded={!isCollapsed}
                         onClick={() => toggleWorkspaceFolder(folder.id)}
                       >
-                        <FolderClosed size={14} />
+                        {isCollapsed ? <FolderClosed size={14} /> : <FolderOpen size={14} />}
                       </button>
                       <input
                         value={folder.name}
