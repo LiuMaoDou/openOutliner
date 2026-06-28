@@ -1035,7 +1035,11 @@ export function App() {
                         aria-expanded={!isCollapsed}
                         onClick={() => toggleWorkspaceFolder(folder.id)}
                       >
-                        {isCollapsed ? <FolderClosed size={14} /> : <FolderOpen size={14} />}
+                        {isCollapsed ? (
+                          <FolderClosed size={18} strokeWidth={2.2} />
+                        ) : (
+                          <FolderOpen size={18} strokeWidth={2.2} />
+                        )}
                       </button>
                       <input
                         value={folder.name}
