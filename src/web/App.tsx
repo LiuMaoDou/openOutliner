@@ -60,6 +60,7 @@ import {
   updateNode,
   insertNode,
   removeNode,
+  replaceNode,
   moveNode,
   moveNodeInside,
   getNode,
@@ -459,15 +460,18 @@ export function App() {
         return;
       }
       const draft = flatStateRef.current ? getNode(flatStateRef.current, tempId) : undefined;
+      const draftParentId = draft?.parentId ?? parentId;
+      const createdPosition = created.position ?? position;
+      const draftPosition = draft?.position ?? createdPosition;
       const replacement: FlatNodeData = {
         id: created.id,
         workspaceId: created.workspaceId,
-        parentId,
-        position: created.position ?? draft?.position ?? 0,
-        title: created.title ?? "",
-        body: created.body ?? "",
-        done: created.done ?? false,
-        collapsed: created.collapsed ?? false,
+        parentId: draftParentId,
+        position: draftPosition,
+        title: draft?.title ?? created.title ?? "",
+        body: draft?.body ?? created.body ?? "",
+        done: draft?.done ?? created.done ?? false,
+        collapsed: draft?.collapsed ?? created.collapsed ?? false,
         createdAt: created.createdAt ?? new Date().toISOString(),
         updatedAt: created.updatedAt ?? new Date().toISOString(),
         tags: draft?.tags ?? created.tags ?? [],
@@ -475,14 +479,26 @@ export function App() {
         childIds: draft?.childIds ?? [],
       };
       const currentRef = flatStateRef.current ?? newState;
-      const withoutTemp = removeNode(currentRef, tempId);
-      const withCreated = insertNode(withoutTemp, parentId, replacement, position);
+      const withCreated = draft
+        ? replaceNode(currentRef, tempId, replacement)
+        : insertNode(removeNode(currentRef, tempId), parentId, replacement, position);
       // Batch: state + visible + selected in one shot
       setFlatState(withCreated);
       setVisibleIds(computeVisibleIds(withCreated));
       flatStateRef.current = withCreated;
       setSelectedId(created.id);
       focusWhenReady(created.id);
+      if (
+        draft &&
+        draftParentId &&
+        !draftParentId.startsWith("temp-") &&
+        (draftParentId !== parentId || draftPosition !== createdPosition)
+      ) {
+        apiPost(`/api/nodes/${created.id}/move`, {
+          parentId: draftParentId,
+          position: draftPosition
+        }).catch(toError(setError));
+      }
       if (draft && (draft.title || draft.body || draft.done || draft.collapsed)) {
         patchNode(created.id, {
           title: draft.title,
@@ -574,6 +590,7 @@ export function App() {
     flatStateRef.current = newState;
     selectNode(currentSource.id);
     restoreScroll();
+    if (currentSource.id.startsWith("temp-") || parentId.startsWith("temp-")) return;
 
     try {
       await apiPost(`/api/nodes/${currentSource.id}/move`, { parentId, position: nextPosition });
@@ -704,9 +721,11 @@ export function App() {
       flatStateRef.current = newState;
       selectNode(currentSource.id);
       restoreScroll();
+      const moveIncludesTempNode = currentSource.id.startsWith("temp-") || currentTarget.id.startsWith("temp-");
 
       try {
         if (currentTarget.collapsed) await patchNode(currentTarget.id, { collapsed: false });
+        if (moveIncludesTempNode) return;
         await apiPost(`/api/nodes/${currentSource.id}/move`, {
           parentId: currentTarget.id,
           position: currentTarget.childIds.length

@@ -17,7 +17,8 @@ import {
   fromNestedTree,
   moveNode as moveFlatNode,
   moveNodeInside,
-  computeVisibleIds
+  computeVisibleIds,
+  replaceNode
 } from "../src/web/flatTree.js";
 import {
   insertTreeNode,
@@ -359,6 +360,28 @@ describe("tree operations", () => {
     expect(next.nodes["b"].childIds).toEqual(["b-child", "a"]);
     expect(next.nodes["b-child"].title).toBe("Existing child");
     expect(computeVisibleIds(next)).toEqual(["b", "b-child", "a"]);
+  });
+
+  it("replaces optimistic flat tree nodes without losing local moves", () => {
+    const { state } = fromNestedTree({
+      ...testTree(),
+      children: [
+        testNode("a", "Alpha", "root", 0),
+        testNode("temp-new", "Draft", "root", 1)
+      ]
+    });
+    const moved = moveFlatNode(state, "temp-new", "a", 0);
+
+    const next = replaceNode(moved, "temp-new", {
+      ...moved.nodes["temp-new"],
+      id: "created-new"
+    });
+
+    expect(next.nodes["created-new"].parentId).toBe("a");
+    expect(next.nodes["created-new"].position).toBe(0);
+    expect(next.nodes["a"].childIds).toEqual(["created-new"]);
+    expect(next.nodes["temp-new"]).toBeUndefined();
+    expect(computeVisibleIds(next)).toEqual(["a", "created-new"]);
   });
 });
 

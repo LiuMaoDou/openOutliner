@@ -178,6 +178,47 @@ export function removeNode(
   return next;
 }
 
+export function replaceNode(
+  state: FlatTreeState,
+  id: string,
+  replacement: FlatNodeData
+): FlatTreeState {
+  const current = state.nodes[id];
+  if (!current) return state;
+  if (id !== replacement.id && state.nodes[replacement.id]) return state;
+
+  const next = cloneState(state);
+  const replacementParentId = replacement.parentId ?? current.parentId;
+  const replacementNode = {
+    ...replacement,
+    parentId: replacementParentId,
+    childIds: [...replacement.childIds]
+  };
+
+  delete next.nodes[id];
+  next.nodes[replacement.id] = replacementNode;
+
+  if (replacementParentId && next.nodes[replacementParentId]) {
+    cloneNode(next, replacementParentId);
+    next.nodes[replacementParentId].childIds = next.nodes[replacementParentId].childIds.map(childId =>
+      childId === id ? replacement.id : childId
+    );
+    normalizePositions(next, replacementParentId);
+  }
+
+  for (const childId of replacementNode.childIds) {
+    const child = next.nodes[childId];
+    if (child?.parentId === id) {
+      next.nodes[childId] = { ...child, parentId: replacement.id };
+    }
+  }
+
+  return {
+    nodes: next.nodes,
+    rootId: state.rootId === id ? replacement.id : state.rootId
+  };
+}
+
 export function moveNode(
   state: FlatTreeState,
   id: string,
