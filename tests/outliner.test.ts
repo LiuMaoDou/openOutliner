@@ -10,6 +10,7 @@ import { OutlinerService } from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import {
   createWorkspaceRequestBody,
+  shouldIgnoreTextInputKeyDown,
   nextCollapsedWorkspaceFolderIds,
   splitTitleAtSelection
 } from "../src/web/App.js";
@@ -276,6 +277,13 @@ describe("OutlinerService", () => {
 });
 
 describe("tree operations", () => {
+  it("ignores Enter shortcuts while an IME composition is active", () => {
+    expect(shouldIgnoreTextInputKeyDown({ key: "Enter", isComposing: true })).toBe(true);
+    expect(shouldIgnoreTextInputKeyDown({ key: "Enter", nativeEvent: { isComposing: true } })).toBe(true);
+    expect(shouldIgnoreTextInputKeyDown({ key: "Enter", nativeEvent: { keyCode: 229 } })).toBe(true);
+    expect(shouldIgnoreTextInputKeyDown({ key: "Enter" })).toBe(false);
+  });
+
   it("splits node titles at the selection start", () => {
     expect(splitTitleAtSelection("Alpha Beta", 6)).toEqual({
       currentTitle: "Alpha ",

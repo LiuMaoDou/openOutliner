@@ -1022,6 +1022,7 @@ export function App() {
           onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
           onFocus={() => selectWorkspace(workspace.id)}
           onKeyDown={event => {
+            if (shouldIgnoreTextInputKeyDown(event)) return;
             if (event.key === "Enter") event.currentTarget.blur();
           }}
         />
@@ -1122,6 +1123,7 @@ export function App() {
                         onChange={event => updateWorkspaceFolderDraft(folder.id, event.target.value)}
                         onBlur={event => updateWorkspaceFolderName(folder, event.target.value).catch(toError(setError))}
                         onKeyDown={event => {
+                          if (shouldIgnoreTextInputKeyDown(event)) return;
                           if (event.key === "Enter") event.currentTarget.blur();
                         }}
                       />
@@ -1457,6 +1459,7 @@ export function App() {
                         value={tagName}
                         onChange={event => setTagName(event.target.value)}
                         onKeyDown={event => {
+                          if (shouldIgnoreTextInputKeyDown(event)) return;
                           if (event.key === "Enter") addTag().catch(toError(setError));
                         }}
                         placeholder="Tag"
@@ -1493,6 +1496,7 @@ export function App() {
                             onChange={event => updateTagDraft(tag.id, event.target.value)}
                             onBlur={() => saveTag(tag).catch(toError(setError))}
                             onKeyDown={event => {
+                              if (shouldIgnoreTextInputKeyDown(event)) return;
                               if (event.key === "Enter") event.currentTarget.blur();
                             }}
                           />
@@ -1512,6 +1516,7 @@ export function App() {
                         value={managedTagName}
                         onChange={event => setManagedTagName(event.target.value)}
                         onKeyDown={event => {
+                          if (shouldIgnoreTextInputKeyDown(event)) return;
                           if (event.key === "Enter") createManagedTag().catch(toError(setError));
                         }}
                         placeholder="New tag"
@@ -1701,6 +1706,7 @@ function NodeRow({
             onCommit({ title: event.target.value });
           }}
           onKeyDown={event => {
+            if (shouldIgnoreTextInputKeyDown(event)) return;
             if (handleMarkdownShortcut(event, localTitle, onPatchLocal)) return;
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -1959,6 +1965,13 @@ export function splitTitleAtSelection(title: string, selectionStart?: number | n
     currentTitle: title.slice(0, splitIndex),
     nextTitle: title.slice(splitIndex)
   };
+}
+
+export function shouldIgnoreTextInputKeyDown(event: {
+  isComposing?: boolean;
+  nativeEvent?: { isComposing?: boolean; keyCode?: number };
+}) {
+  return Boolean(event.isComposing || event.nativeEvent?.isComposing || event.nativeEvent?.keyCode === 229);
 }
 
 function getPreviewSelectionStart(container: HTMLElement, clientX: number, clientY: number, title: string) {
