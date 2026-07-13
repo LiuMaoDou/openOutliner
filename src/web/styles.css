@@ -1339,8 +1339,11 @@ textarea:focus-visible {
 }
 
 .nodeChildCount {
+  align-self: start;
+  padding-top: 4px;
   color: var(--muted-foreground);
   font-size: 0.76rem;
+  line-height: 1.35;
   white-space: nowrap;
 }
 
