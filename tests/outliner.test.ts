@@ -10,6 +10,7 @@ import { OutlinerService } from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import {
   createWorkspaceRequestBody,
+  getChildCountLabel,
   shouldIgnoreTextInputKeyDown,
   nextCollapsedWorkspaceFolderIds,
   splitTitleAtSelection
@@ -586,6 +587,13 @@ describe("workspace folder collapse state", () => {
     const collapsed = nextCollapsedWorkspaceFolderIds(new Set<string>(), "folder-a");
     expect([...collapsed]).toEqual(["folder-a"]);
     expect([...nextCollapsedWorkspaceFolderIds(collapsed, "folder-a")]).toEqual([]);
+  });
+});
+
+describe("direct child count label", () => {
+  it("returns a label only for nodes with direct children", () => {
+    expect(getChildCountLabel(3)).toBe("3 个子项");
+    expect(getChildCountLabel(0)).toBeNull();
   });
 });
 

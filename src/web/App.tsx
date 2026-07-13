@@ -80,6 +80,9 @@ function getNodeDepth(state: FlatTreeState, id: string): number {
   return depth;
 }
 
+export function getChildCountLabel(childCount: number): string | null {
+  return childCount > 0 ? `${childCount} 个子项` : null;
+}
 
 interface LoadTreeOptions {
   preserveSelection?: boolean;
@@ -1642,6 +1645,7 @@ function NodeRow({
   ]
     .filter(Boolean)
     .join(" ");
+  const childCountLabel = getChildCountLabel(node.childIds.length);
   useEffect(() => {
     const input = titleInputRef.current;
     if (!input) return;
@@ -1775,6 +1779,7 @@ function NodeRow({
           )}
         </button>
       </div>
+      {childCountLabel ? <span className="nodeChildCount">{childCountLabel}</span> : null}
       <div className="nodeTags">
         {(node.tags || []).map(tag => (
           <button type="button" key={tag.id} onClick={() => onTagClick(tag)}>

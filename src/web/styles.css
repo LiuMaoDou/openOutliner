@@ -1338,6 +1338,12 @@ textarea:focus-visible {
   gap: 5px;
 }
 
+.nodeChildCount {
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
 .nodeTags button,
 .tagPill {
   display: inline-flex;
