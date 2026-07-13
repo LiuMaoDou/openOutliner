@@ -983,7 +983,7 @@ textarea:focus-visible {
 .nodeRow {
   --depth: 0;
   display: grid;
-  grid-template-columns: 26px 24px minmax(120px, 1fr) auto 30px;
+  grid-template-columns: 26px 24px minmax(120px, 1fr) auto auto 30px;
   align-items: center;
   gap: 3px;
   min-height: 36px;
@@ -1886,7 +1886,7 @@ textarea:focus-visible {
   }
 
   .nodeRow {
-    grid-template-columns: 28px 28px minmax(0, 1fr) 32px;
+    grid-template-columns: 28px 28px minmax(0, 1fr) auto 32px;
     gap: 3px;
     min-height: 42px;
     padding-left: min(calc(var(--depth) * 14px), 64px);
@@ -1991,7 +1991,7 @@ textarea:focus-visible {
   }
 
   .nodeRow {
-    grid-template-columns: 24px 24px minmax(0, 1fr) 28px;
+    grid-template-columns: 24px 24px minmax(0, 1fr) auto 28px;
     padding-left: min(calc(var(--depth) * 10px), 42px);
   }
 
