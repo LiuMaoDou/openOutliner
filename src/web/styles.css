@@ -1342,7 +1342,7 @@ textarea:focus-visible {
   align-self: start;
   padding-top: 4px;
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: Menlo, Consolas, monospace;
   font-size: 0.76rem;
   line-height: 1.35;
   white-space: nowrap;
