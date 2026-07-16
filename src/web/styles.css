@@ -1386,8 +1386,8 @@ textarea:focus-visible {
 }
 
 .nodeChildCount {
-  align-self: start;
-  padding-top: 4px;
+  align-self: center;
+  padding-top: 0;
   color: var(--muted-foreground);
   font-family: Menlo, Consolas, monospace;
   font-size: 0.76rem;
