@@ -83,7 +83,7 @@ function getNodeDepth(state: FlatTreeState, id: string): number {
 }
 
 export function getChildCountLabel(childCount: number): string | null {
-  return childCount > 0 ? `（${childCount}）` : null;
+  return childCount > 0 ? String(childCount) : null;
 }
 
 export function formatNodeDate(value: string): string {

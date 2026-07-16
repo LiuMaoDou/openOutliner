@@ -631,7 +631,7 @@ describe("workspace hierarchy collapse state", () => {
 
 describe("direct child count label", () => {
   it("returns a label only for nodes with direct children", () => {
-    expect(getChildCountLabel(3)).toBe("（3）");
+    expect(getChildCountLabel(3)).toBe("3");
     expect(getChildCountLabel(0)).toBeNull();
   });
 });
