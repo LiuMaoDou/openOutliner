@@ -40,6 +40,7 @@ export interface OutlineTreeNode {
   position: number;
   title: string;
   body: string;
+  dueDate: string | null;
   done: boolean;
   collapsed: boolean;
   createdAt: string;

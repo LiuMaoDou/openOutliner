@@ -10,6 +10,7 @@ import { OutlinerService } from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import {
   createWorkspaceRequestBody,
+  formatNodeDate,
   getChildCountLabel,
   nextCollapsedWorkspaceIds,
   shouldIgnoreTextInputKeyDown,
@@ -58,6 +59,15 @@ describe("OutlinerService", () => {
 
     expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Gamma", "Alpha"]);
     expect(service.listChildren(alpha.id).map(node => node.title)).toEqual(["Beta"]);
+  });
+
+  it("stores and clears an optional node date", () => {
+    const workspace = service.createWorkspace("Dates");
+    const node = service.createNode({ parentId: workspace.rootNodeId, title: "Review" });
+
+    expect(service.updateNode(node.id, { dueDate: "2026-07-18" }).dueDate).toBe("2026-07-18");
+    expect(() => service.updateNode(node.id, { dueDate: "July 18" })).toThrow("YYYY-MM-DD");
+    expect(service.updateNode(node.id, { dueDate: null }).dueDate).toBeNull();
   });
 
   it("attaches tags and field values to tree nodes", () => {
@@ -623,6 +633,12 @@ describe("direct child count label", () => {
   it("returns a label only for nodes with direct children", () => {
     expect(getChildCountLabel(3)).toBe("（3）");
     expect(getChildCountLabel(0)).toBeNull();
+  });
+});
+
+describe("node date label", () => {
+  it("formats stored ISO dates for the compact date chip", () => {
+    expect(formatNodeDate("2026-07-18")).toBe("2026/07/18");
   });
 });
 

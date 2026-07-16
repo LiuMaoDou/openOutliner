@@ -2,6 +2,8 @@ import {
   Check,
   CircleHelp,
   CircleCheck,
+  CalendarPlus,
+  CalendarX2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -82,6 +84,10 @@ function getNodeDepth(state: FlatTreeState, id: string): number {
 
 export function getChildCountLabel(childCount: number): string | null {
   return childCount > 0 ? `（${childCount}）` : null;
+}
+
+export function formatNodeDate(value: string): string {
+  return value.replaceAll("-", "/");
 }
 
 interface LoadTreeOptions {
@@ -449,6 +455,7 @@ export function App() {
       position,
       title,
       body: "",
+      dueDate: null,
       done: false,
       collapsed: false,
       createdAt: new Date().toISOString(),
@@ -488,6 +495,7 @@ export function App() {
         position: draftPosition,
         title: draft?.title ?? created.title ?? "",
         body: draft?.body ?? created.body ?? "",
+        dueDate: draft?.dueDate ?? created.dueDate ?? null,
         done: draft?.done ?? created.done ?? false,
         collapsed: draft?.collapsed ?? created.collapsed ?? false,
         createdAt: created.createdAt ?? new Date().toISOString(),
@@ -517,10 +525,11 @@ export function App() {
           position: draftPosition
         }).catch(toError(setError));
       }
-      if (draft && (draft.title || draft.body || draft.done || draft.collapsed)) {
+      if (draft && (draft.title || draft.body || draft.dueDate || draft.done || draft.collapsed)) {
         patchNode(created.id, {
           title: draft.title,
           body: draft.body,
+          dueDate: draft.dueDate,
           done: draft.done,
           collapsed: draft.collapsed
         }).catch(toError(setError));
@@ -1691,6 +1700,7 @@ function NodeRow({
   onDelete: () => Promise<void>;
 }) {
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
   const [localTitle, setLocalTitle] = useState(node.title);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1735,6 +1745,19 @@ function NodeRow({
     .filter(Boolean)
     .join(" ");
   const childCountLabel = getChildCountLabel(node.childIds.length);
+  const openDatePicker = () => {
+    const input = dateInputRef.current;
+    if (!input) return;
+    try {
+      input.showPicker();
+    } catch {
+      input.focus();
+    }
+  };
+  const commitDueDate = (dueDate: string | null) => {
+    onPatchLocal({ dueDate });
+    onCommit({ dueDate });
+  };
   useEffect(() => {
     const input = titleInputRef.current;
     if (!input) return;
@@ -1748,7 +1771,12 @@ function NodeRow({
       style={{ "--depth": depth } as CSSProperties}
       onClick={event => {
         const target = event.target as HTMLElement;
-        if (target.closest(".disclosureButton") || target.closest(".dragHandle") || target.closest(".iconButton.danger")) return;
+        if (
+          target.closest(".disclosureButton") ||
+          target.closest(".dragHandle") ||
+          target.closest(".iconButton.danger") ||
+          target.closest(".nodeDateControl")
+        ) return;
         const input = titleInputRef.current;
         if (input) {
           onSelect();
@@ -1867,6 +1895,56 @@ function NodeRow({
             <span className="nodeTitlePlaceholder">Untitled</span>
           )}
         </button>
+      </div>
+      <div className="nodeDateControl">
+        <input
+          ref={dateInputRef}
+          className="nodeDatePicker"
+          type="date"
+          value={node.dueDate ?? ""}
+          aria-label={`Date for ${node.title || "Untitled"}`}
+          onChange={event => commitDueDate(event.target.value || null)}
+        />
+        {node.dueDate ? (
+          <>
+            <button
+              className="nodeDateChip"
+              type="button"
+              title="Change date"
+              onClick={event => {
+                event.stopPropagation();
+                openDatePicker();
+              }}
+            >
+              {formatNodeDate(node.dueDate)}
+            </button>
+            <button
+              className="nodeDateClearButton"
+              type="button"
+              title="Remove date"
+              aria-label="Remove date"
+              onClick={event => {
+                event.stopPropagation();
+                commitDueDate(null);
+              }}
+            >
+              <CalendarX2 size={14} />
+            </button>
+          </>
+        ) : (
+          <button
+            className="nodeDateAddButton"
+            type="button"
+            title="Add date"
+            aria-label="Add date"
+            onClick={event => {
+              event.stopPropagation();
+              openDatePicker();
+            }}
+          >
+            <CalendarPlus size={17} />
+          </button>
+        )}
       </div>
       {childCountLabel ? <span className="nodeChildCount">{childCountLabel}</span> : null}
       <div className="nodeTags">

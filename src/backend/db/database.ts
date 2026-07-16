@@ -51,6 +51,7 @@ function migrate(db: OpenOutlinerDb): void {
       position INTEGER NOT NULL DEFAULT 0,
       title TEXT NOT NULL,
       body TEXT NOT NULL DEFAULT '',
+      due_date TEXT,
       done INTEGER NOT NULL DEFAULT 0,
       collapsed INTEGER NOT NULL DEFAULT 0,
       deleted_at TEXT,
@@ -102,6 +103,7 @@ function migrate(db: OpenOutlinerDb): void {
   ensureColumn(db, "workspaces", "folder_id", "TEXT REFERENCES workspace_folders(id) ON DELETE SET NULL");
   ensureColumn(db, "workspaces", "parent_workspace_id", "TEXT REFERENCES workspaces(id) ON DELETE SET NULL");
   ensureColumn(db, "workspaces", "position", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "nodes", "due_date", "TEXT");
   normalizeWorkspacePositions(db);
 }
 

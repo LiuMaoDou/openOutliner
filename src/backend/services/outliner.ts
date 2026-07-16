@@ -360,6 +360,10 @@ export class OutlinerService {
       sets.push("body = ?");
       values.push(input.body);
     }
+    if (input.dueDate !== undefined) {
+      sets.push("due_date = ?");
+      values.push(normalizeDueDate(input.dueDate));
+    }
     if (input.done !== undefined) {
       sets.push("done = ?");
       values.push(input.done ? 1 : 0);
@@ -888,11 +892,20 @@ function rowToNode(row: Row): OutlineNode {
     position: number(row.position),
     title: text(row.title),
     body: text(row.body),
+    dueDate: nullableText(row.due_date),
     done: Boolean(number(row.done)),
     collapsed: Boolean(number(row.collapsed)),
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at)
   };
+}
+
+function normalizeDueDate(value: string | null): string | null {
+  if (value === null) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+    throw new ValidationError("Date must use the YYYY-MM-DD format.");
+  }
+  return value;
 }
 
 function rowToTag(row: Row): Tag {

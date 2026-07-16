@@ -27,6 +27,7 @@ export interface OutlineNode {
   position: number;
   title: string;
   body: string;
+  dueDate: string | null;
   done: boolean;
   collapsed: boolean;
   createdAt: string;
@@ -81,6 +82,7 @@ export interface CreateNodeInput {
 export interface UpdateNodeInput {
   title?: string;
   body?: string;
+  dueDate?: string | null;
   done?: boolean;
   collapsed?: boolean;
 }
