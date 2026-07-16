@@ -1192,7 +1192,7 @@ export function App() {
                 className={workspaceDragTarget?.markerId === "root" ? "workspaceRootDrop active" : "workspaceRootDrop"}
                 data-workspace-folder-drop-id="root"
               >
-                {rootWorkspaces.map(renderWorkspaceItem)}
+                {rootWorkspaces.map(workspace => renderWorkspaceItem(workspace))}
               </div>
               {workspaceFolders.map(folder => {
                 const isCollapsed = collapsedWorkspaceFolderIds.has(folder.id);
@@ -1243,7 +1243,7 @@ export function App() {
                         <Trash2 size={13} />
                       </button>
                     </div>
-                    {!isCollapsed && folderWorkspaces.map(renderWorkspaceItem)}
+                    {!isCollapsed && folderWorkspaces.map(workspace => renderWorkspaceItem(workspace))}
                     {!isCollapsed && folderWorkspaces.length === 0 && (
                       <div className="workspaceFolderEmpty">Empty folder</div>
                     )}
@@ -1252,7 +1252,7 @@ export function App() {
               })}
             </>
           ) : (
-            workspaces.filter(workspace => !workspace.parentWorkspaceId).map(renderWorkspaceItem)
+            workspaces.filter(workspace => !workspace.parentWorkspaceId).map(workspace => renderWorkspaceItem(workspace))
           )}
         </div>
       </aside>
