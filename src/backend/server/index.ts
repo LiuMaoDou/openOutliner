@@ -74,8 +74,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   }
 
   if (method === "POST" && path === "/api/workspaces") {
-    const body = await readJson<{ name?: string; icon?: string; folderId?: string | null }>(req);
-    sendJson(res, service.createWorkspace(body.name?.trim() || "Untitled Workspace", body.icon, body.folderId), 201);
+    const body = await readJson<{ name?: string; icon?: string; folderId?: string | null; parentWorkspaceId?: string | null }>(req);
+    sendJson(
+      res,
+      service.createWorkspace(body.name?.trim() || "Untitled Workspace", body.icon, body.folderId, body.parentWorkspaceId),
+      201
+    );
     return;
   }
 
@@ -88,13 +92,14 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
 
   const workspaceMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
   if (method === "PATCH" && workspaceMatch) {
-    const body = await readJson<{ name?: string; folderId?: string | null; position?: number }>(req);
-    if (body.folderId !== undefined || body.position !== undefined) {
+    const body = await readJson<{ name?: string; folderId?: string | null; parentWorkspaceId?: string | null; position?: number }>(req);
+    if (body.folderId !== undefined || body.parentWorkspaceId !== undefined || body.position !== undefined) {
       const current = service.getWorkspace(workspaceMatch[1]);
       const moved = service.moveWorkspace(
         workspaceMatch[1],
         body.folderId !== undefined ? body.folderId : current.folderId,
-        body.position ?? Number.MAX_SAFE_INTEGER
+        body.position ?? Number.MAX_SAFE_INTEGER,
+        body.parentWorkspaceId !== undefined ? body.parentWorkspaceId : current.parentWorkspaceId
       );
       sendJson(res, body.name !== undefined ? service.updateWorkspace(moved.id, { name: body.name }) : moved);
       return;
