@@ -1125,23 +1125,37 @@ textarea:focus-visible {
   background: var(--success);
 }
 
-.dragHandle.collapsed .nodeDot {
+.dark .dragHandle.collapsed .nodeDot {
   position: relative;
-  width: 14px;
-  height: 14px;
-  background: #ccc;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  background: #3f3f46;
+  border: 1px solid rgba(161, 161, 170, 0.28);
   border-radius: 999px;
 }
-.dragHandle.collapsed .nodeDot::after {
+
+.dark .dragHandle.collapsed .nodeDot::after {
   content: "";
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   transform: translate(-50%, -50%);
   border-radius: 999px;
-  background: #333;
+  background: #a1a1aa;
+}
+
+.dark .dragHandle.collapsed:hover:not(:disabled) .nodeDot,
+.dark .dragHandle.collapsed:focus-visible .nodeDot {
+  background: #52525b;
+  border-color: rgba(161, 161, 170, 0.42);
+}
+
+.dark .dragHandle.collapsed:hover:not(:disabled) .nodeDot::after,
+.dark .dragHandle.collapsed:focus-visible .nodeDot::after {
+  background: #e4e4e7;
 }
 
 .nodeRow:hover .dragHandle,
