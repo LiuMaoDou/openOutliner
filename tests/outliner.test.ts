@@ -159,6 +159,25 @@ describe("OutlinerService", () => {
     expect(service.getWorkspace(workspace.id).folderId).toBeNull();
   });
 
+  it("nests workspaces, prevents cycles, and promotes children when deleting a parent", () => {
+    const before = service.createWorkspace("Before");
+    const parent = service.createWorkspace("Parent");
+    const child = service.createWorkspace("Child");
+    const after = service.createWorkspace("After");
+
+    const nested = service.updateWorkspace(child.id, { parentWorkspaceId: parent.id } as never);
+    expect((nested as typeof nested & { parentWorkspaceId: string | null }).parentWorkspaceId).toBe(parent.id);
+    expect(nested.folderId).toBeNull();
+    expect(() => service.moveWorkspace(parent.id, null, 0, child.id)).toThrow("cannot be moved into its descendant");
+
+    service.deleteWorkspace(parent.id);
+
+    const workspaces = service.listWorkspaces();
+    expect(workspaces.map(workspace => workspace.name)).toEqual([before.name, child.name, after.name]);
+    expect(workspaces.map(workspace => workspace.position)).toEqual([0, 1, 2]);
+    expect(service.getWorkspace(child.id).parentWorkspaceId).toBeNull();
+  });
+
   it("moves workspaces within the root workspace list", () => {
     const alpha = service.createWorkspace("Alpha");
     const beta = service.createWorkspace("Beta");

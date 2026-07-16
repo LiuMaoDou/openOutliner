@@ -3,6 +3,7 @@ export interface Workspace {
   name: string;
   icon: string;
   folderId: string | null;
+  parentWorkspaceId: string | null;
   position: number;
   rootNodeId: string;
   createdAt: string;

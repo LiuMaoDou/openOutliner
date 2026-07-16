@@ -37,6 +37,7 @@ function migrate(db: OpenOutlinerDb): void {
       name TEXT NOT NULL,
       icon TEXT NOT NULL DEFAULT 'folder-tree',
       folder_id TEXT REFERENCES workspace_folders(id) ON DELETE SET NULL,
+      parent_workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
       position INTEGER NOT NULL DEFAULT 0,
       root_node_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -99,21 +100,24 @@ function migrate(db: OpenOutlinerDb): void {
   `);
   ensureColumn(db, "workspaces", "icon", "TEXT NOT NULL DEFAULT 'folder-tree'");
   ensureColumn(db, "workspaces", "folder_id", "TEXT REFERENCES workspace_folders(id) ON DELETE SET NULL");
+  ensureColumn(db, "workspaces", "parent_workspace_id", "TEXT REFERENCES workspaces(id) ON DELETE SET NULL");
   ensureColumn(db, "workspaces", "position", "INTEGER NOT NULL DEFAULT 0");
   normalizeWorkspacePositions(db);
 }
 
 function normalizeWorkspacePositions(db: OpenOutlinerDb): void {
   const rows = db
-    .prepare("SELECT id, folder_id FROM workspaces ORDER BY folder_id ASC, position ASC, created_at ASC")
-    .all() as Array<{ id: unknown; folder_id: unknown }>;
+    .prepare("SELECT id, folder_id, parent_workspace_id FROM workspaces ORDER BY parent_workspace_id ASC, folder_id ASC, position ASC, created_at ASC")
+    .all() as Array<{ id: unknown; folder_id: unknown; parent_workspace_id: unknown }>;
   const positions = new Map<string, number>();
   const update = db.prepare("UPDATE workspaces SET position = ? WHERE id = ?");
 
   for (const row of rows) {
-    const folderKey = row.folder_id === null ? "root" : String(row.folder_id);
-    const position = positions.get(folderKey) ?? 0;
-    positions.set(folderKey, position + 1);
+    const containerKey = row.parent_workspace_id === null
+      ? row.folder_id === null ? "root" : `folder:${String(row.folder_id)}`
+      : `workspace:${String(row.parent_workspace_id)}`;
+    const position = positions.get(containerKey) ?? 0;
+    positions.set(containerKey, position + 1);
     update.run(position, String(row.id));
   }
 }
