@@ -189,7 +189,13 @@ export function App() {
       setSelectedId("");
       return;
     }
-    const next = await apiGet<OutlineTreeNode>(`/api/workspaces/${id}/tree`);
+    let next: OutlineTreeNode;
+    try {
+      next = await apiGet<OutlineTreeNode>(`/api/workspaces/${id}/tree`);
+    } catch (error) {
+      if (requestId !== treeRequestRef.current || id !== workspaceIdRef.current) return;
+      throw error;
+    }
     if (requestId !== treeRequestRef.current || id !== workspaceIdRef.current) return;
     const { state, visibleIds: vids } = fromNestedTree(next);
     setFlatState(state);
@@ -206,7 +212,13 @@ export function App() {
       setTags([]);
       return;
     }
-    const next = await apiGet<Tag[]>(`/api/tags?workspaceId=${id}`);
+    let next: Tag[];
+    try {
+      next = await apiGet<Tag[]>(`/api/tags?workspaceId=${id}`);
+    } catch (error) {
+      if (requestId !== tagsRequestRef.current || id !== workspaceIdRef.current) return;
+      throw error;
+    }
     if (requestId !== tagsRequestRef.current || id !== workspaceIdRef.current) return;
     setTags(next);
   }, []);
@@ -966,18 +978,18 @@ export function App() {
 
   const deleteWorkspace = async (workspace: Workspace) => {
     if (!window.confirm(`Delete workspace "${workspace.name}"?`)) return;
-    await apiDelete(`/api/workspaces/${workspace.id}`);
-    await loadWorkspaces();
-    if (workspace.id === workspaceId) {
+    const wasSelected = workspace.id === workspaceIdRef.current;
+    if (wasSelected) {
       treeRequestRef.current += 1;
       tagsRequestRef.current += 1;
       tagResultsRequestRef.current += 1;
-      setFlatState(null);
-      setSelectedId("");
-      setTags([]);
-      setActiveTagFilter("");
-      setTagResults([]);
     }
+    await apiDelete(`/api/workspaces/${workspace.id}`);
+    if (wasSelected) {
+      selectWorkspace(nextWorkspaceIdAfterDelete(workspaces, workspace.id));
+      setError("");
+    }
+    await loadWorkspaces();
   };
 
   const addTag = async () => {
@@ -2307,6 +2319,10 @@ export function createWorkspaceRequestBody(
         : selectedWorkspace?.folderId ?? null,
     parentWorkspaceId: nextParentWorkspaceId
   };
+}
+
+export function nextWorkspaceIdAfterDelete(workspaces: Workspace[], deletedWorkspaceId: string): string {
+  return workspaces.find(workspace => workspace.id !== deletedWorkspaceId)?.id ?? "";
 }
 
 export function nextCollapsedWorkspaceFolderIds(current: Set<string>, folderId: string): Set<string> {

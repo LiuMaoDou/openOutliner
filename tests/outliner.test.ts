@@ -12,6 +12,7 @@ import {
   createWorkspaceRequestBody,
   formatNodeDate,
   getChildCountLabel,
+  nextWorkspaceIdAfterDelete,
   nextCollapsedWorkspaceIds,
   shouldIgnoreTextInputKeyDown,
   nextCollapsedWorkspaceFolderIds,
@@ -617,6 +618,19 @@ describe("workspace creation request body", () => {
       folderId: "current-folder",
       parentWorkspaceId: null
     });
+  });
+});
+
+describe("workspace selection after deletion", () => {
+  it("selects a remaining workspace when the current workspace is deleted", () => {
+    expect(nextWorkspaceIdAfterDelete([
+      { id: "deleted" },
+      { id: "next" }
+    ] as never, "deleted")).toBe("next");
+  });
+
+  it("clears the selection when the final workspace is deleted", () => {
+    expect(nextWorkspaceIdAfterDelete([{ id: "deleted" }] as never, "deleted")).toBe("");
   });
 });
 
