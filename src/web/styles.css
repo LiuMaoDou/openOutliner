@@ -1144,7 +1144,7 @@ textarea:focus-visible {
 }
 
 .light .dragHandle.collapsed .nodeDot::before {
-  background: rgba(113, 113, 122, 0.2);
+  background: rgba(113, 113, 122, 0.32);
 }
 
 .dark .dragHandle.collapsed .nodeDot {
@@ -1152,7 +1152,7 @@ textarea:focus-visible {
 }
 
 .dark .dragHandle.collapsed .nodeDot::before {
-  background: rgba(161, 161, 170, 0.24);
+  background: rgba(161, 161, 170, 0.36);
 }
 
 .nodeRow:hover .dragHandle,
