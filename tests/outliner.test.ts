@@ -604,11 +604,18 @@ describe("workspace creation request body", () => {
     });
   });
 
-  it("creates a child of the selected workspace when no explicit container is provided", () => {
-    expect(createWorkspaceRequestBody({ id: "current-workspace", folderId: "current-folder" }, undefined)).toMatchObject({
+  it("creates a sibling of the selected workspace when no explicit container is provided", () => {
+    expect(createWorkspaceRequestBody({ folderId: "current-folder", parentWorkspaceId: "parent-workspace" }, undefined)).toMatchObject({
       name: "Untitled Workspace",
       folderId: null,
-      parentWorkspaceId: "current-workspace"
+      parentWorkspaceId: "parent-workspace"
+    });
+  });
+
+  it("preserves the selected workspace folder when creating a sibling", () => {
+    expect(createWorkspaceRequestBody({ folderId: "current-folder", parentWorkspaceId: null }, undefined)).toMatchObject({
+      folderId: "current-folder",
+      parentWorkspaceId: null
     });
   });
 });

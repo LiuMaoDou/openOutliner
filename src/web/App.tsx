@@ -2288,7 +2288,7 @@ function randomWorkspaceIcon(): IconName {
 }
 
 export function createWorkspaceRequestBody(
-  selectedWorkspace: Pick<Workspace, "id" | "folderId"> | null | undefined,
+  selectedWorkspace: Pick<Workspace, "folderId" | "parentWorkspaceId"> | null | undefined,
   folderId?: string | null,
   parentWorkspaceId?: string | null
 ) {
@@ -2296,11 +2296,15 @@ export function createWorkspaceRequestBody(
     ? parentWorkspaceId
     : folderId !== undefined
       ? null
-      : selectedWorkspace?.id ?? null;
+      : selectedWorkspace?.parentWorkspaceId ?? null;
   return {
     name: "Untitled Workspace",
     icon: randomWorkspaceIcon(),
-    folderId: nextParentWorkspaceId ? null : folderId !== undefined ? folderId : null,
+    folderId: nextParentWorkspaceId
+      ? null
+      : folderId !== undefined
+        ? folderId
+        : selectedWorkspace?.folderId ?? null,
     parentWorkspaceId: nextParentWorkspaceId
   };
 }
