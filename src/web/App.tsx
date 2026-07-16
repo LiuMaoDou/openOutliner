@@ -842,19 +842,27 @@ export function App() {
 
   const startWorkspaceDrag = (workspace: Workspace, event: PointerEvent<HTMLSpanElement>) => {
     if (sidebarCollapsed) return;
-    event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    workspaceDragTargetRef.current = {
-      folderId: workspace.folderId,
-      parentWorkspaceId: workspace.parentWorkspaceId,
-      markerId: workspace.parentWorkspaceId ?? workspace.folderId ?? "root",
-      position: Number.MAX_SAFE_INTEGER
-    };
-    setWorkspaceDragTarget(workspaceDragTargetRef.current);
-    document.body.classList.add("isDraggingWorkspace");
+    workspaceDragTargetRef.current = null;
+    setWorkspaceDragTarget(null);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let isDragging = false;
 
     const move = (pointerEvent: globalThis.PointerEvent) => {
+      if (!isDragging) {
+        if (Math.hypot(pointerEvent.clientX - startX, pointerEvent.clientY - startY) < 5) return;
+        isDragging = true;
+        workspaceDragTargetRef.current = {
+          folderId: workspace.folderId,
+          parentWorkspaceId: workspace.parentWorkspaceId,
+          markerId: workspace.parentWorkspaceId ?? workspace.folderId ?? "root",
+          position: Number.MAX_SAFE_INTEGER
+        };
+        setWorkspaceDragTarget(workspaceDragTargetRef.current);
+        document.body.classList.add("isDraggingWorkspace");
+      }
       const workspaceElement = document
         .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
         ?.closest<HTMLElement>("[data-workspace-drop-id]");
@@ -908,7 +916,7 @@ export function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      if (target) {
+      if (isDragging && target) {
         moveWorkspaceOptimistically(workspace, target.folderId, target.parentWorkspaceId, target.position).catch(toError(setError));
       }
     };
