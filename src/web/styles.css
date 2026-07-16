@@ -1137,14 +1137,14 @@ textarea:focus-visible {
   top: 50%;
   left: 50%;
   z-index: -1;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   transform: translate(-50%, -50%);
   border-radius: 999px;
 }
 
 .light .dragHandle.collapsed .nodeDot::before {
-  background: rgba(113, 113, 122, 0.32);
+  background: #e0e0e0;
 }
 
 .dark .dragHandle.collapsed .nodeDot {
@@ -1152,7 +1152,7 @@ textarea:focus-visible {
 }
 
 .dark .dragHandle.collapsed .nodeDot::before {
-  background: rgba(161, 161, 170, 0.36);
+  background: #6a6d75;
 }
 
 .nodeRow:hover .dragHandle,
