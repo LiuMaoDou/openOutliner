@@ -1126,33 +1126,19 @@ textarea:focus-visible {
 }
 
 .dragHandle.collapsed .nodeDot {
-  position: relative;
-  z-index: 0;
   background: currentColor;
 }
 
-.dragHandle.collapsed .nodeDot::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  z-index: -1;
-  width: 18px;
-  height: 18px;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-}
-
-.light .dragHandle.collapsed .nodeDot::before {
-  background: #e0e0e0;
+.light .dragHandle.collapsed .nodeDot {
+  box-shadow: 0 0 0 5.5px #e0e0e0;
 }
 
 .dark .dragHandle.collapsed .nodeDot {
   background: currentColor;
 }
 
-.dark .dragHandle.collapsed .nodeDot::before {
-  background: #6a6d75;
+.dark .dragHandle.collapsed .nodeDot {
+  box-shadow: 0 0 0 5.5px #6a6d75;
 }
 
 .nodeRow:hover .dragHandle,
