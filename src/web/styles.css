@@ -1138,7 +1138,7 @@ textarea:focus-visible {
 }
 
 .dark .dragHandle.collapsed .nodeDot {
-  box-shadow: 0 0 0 5.5px rgba(161, 161, 170, 0.55);
+  box-shadow: 0 0 0 5.5px rgba(161, 161, 170, 0.8);
 }
 
 .nodeRow:hover .dragHandle,
