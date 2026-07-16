@@ -89,10 +89,11 @@ interface LoadTreeOptions {
 }
 
 type DropPlacement = "before" | "inside" | "after";
-type WorkspaceDropPlacement = "before" | "after";
+type WorkspaceDropPlacement = "before" | "inside" | "after";
 
 interface WorkspaceDragTarget {
   folderId: string | null;
+  parentWorkspaceId: string | null;
   position: number;
   markerId: string;
   overWorkspaceId?: string;
@@ -139,6 +140,7 @@ export function App() {
   const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
   const [workspaceDragTarget, setWorkspaceDragTarget] = useState<WorkspaceDragTarget | null>(null);
   const [collapsedWorkspaceFolderIds, setCollapsedWorkspaceFolderIds] = useState<Set<string>>(() => new Set());
+  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const workspaceIdRef = useRef("");
@@ -262,17 +264,30 @@ export function App() {
 
   const selectedNode = selectedId && flatState ? getNode(flatState, selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
-  const rootWorkspaces = useMemo(() => workspaces.filter(workspace => !workspace.folderId), [workspaces]);
+  const rootWorkspaces = useMemo(
+    () => workspaces.filter(workspace => !workspace.folderId && !workspace.parentWorkspaceId),
+    [workspaces]
+  );
   const workspacesByFolder = useMemo(() => {
     const map = new Map<string, Workspace[]>();
     for (const folder of workspaceFolders) map.set(folder.id, []);
     for (const workspace of workspaces) {
-      if (!workspace.folderId) continue;
+      if (!workspace.folderId || workspace.parentWorkspaceId) continue;
       const folderWorkspaces = map.get(workspace.folderId);
       if (folderWorkspaces) folderWorkspaces.push(workspace);
     }
     return map;
   }, [workspaceFolders, workspaces]);
+  const workspacesByParent = useMemo(() => {
+    const map = new Map<string, Workspace[]>();
+    for (const workspace of workspaces) {
+      if (!workspace.parentWorkspaceId) continue;
+      const children = map.get(workspace.parentWorkspaceId) ?? [];
+      children.push(workspace);
+      map.set(workspace.parentWorkspaceId, children);
+    }
+    return map;
+  }, [workspaces]);
   const isSearching = search.trim().length > 0;
   const isTagFiltering = activeTagFilter.length > 0;
   const filteredNodes = isSearching && flatState
@@ -769,10 +784,10 @@ export function App() {
     setManagedTagName("");
   }, []);
 
-  const createWorkspace = async (folderId?: string | null) => {
+  const createWorkspace = async (folderId?: string | null, parentWorkspaceId?: string | null) => {
     const created = await apiPost<Workspace>(
       "/api/workspaces",
-      createWorkspaceRequestBody(selectedWorkspace, folderId)
+      createWorkspaceRequestBody(selectedWorkspace, folderId, parentWorkspaceId)
     );
     await loadWorkspaces();
     selectWorkspace(created.id);
@@ -795,15 +810,27 @@ export function App() {
     setWorkspaces(current => current.map(workspace => (workspace.id === id ? { ...workspace, name } : workspace)));
   };
 
-  const moveWorkspaceOptimistically = async (workspace: Workspace, nextFolderId: string | null, position: number) => {
+  const moveWorkspaceOptimistically = async (
+    workspace: Workspace,
+    nextFolderId: string | null,
+    nextParentWorkspaceId: string | null,
+    position: number
+  ) => {
     const nextPosition =
-      workspace.folderId === nextFolderId && workspace.position < position ? position - 1 : position;
-    if (workspace.folderId === nextFolderId && workspace.position === nextPosition) return;
+      workspace.folderId === nextFolderId && workspace.parentWorkspaceId === nextParentWorkspaceId && workspace.position < position
+        ? position - 1
+        : position;
+    if (
+      workspace.folderId === nextFolderId &&
+      workspace.parentWorkspaceId === nextParentWorkspaceId &&
+      workspace.position === nextPosition
+    ) return;
     const before = workspaces;
-    setWorkspaces(current => reorderWorkspaces(current, workspace.id, nextFolderId, nextPosition));
+    setWorkspaces(current => reorderWorkspaces(current, workspace.id, nextFolderId, nextParentWorkspaceId, nextPosition));
     try {
       await apiPatch<Workspace>(`/api/workspaces/${workspace.id}`, {
         folderId: nextFolderId,
+        parentWorkspaceId: nextParentWorkspaceId,
         position: nextPosition
       });
       await loadWorkspaces();
@@ -820,7 +847,8 @@ export function App() {
     event.currentTarget.setPointerCapture(event.pointerId);
     workspaceDragTargetRef.current = {
       folderId: workspace.folderId,
-      markerId: workspace.folderId ?? "root",
+      parentWorkspaceId: workspace.parentWorkspaceId,
+      markerId: workspace.parentWorkspaceId ?? workspace.folderId ?? "root",
       position: Number.MAX_SAFE_INTEGER
     };
     setWorkspaceDragTarget(workspaceDragTargetRef.current);
@@ -832,9 +860,21 @@ export function App() {
         ?.closest<HTMLElement>("[data-workspace-drop-id]");
       if (workspaceElement && workspaceElement.dataset.workspaceDropId !== workspace.id) {
         const placement = getWorkspaceDropPlacement(workspaceElement, pointerEvent.clientY);
+        const parentWorkspaceId = placement === "inside"
+          ? workspaceElement.dataset.workspaceDropId ?? null
+          : workspaceElement.dataset.workspaceParentId || null;
+        if (
+          parentWorkspaceId &&
+          (parentWorkspaceId === workspace.id || isWorkspaceDescendant(workspaces, parentWorkspaceId, workspace.id))
+        ) {
+          workspaceDragTargetRef.current = null;
+          setWorkspaceDragTarget(null);
+          return;
+        }
         const position = Number(workspaceElement.dataset.workspacePosition ?? "0") + (placement === "after" ? 1 : 0);
         workspaceDragTargetRef.current = {
-          folderId: workspaceElement.dataset.workspaceFolderId || null,
+          folderId: parentWorkspaceId ? null : workspaceElement.dataset.workspaceFolderId || null,
+          parentWorkspaceId,
           markerId: workspaceElement.dataset.workspaceDropId ?? "",
           overWorkspaceId: workspaceElement.dataset.workspaceDropId,
           placement,
@@ -853,6 +893,7 @@ export function App() {
           ? null
           : {
               folderId: targetId === "root" ? null : targetId,
+              parentWorkspaceId: null,
               markerId: targetId,
               position: Number.MAX_SAFE_INTEGER
             };
@@ -867,7 +908,9 @@ export function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      if (target) moveWorkspaceOptimistically(workspace, target.folderId, target.position).catch(toError(setError));
+      if (target) {
+        moveWorkspaceOptimistically(workspace, target.folderId, target.parentWorkspaceId, target.position).catch(toError(setError));
+      }
     };
 
     window.addEventListener("pointermove", move);
@@ -988,63 +1031,101 @@ export function App() {
     await loadTags(nextId);
   };
 
-  const renderWorkspaceItem = (workspace: Workspace) => (
-    <div
-      className={[
-        "workspaceItem",
-        workspace.id === workspaceId && "active",
-        workspaceDragTarget?.overWorkspaceId === workspace.id &&
-          workspaceDragTarget.placement &&
-          `drop-${workspaceDragTarget.placement}`
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      key={workspace.id}
-      title={sidebarCollapsed ? workspace.name : undefined}
-      data-workspace-drop-id={workspace.id}
-      data-workspace-folder-id={workspace.folderId ?? ""}
-      data-workspace-position={workspace.position}
-      onClick={() => selectWorkspace(workspace.id)}
-    >
-      <span
-        className="workspaceIcon workspaceDragHandle"
-        title={sidebarCollapsed ? workspace.name : "Drag workspace"}
-        onPointerDown={event => startWorkspaceDrag(workspace, event)}
-      >
-        <DynamicIcon
-          name={workspaceIconName(workspace.icon)}
-          fallback={() => <FolderTree size={15} />}
-          size={15}
-          strokeWidth={2.2}
-        />
-      </span>
-      {!sidebarCollapsed && (
-        <input
-          value={workspace.name}
-          onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
-          onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
-          onFocus={() => selectWorkspace(workspace.id)}
-          onKeyDown={event => {
-            if (shouldIgnoreTextInputKeyDown(event)) return;
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-        />
-      )}
-      {!sidebarCollapsed && (
-        <button
-          className="workspaceDeleteButton"
-          type="button"
-          title="Delete workspace"
-          onClick={event => {
-            event.stopPropagation();
-            deleteWorkspace(workspace).catch(toError(setError));
-          }}
+  const renderWorkspaceItem = (workspace: Workspace, depth = 0): React.ReactNode => {
+    const children = workspacesByParent.get(workspace.id) ?? [];
+    const isCollapsed = collapsedWorkspaceIds.has(workspace.id);
+
+    return (
+      <React.Fragment key={workspace.id}>
+        <div
+          className={[
+            "workspaceItem",
+            workspace.id === workspaceId && "active",
+            workspaceDragTarget?.overWorkspaceId === workspace.id &&
+              workspaceDragTarget.placement &&
+              `drop-${workspaceDragTarget.placement}`
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          title={sidebarCollapsed ? workspace.name : undefined}
+          data-workspace-drop-id={workspace.id}
+          data-workspace-folder-id={workspace.folderId ?? ""}
+          data-workspace-parent-id={workspace.parentWorkspaceId ?? ""}
+          data-workspace-position={workspace.position}
+          style={{ "--workspace-depth": depth } as CSSProperties}
+          onClick={() => selectWorkspace(workspace.id)}
         >
-          <Trash2 size={14} />
-        </button>
-      )}
-    </div>
-  );
+          {!sidebarCollapsed && (
+            <button
+              className="workspaceDisclosure"
+              type="button"
+              disabled={children.length === 0}
+              title={isCollapsed ? "Expand workspace" : "Collapse workspace"}
+              aria-label={isCollapsed ? "Expand workspace" : "Collapse workspace"}
+              aria-expanded={children.length > 0 ? !isCollapsed : undefined}
+              onClick={event => {
+                event.stopPropagation();
+                if (children.length > 0) setCollapsedWorkspaceIds(current => nextCollapsedWorkspaceIds(current, workspace.id));
+              }}
+            >
+              {children.length > 0 && (isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
+            </button>
+          )}
+          <span
+            className="workspaceIcon workspaceDragHandle"
+            title={sidebarCollapsed ? workspace.name : "Drag workspace"}
+            onPointerDown={event => startWorkspaceDrag(workspace, event)}
+          >
+            <DynamicIcon
+              name={workspaceIconName(workspace.icon)}
+              fallback={() => <FolderTree size={15} />}
+              size={15}
+              strokeWidth={2.2}
+            />
+          </span>
+          {!sidebarCollapsed && (
+            <input
+              value={workspace.name}
+              onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
+              onBlur={event => updateWorkspaceName(workspace, event.target.value).catch(toError(setError))}
+              onFocus={() => selectWorkspace(workspace.id)}
+              onKeyDown={event => {
+                if (shouldIgnoreTextInputKeyDown(event)) return;
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+            />
+          )}
+          {!sidebarCollapsed && (
+            <button
+              className="workspaceAddChildButton"
+              type="button"
+              title="New child workspace"
+              onClick={event => {
+                event.stopPropagation();
+                createWorkspace(undefined, workspace.id).catch(toError(setError));
+              }}
+            >
+              <Plus size={13} />
+            </button>
+          )}
+          {!sidebarCollapsed && (
+            <button
+              className="workspaceDeleteButton"
+              type="button"
+              title="Delete workspace"
+              onClick={event => {
+                event.stopPropagation();
+                deleteWorkspace(workspace).catch(toError(setError));
+              }}
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+        {!isCollapsed && children.map(child => renderWorkspaceItem(child, depth + 1))}
+      </React.Fragment>
+    );
+  };
 
   return (
     <div className={`appShell${sidebarCollapsed ? " sidebarCollapsed" : ""}`}>
@@ -1154,7 +1235,7 @@ export function App() {
               })}
             </>
           ) : (
-            workspaces.map(renderWorkspaceItem)
+            workspaces.filter(workspace => !workspace.parentWorkspaceId).map(renderWorkspaceItem)
           )}
         </div>
       </aside>
@@ -1833,38 +1914,65 @@ function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement 
 
 function getWorkspaceDropPlacement(element: HTMLElement, clientY: number): WorkspaceDropPlacement {
   const bounds = element.getBoundingClientRect();
-  return clientY - bounds.top < bounds.height / 2 ? "before" : "after";
+  const offset = clientY - bounds.top;
+  if (offset < bounds.height * 0.28) return "before";
+  if (offset > bounds.height * 0.72) return "after";
+  return "inside";
 }
 
 function reorderWorkspaces(
   workspaces: Workspace[],
   workspaceId: string,
   folderId: string | null,
+  parentWorkspaceId: string | null,
   position: number
 ): Workspace[] {
   const moving = workspaces.find(workspace => workspace.id === workspaceId);
   if (!moving) return workspaces;
 
   const withoutMoving = workspaces.filter(workspace => workspace.id !== workspaceId);
-  const siblings = withoutMoving.filter(workspace => workspace.folderId === folderId);
+  const siblings = withoutMoving.filter(
+    workspace => workspace.folderId === folderId && workspace.parentWorkspaceId === parentWorkspaceId
+  );
   const nextPosition = Math.max(0, Math.min(position, siblings.length));
   const normalized = withoutMoving.map(workspace => {
-    if (workspace.folderId === moving.folderId && workspace.position > moving.position) {
+    if (
+      workspace.folderId === moving.folderId &&
+      workspace.parentWorkspaceId === moving.parentWorkspaceId &&
+      workspace.position > moving.position
+    ) {
       return { ...workspace, position: workspace.position - 1 };
     }
-    if (workspace.folderId === folderId && workspace.position >= nextPosition) {
+    if (
+      workspace.folderId === folderId &&
+      workspace.parentWorkspaceId === parentWorkspaceId &&
+      workspace.position >= nextPosition
+    ) {
       return { ...workspace, position: workspace.position + 1 };
     }
     return workspace;
   });
 
-  normalized.push({ ...moving, folderId, position: nextPosition });
+  normalized.push({ ...moving, folderId, parentWorkspaceId, position: nextPosition });
   return normalized.sort((a, b) => {
     const folderCompare = (a.folderId ?? "").localeCompare(b.folderId ?? "");
     if (folderCompare !== 0) return folderCompare;
+    const parentCompare = (a.parentWorkspaceId ?? "").localeCompare(b.parentWorkspaceId ?? "");
+    if (parentCompare !== 0) return parentCompare;
     if (a.position !== b.position) return a.position - b.position;
     return a.createdAt.localeCompare(b.createdAt);
   });
+}
+
+function isWorkspaceDescendant(workspaces: Workspace[], workspaceId: string, ancestorId: string): boolean {
+  let current = workspaces.find(workspace => workspace.id === workspaceId);
+  const visited = new Set<string>();
+  while (current?.parentWorkspaceId && !visited.has(current.id)) {
+    visited.add(current.id);
+    if (current.parentWorkspaceId === ancestorId) return true;
+    current = workspaces.find(workspace => workspace.id === current?.parentWorkspaceId);
+  }
+  return false;
 }
 
 function handleMarkdownShortcut(
@@ -2094,13 +2202,20 @@ function randomWorkspaceIcon(): IconName {
 }
 
 export function createWorkspaceRequestBody(
-  selectedWorkspace: Pick<Workspace, "folderId"> | null | undefined,
-  folderId?: string | null
+  selectedWorkspace: Pick<Workspace, "id" | "folderId"> | null | undefined,
+  folderId?: string | null,
+  parentWorkspaceId?: string | null
 ) {
+  const nextParentWorkspaceId = parentWorkspaceId !== undefined
+    ? parentWorkspaceId
+    : folderId !== undefined
+      ? null
+      : selectedWorkspace?.id ?? null;
   return {
     name: "Untitled Workspace",
     icon: randomWorkspaceIcon(),
-    folderId: folderId !== undefined ? folderId : selectedWorkspace?.folderId ?? null
+    folderId: nextParentWorkspaceId ? null : folderId !== undefined ? folderId : null,
+    parentWorkspaceId: nextParentWorkspaceId
   };
 }
 
@@ -2110,6 +2225,16 @@ export function nextCollapsedWorkspaceFolderIds(current: Set<string>, folderId: 
     next.delete(folderId);
   } else {
     next.add(folderId);
+  }
+  return next;
+}
+
+export function nextCollapsedWorkspaceIds(current: Set<string>, workspaceId: string): Set<string> {
+  const next = new Set(current);
+  if (next.has(workspaceId)) {
+    next.delete(workspaceId);
+  } else {
+    next.add(workspaceId);
   }
   return next;
 }

@@ -419,13 +419,13 @@ textarea:focus-visible {
 
 .workspaceItem {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 28px;
+  grid-template-columns: 18px 24px minmax(0, 1fr) 22px 28px;
   align-items: center;
   gap: 4px;
   justify-content: flex-start;
   width: 100%;
   min-height: 28px;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 calc(10px + var(--workspace-depth, 0) * 16px);
   color: var(--soft-foreground);
   text-align: left;
   background: transparent;
@@ -450,6 +450,11 @@ textarea:focus-visible {
 .workspaceItem.drop-after::before {
   bottom: -1px;
   background: var(--drop-indicator);
+}
+
+.workspaceItem.drop-inside {
+  background: var(--selected);
+  box-shadow: inset 0 0 0 1px var(--selected-border);
 }
 
 .workspaceItem input {
@@ -525,7 +530,41 @@ textarea:focus-visible {
 }
 
 .workspaceFolder .workspaceItem {
-  padding-left: 34px;
+  padding-left: calc(34px + var(--workspace-depth, 0) * 16px);
+}
+
+.workspaceDisclosure,
+.workspaceAddChildButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.workspaceDisclosure {
+  width: 18px;
+  height: 22px;
+}
+
+.workspaceDisclosure:disabled {
+  cursor: default;
+}
+
+.workspaceDisclosure:not(:disabled):hover,
+.workspaceAddChildButton:hover {
+  color: var(--foreground);
+  background: var(--background);
+  border-color: var(--border);
+}
+
+.workspaceAddChildButton {
+  width: 22px;
+  height: 22px;
+  opacity: 0;
 }
 
 .workspaceFolderHeader {
@@ -612,8 +651,11 @@ textarea:focus-visible {
 }
 
 .workspaceItem:hover .workspaceDeleteButton,
+.workspaceItem:hover .workspaceAddChildButton,
 .workspaceItem.active .workspaceDeleteButton,
-.workspaceDeleteButton:focus-visible {
+.workspaceItem.active .workspaceAddChildButton,
+.workspaceDeleteButton:focus-visible,
+.workspaceAddChildButton:focus-visible {
   opacity: 1;
 }
 

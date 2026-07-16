@@ -11,6 +11,7 @@ import type { OutlineTreeNode } from "../src/web/api.js";
 import {
   createWorkspaceRequestBody,
   getChildCountLabel,
+  nextCollapsedWorkspaceIds,
   shouldIgnoreTextInputKeyDown,
   nextCollapsedWorkspaceFolderIds,
   splitTitleAtSelection
@@ -593,10 +594,11 @@ describe("workspace creation request body", () => {
     });
   });
 
-  it("falls back to the selected workspace folder when no explicit folder is provided", () => {
-    expect(createWorkspaceRequestBody({ folderId: "current-folder" }, undefined)).toMatchObject({
+  it("creates a child of the selected workspace when no explicit container is provided", () => {
+    expect(createWorkspaceRequestBody({ id: "current-workspace", folderId: "current-folder" }, undefined)).toMatchObject({
       name: "Untitled Workspace",
-      folderId: "current-folder"
+      folderId: null,
+      parentWorkspaceId: "current-workspace"
     });
   });
 });
@@ -606,6 +608,14 @@ describe("workspace folder collapse state", () => {
     const collapsed = nextCollapsedWorkspaceFolderIds(new Set<string>(), "folder-a");
     expect([...collapsed]).toEqual(["folder-a"]);
     expect([...nextCollapsedWorkspaceFolderIds(collapsed, "folder-a")]).toEqual([]);
+  });
+});
+
+describe("workspace hierarchy collapse state", () => {
+  it("toggles parent workspace ids in the collapsed set", () => {
+    const collapsed = nextCollapsedWorkspaceIds(new Set<string>(), "workspace-a");
+    expect([...collapsed]).toEqual(["workspace-a"]);
+    expect([...nextCollapsedWorkspaceIds(collapsed, "workspace-a")]).toEqual([]);
   });
 });
 

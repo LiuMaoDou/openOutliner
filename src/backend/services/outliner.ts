@@ -618,6 +618,7 @@ export class OutlinerService {
            workspaces.name AS result_workspace_name,
            workspaces.icon AS result_workspace_icon,
            workspaces.folder_id AS result_workspace_folder_id,
+           workspaces.parent_workspace_id AS result_workspace_parent_workspace_id,
            workspaces.position AS result_workspace_position,
            workspaces.root_node_id AS result_workspace_root_node_id,
            workspaces.created_at AS result_workspace_created_at,
