@@ -168,6 +168,157 @@ export class OutlinerService {
     return this.getWorkspace(workspaceId);
   }
 
+  convertNodeToWorkspace(id: string, name?: string): Workspace {
+    const node = this.getNode(id);
+    const sourceWorkspace = this.getWorkspace(node.workspaceId);
+    if (sourceWorkspace.rootNodeId === id) {
+      throw new ValidationError("Workspace root nodes cannot be converted.");
+    }
+
+    const workspaceId = randomUUID();
+    const workspaceName = name?.trim() || node.title.trim() || "Untitled Workspace";
+    const workspaceIcon = normalizeWorkspaceIcon("layers");
+    const workspacePosition = this.countWorkspacesInContainer(null, sourceWorkspace.id);
+    const now = timestamp();
+    const nodeTagRows = this.db
+      .prepare(
+        `WITH RECURSIVE subtree(id) AS (
+          SELECT id FROM nodes WHERE id = ? AND deleted_at IS NULL
+          UNION ALL
+          SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
+          WHERE nodes.deleted_at IS NULL
+        )
+        SELECT node_tags.node_id, tags.* FROM node_tags
+        JOIN tags ON tags.id = node_tags.tag_id
+        WHERE node_tags.node_id IN (SELECT id FROM subtree)`
+      )
+      .all(id) as Row[];
+    const fieldValueRows = this.db
+      .prepare(
+        `WITH RECURSIVE subtree(id) AS (
+          SELECT id FROM nodes WHERE id = ? AND deleted_at IS NULL
+          UNION ALL
+          SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
+          WHERE nodes.deleted_at IS NULL
+        )
+        SELECT field_values.* FROM field_values
+        WHERE field_values.node_id IN (SELECT id FROM subtree)`
+      )
+      .all(id) as Row[];
+
+    const tagRowsById = new Map<string, Row>();
+    for (const row of nodeTagRows) tagRowsById.set(text(row.id), row);
+
+    const referencedFieldRowsById = new Map<string, Row>();
+    for (const valueRow of fieldValueRows) {
+      const fieldId = text(valueRow.field_id);
+      const fieldRow = this.db.prepare("SELECT * FROM field_definitions WHERE id = ?").get(fieldId) as Row | undefined;
+      if (!fieldRow) continue;
+      referencedFieldRowsById.set(fieldId, fieldRow);
+      const tagId = text(fieldRow.tag_id);
+      if (!tagRowsById.has(tagId)) {
+        const tagRow = this.db.prepare("SELECT * FROM tags WHERE id = ?").get(tagId) as Row | undefined;
+        if (tagRow) tagRowsById.set(tagId, tagRow);
+      }
+    }
+
+    const fieldRowsById = new Map(referencedFieldRowsById);
+    for (const tagId of tagRowsById.keys()) {
+      for (const fieldRow of this.db
+        .prepare("SELECT * FROM field_definitions WHERE tag_id = ? ORDER BY created_at ASC")
+        .all(tagId) as Row[]) {
+        fieldRowsById.set(text(fieldRow.id), fieldRow);
+      }
+    }
+
+    this.transaction(() => {
+      this.db
+        .prepare(
+          "INSERT INTO workspaces (id, name, icon, folder_id, parent_workspace_id, position, root_node_id, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)"
+        )
+        .run(workspaceId, workspaceName, workspaceIcon, sourceWorkspace.id, workspacePosition, id, now, now);
+
+      const tagIds = new Map<string, string>();
+      for (const [sourceTagId, row] of tagRowsById) {
+        const nextTagId = randomUUID();
+        tagIds.set(sourceTagId, nextTagId);
+        this.db
+          .prepare("INSERT INTO tags (id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)")
+          .run(nextTagId, workspaceId, text(row.name), text(row.color), now);
+      }
+
+      const fieldIds = new Map<string, string>();
+      for (const [sourceFieldId, row] of fieldRowsById) {
+        const nextTagId = tagIds.get(text(row.tag_id));
+        if (!nextTagId) continue;
+        const nextFieldId = randomUUID();
+        fieldIds.set(sourceFieldId, nextFieldId);
+        this.db
+          .prepare(
+            `INSERT INTO field_definitions
+              (id, workspace_id, tag_id, name, type, options, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            nextFieldId,
+            workspaceId,
+            nextTagId,
+            text(row.name),
+            text(row.type),
+            nullableText(row.options),
+            now
+          );
+      }
+
+      for (const row of nodeTagRows) {
+        const nextTagId = tagIds.get(text(row.id));
+        if (!nextTagId) continue;
+        this.db
+          .prepare("INSERT INTO node_tags (node_id, tag_id) VALUES (?, ?)")
+          .run(text(row.node_id), nextTagId);
+        this.db
+          .prepare("DELETE FROM node_tags WHERE node_id = ? AND tag_id = ?")
+          .run(text(row.node_id), text(row.id));
+      }
+
+      for (const row of fieldValueRows) {
+        const nextFieldId = fieldIds.get(text(row.field_id));
+        if (!nextFieldId) continue;
+        this.db
+          .prepare("INSERT INTO field_values (node_id, field_id, value, updated_at) VALUES (?, ?, ?, ?)")
+          .run(text(row.node_id), nextFieldId, text(row.value), now);
+        this.db
+          .prepare("DELETE FROM field_values WHERE node_id = ? AND field_id = ?")
+          .run(text(row.node_id), text(row.field_id));
+      }
+
+      this.db
+        .prepare(
+          `WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM nodes WHERE id = ? AND deleted_at IS NULL
+            UNION ALL
+            SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
+            WHERE nodes.deleted_at IS NULL
+          )
+          UPDATE nodes SET workspace_id = ?, updated_at = ? WHERE id IN (SELECT id FROM subtree)`
+        )
+        .run(id, workspaceId, now);
+      this.db
+        .prepare("UPDATE nodes SET parent_id = NULL, position = 0, title = ?, updated_at = ? WHERE id = ?")
+        .run(workspaceName, now, id);
+      this.db
+        .prepare(
+          `UPDATE nodes
+           SET position = position - 1, updated_at = ?
+           WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position > ?`
+        )
+        .run(now, sourceWorkspace.id, node.parentId, node.position);
+      this.db.prepare("UPDATE workspaces SET updated_at = ? WHERE id = ?").run(now, sourceWorkspace.id);
+    });
+
+    return this.getWorkspace(workspaceId);
+  }
+
   getWorkspace(id: string): Workspace {
     const row = this.db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as Row | undefined;
     if (!row) throw new NotFoundError(`Workspace not found: ${id}`);
@@ -422,6 +573,64 @@ export class OutlinerService {
     });
 
     return this.getNode(id);
+  }
+
+  moveNodes(ids: string[], parentId: string, position?: number, expandParent = false): OutlineNode[] {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) throw new ValidationError("At least one node is required.");
+
+    const selectedIds = new Set(uniqueIds);
+    const requestedNodes = uniqueIds.map(id => this.getNode(id));
+    const movingNodes = requestedNodes.filter(node => {
+      let ancestorId = node.parentId;
+      while (ancestorId) {
+        if (selectedIds.has(ancestorId)) return false;
+        ancestorId = this.getNode(ancestorId).parentId;
+      }
+      return true;
+    });
+    const nextParent = this.getNode(parentId);
+    if (movingNodes.some(node => !node.parentId)) {
+      throw new ValidationError("Workspace root nodes cannot be moved.");
+    }
+    if (movingNodes.some(node => node.workspaceId !== nextParent.workspaceId)) {
+      throw new ValidationError("Nodes can only move inside the same workspace.");
+    }
+    if (movingNodes.some(node => node.id === nextParent.id || this.isDescendant(nextParent.id, node.id))) {
+      throw new ValidationError("Nodes cannot be moved under themselves or their descendants.");
+    }
+
+    const movingIds = movingNodes.map(node => node.id);
+    const movingIdSet = new Set(movingIds);
+    const affectedParentIds = new Set<string>([parentId]);
+    for (const node of movingNodes) affectedParentIds.add(node.parentId as string);
+    const childrenByParent = new Map<string, string[]>();
+    for (const affectedParentId of affectedParentIds) {
+      childrenByParent.set(
+        affectedParentId,
+        this.listChildren(affectedParentId).map(node => node.id).filter(id => !movingIdSet.has(id))
+      );
+    }
+
+    const targetChildren = childrenByParent.get(parentId) ?? [];
+    const targetPosition = clamp(position ?? targetChildren.length, 0, targetChildren.length);
+    targetChildren.splice(targetPosition, 0, ...movingIds);
+    childrenByParent.set(parentId, targetChildren);
+    const now = timestamp();
+
+    this.transaction(() => {
+      const update = this.db.prepare(
+        "UPDATE nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?"
+      );
+      for (const [affectedParentId, childIds] of childrenByParent) {
+        childIds.forEach((childId, index) => update.run(affectedParentId, index, now, childId));
+      }
+      if (expandParent) {
+        this.db.prepare("UPDATE nodes SET collapsed = 0, updated_at = ? WHERE id = ?").run(now, parentId);
+      }
+    });
+
+    return movingIds.map(id => this.getNode(id));
   }
 
   deleteNode(id: string): { deleted: string[] } {

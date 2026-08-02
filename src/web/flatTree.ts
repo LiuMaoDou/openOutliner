@@ -249,6 +249,55 @@ export function moveNode(
   return next;
 }
 
+export function getTopLevelNodeIds(state: FlatTreeState, ids: Iterable<string>): string[] {
+  const uniqueIds = [...new Set(ids)].filter(id => id !== state.rootId && !!state.nodes[id]);
+  const selectedIds = new Set(uniqueIds);
+  return uniqueIds.filter(id => {
+    let parentId = state.nodes[id]?.parentId;
+    while (parentId) {
+      if (selectedIds.has(parentId)) return false;
+      parentId = state.nodes[parentId]?.parentId ?? null;
+    }
+    return true;
+  });
+}
+
+export function moveNodes(
+  state: FlatTreeState,
+  ids: Iterable<string>,
+  newParentId: string,
+  position: number
+): FlatTreeState {
+  const movingIds = getTopLevelNodeIds(state, ids);
+  const newParent = state.nodes[newParentId];
+  if (movingIds.length === 0 || !newParent) return state;
+  if (movingIds.some(id => id === newParentId || isDescendant(state, id, newParentId))) return state;
+
+  const movingIdSet = new Set(movingIds);
+  const affectedParentIds = new Set<string>([newParentId]);
+  for (const id of movingIds) {
+    const parentId = state.nodes[id]?.parentId;
+    if (!parentId) return state;
+    affectedParentIds.add(parentId);
+  }
+
+  const next = cloneState(state);
+  for (const parentId of affectedParentIds) cloneNode(next, parentId);
+
+  for (const parentId of affectedParentIds) {
+    next.nodes[parentId].childIds = next.nodes[parentId].childIds.filter(id => !movingIdSet.has(id));
+  }
+
+  const targetChildren = next.nodes[newParentId].childIds;
+  const targetPosition = Math.max(0, Math.min(position, targetChildren.length));
+  targetChildren.splice(targetPosition, 0, ...movingIds);
+  for (const id of movingIds) {
+    next.nodes[id] = { ...next.nodes[id], parentId: newParentId };
+  }
+  for (const parentId of affectedParentIds) normalizePositions(next, parentId);
+  return next;
+}
+
 export function moveNodeInside(
   state: FlatTreeState,
   id: string,

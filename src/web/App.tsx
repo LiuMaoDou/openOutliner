@@ -1,4 +1,5 @@
 import {
+  Bold,
   Check,
   CircleHelp,
   CircleCheck,
@@ -7,16 +8,21 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Code2,
   FileDown,
   FolderClosed,
   FolderOpen,
   FolderPlus,
   FolderTree,
+  Highlighter,
+  Italic,
+  Link2,
   Monitor,
   Moon,
   PanelRight,
   Plus,
   Search,
+  Strikethrough,
   Sun,
   Tag as TagIcon,
   Trash2,
@@ -27,7 +33,8 @@ import {
 import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
+import { createPortal } from "react-dom";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import React, {
   useCallback,
@@ -64,7 +71,8 @@ import {
   removeNode,
   replaceNode,
   moveNode,
-  moveNodeInside,
+  moveNodes,
+  getTopLevelNodeIds,
   getNode,
   getParentId,
   isDescendant,
@@ -90,12 +98,52 @@ export function formatNodeDate(value: string): string {
   return value.replaceAll("-", "/");
 }
 
+export function getNodeSelectionRange(visibleIds: string[], anchorId: string, targetId: string): string[] {
+  const targetIndex = visibleIds.indexOf(targetId);
+  if (targetIndex < 0) return [];
+  const anchorIndex = visibleIds.indexOf(anchorId);
+  if (anchorIndex < 0) return [targetId];
+  const start = Math.min(anchorIndex, targetIndex);
+  const end = Math.max(anchorIndex, targetIndex);
+  return visibleIds.slice(start, end + 1);
+}
+
+export type NodeSelectionPosition = "single" | "start" | "middle" | "end";
+
+export function getNodeSelectionPosition(
+  visibleIds: string[],
+  selectedIds: ReadonlySet<string>,
+  index: number
+): NodeSelectionPosition | null {
+  const nodeId = visibleIds[index];
+  if (!nodeId || !selectedIds.has(nodeId)) return null;
+  const previousSelected = index > 0 && selectedIds.has(visibleIds[index - 1]);
+  const nextSelected = index < visibleIds.length - 1 && selectedIds.has(visibleIds[index + 1]);
+  if (previousSelected && nextSelected) return "middle";
+  if (previousSelected) return "end";
+  if (nextSelected) return "start";
+  return "single";
+}
+
 interface LoadTreeOptions {
   preserveSelection?: boolean;
 }
 
 type DropPlacement = "before" | "inside" | "after";
 type WorkspaceDropPlacement = "before" | "inside" | "after";
+export type MarkdownStyle = "bold" | "italic" | "strike" | "code" | "highlight";
+
+interface MarkdownContextMenuState {
+  x: number;
+  y: number;
+  selectionStart: number;
+  selectionEnd: number;
+}
+
+interface NodeContextMenuState {
+  x: number;
+  y: number;
+}
 
 interface WorkspaceDragTarget {
   folderId: string | null;
@@ -107,12 +155,23 @@ interface WorkspaceDragTarget {
 }
 
 interface DragState {
-  draggingId: string;
+  draggingIds: string[];
+  movingIds: string[];
   title: string;
   x: number;
   y: number;
   overId?: string;
   placement?: DropPlacement;
+}
+
+interface NodeSelectionDrag {
+  pointerId: number;
+  anchorId: string;
+  startX: number;
+  startY: number;
+  additive: boolean;
+  baseSelection: Set<string>;
+  moved: boolean;
 }
 
 interface PendingDelete {
@@ -123,7 +182,16 @@ interface PendingDelete {
   createdAt: number;
 }
 
+interface ConvertWorkspaceCandidate {
+  id: string;
+  title: string;
+}
+
 const iconNameSet = new Set<string>(iconNames);
+const markdownSanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), "mark"]
+};
 
 export function App() {
   const { theme, setTheme } = useTheme();
@@ -133,6 +201,7 @@ export function App() {
   const [flatState, setFlatState] = useState<FlatTreeState | null>(null);
   const [visibleIds, setVisibleIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [tagName, setTagName] = useState("");
@@ -149,13 +218,19 @@ export function App() {
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [convertWorkspaceCandidate, setConvertWorkspaceCandidate] = useState<ConvertWorkspaceCandidate | null>(null);
+  const [isConvertingWorkspace, setIsConvertingWorkspace] = useState(false);
   const workspaceIdRef = useRef("");
   const treeRequestRef = useRef(0);
   const tagsRequestRef = useRef(0);
   const tagResultsRequestRef = useRef(0);
-  const draggingIdRef = useRef("");
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
   const workspaceDragTargetRef = useRef<WorkspaceDragTarget | null>(null);
+  const selectedIdRef = useRef("");
+  const selectedNodeIdsRef = useRef(new Set<string>());
+  const selectionAnchorIdRef = useRef("");
+  const nodeSelectionDragRef = useRef<NodeSelectionDrag | null>(null);
+  const suppressSelectionClickRef = useRef(false);
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -164,14 +239,27 @@ export function App() {
   const selectedIndexRef = useRef(-1);
   const cancelledTempIdsRef = useRef(new Set<string>());
 
+  const setNodeSelection = useCallback((ids: Iterable<string>, primaryId: string, anchorId = primaryId) => {
+    const next = new Set(ids);
+    if (primaryId) next.add(primaryId);
+    selectedNodeIdsRef.current = next;
+    selectedIdRef.current = primaryId;
+    selectionAnchorIdRef.current = anchorId;
+    setSelectedNodeIds(next);
+    setSelectedId(primaryId);
+  }, []);
+
+  const setSingleSelectedId = useCallback((id: string) => {
+    setNodeSelection(id ? [id] : [], id);
+  }, [setNodeSelection]);
+
   const loadWorkspaces = useCallback(async () => {
     const next = await apiGet<Workspace[]>("/api/workspaces");
+    const currentId = workspaceIdRef.current;
+    const nextId = currentId && next.some(workspace => workspace.id === currentId) ? currentId : next[0]?.id || "";
+    workspaceIdRef.current = nextId;
     setWorkspaces(next);
-    setWorkspaceId(current => {
-      const nextId = current && next.some(workspace => workspace.id === current) ? current : next[0]?.id || "";
-      workspaceIdRef.current = nextId;
-      return nextId;
-    });
+    setWorkspaceId(nextId);
     return next;
   }, []);
 
@@ -186,7 +274,7 @@ export function App() {
     if (!id) {
       setFlatState(null);
       setVisibleIds([]);
-      setSelectedId("");
+      setSingleSelectedId("");
       return;
     }
     let next: OutlineTreeNode;
@@ -201,10 +289,11 @@ export function App() {
     setFlatState(state);
     setVisibleIds(vids);
     flatStateRef.current = state;
-    setSelectedId(current =>
+    const current = selectedIdRef.current;
+    setSingleSelectedId(
       options.preserveSelection && current && hasNode(state, current) ? current : state.rootId
     );
-  }, []);
+  }, [setSingleSelectedId]);
 
   const loadTags = useCallback(async (id: string) => {
     const requestId = ++tagsRequestRef.current;
@@ -259,6 +348,15 @@ export function App() {
   }, [workspaceId]);
 
   useEffect(() => {
+    if (!convertWorkspaceCandidate || isConvertingWorkspace) return;
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setConvertWorkspaceCandidate(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [convertWorkspaceCandidate, isConvertingWorkspace]);
+
+  useEffect(() => {
     if (!pendingDelete) return;
     const timer = window.setTimeout(() => setPendingDelete(current =>
       current?.createdAt === pendingDelete.createdAt ? null : current
@@ -282,6 +380,7 @@ export function App() {
 
   const selectedNode = selectedId && flatState ? getNode(flatState, selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
+  const draggingNodeIds = useMemo(() => new Set(dragState?.draggingIds ?? []), [dragState?.draggingIds]);
   const rootWorkspaces = useMemo(
     () => workspaces.filter(workspace => !workspace.folderId && !workspace.parentWorkspaceId),
     [workspaces]
@@ -388,11 +487,11 @@ export function App() {
     async (focusId?: string) => {
       await loadTree(workspaceId, { preserveSelection: true });
       if (focusId) {
-        setSelectedId(focusId);
+        setSingleSelectedId(focusId);
         window.setTimeout(() => focusTitleInput(inputRefs.current.get(focusId)), 30);
       }
     },
-    [loadTree, workspaceId]
+    [loadTree, setSingleSelectedId, workspaceId]
   );
 
   const patchNode = async (id: string, patch: Partial<OutlineTreeNode>) => {
@@ -401,12 +500,12 @@ export function App() {
   };
 
   const focusNode = (id: string) => {
-    setSelectedId(id);
+    setSingleSelectedId(id);
     window.setTimeout(() => focusTitleInput(inputRefs.current.get(id)), 30);
   };
 
   const selectNode = (id: string) => {
-    setSelectedId(id);
+    setSingleSelectedId(id);
   };
 
   const preserveOutlineScroll = () => {
@@ -436,13 +535,13 @@ export function App() {
     tagsRequestRef.current += 1;
     setWorkspaceId(result.workspace.id);
     setFlatState(null);
-    setSelectedId("");
+    setSingleSelectedId("");
     setTags([]);
     setTagName("");
     setManagedTagName("");
     await loadTree(result.workspace.id);
     await loadTags(result.workspace.id);
-    setSelectedId(result.node.id);
+    setSingleSelectedId(result.node.id);
     window.setTimeout(() => focusTitleInput(inputRefs.current.get(result.node.id)), 30);
   };
 
@@ -482,7 +581,7 @@ export function App() {
     setFlatState(newState);
     setVisibleIds(computeVisibleIds(newState));
     flatStateRef.current = newState;
-    setSelectedId(tempId);
+    setSingleSelectedId(tempId);
     focusWhenReady(tempId);
 
     try {
@@ -524,7 +623,7 @@ export function App() {
       setFlatState(withCreated);
       setVisibleIds(computeVisibleIds(withCreated));
       flatStateRef.current = withCreated;
-      setSelectedId(created.id);
+      setSingleSelectedId(created.id);
       focusWhenReady(created.id);
       if (
         draft &&
@@ -602,7 +701,7 @@ export function App() {
       setFlatState(pending.snapshot);
       setVisibleIds(computeVisibleIds(pending.snapshot));
       flatStateRef.current = pending.snapshot;
-      setSelectedId(pending.nodeId);
+      setSingleSelectedId(pending.nodeId);
       focusWhenReady(pending.nodeId);
     } catch (error) {
       focusNode(pending.focusAfterDeleteId);
@@ -679,27 +778,149 @@ export function App() {
     const index = visibleIds.indexOf(current.id);
     const nextId = visibleIds[index + offset];
     if (nextId) {
-      setSelectedId(nextId);
+      setSingleSelectedId(nextId);
       focusTitleInput(inputRefs.current.get(nextId));
     }
+  };
+
+  const selectNodeWithMouse = (nodeId: string, event: MouseEvent<HTMLElement>) => {
+    if (suppressSelectionClickRef.current) {
+      suppressSelectionClickRef.current = false;
+      event.preventDefault();
+      return false;
+    }
+
+    const anchorId = selectionAnchorIdRef.current || selectedIdRef.current || nodeId;
+    if (event.shiftKey) {
+      setNodeSelection(getNodeSelectionRange(filteredNodes, anchorId, nodeId), nodeId, anchorId);
+      return false;
+    }
+
+    if (event.metaKey || event.ctrlKey) {
+      const next = new Set([...selectedNodeIdsRef.current].filter(id => filteredNodes.includes(id)));
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      const primaryId = next.has(nodeId)
+        ? nodeId
+        : next.has(selectedIdRef.current)
+          ? selectedIdRef.current
+          : filteredNodes.find(id => next.has(id)) ?? "";
+      setNodeSelection(next, primaryId, nodeId);
+      return false;
+    }
+
+    setSingleSelectedId(nodeId);
+    return true;
+  };
+
+  const startNodeSelection = (node: FlatNodeData, event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || event.pointerType !== "mouse" || isTagFiltering) return;
+    const target = event.target as HTMLElement;
+    if (
+      target.closest(".nodeTitle") ||
+      target.closest(".nodeTitleLink") ||
+      target.closest(".disclosureButton") ||
+      target.closest(".dragHandle") ||
+      target.closest(".iconButton.danger") ||
+      target.closest(".nodeDateControl") ||
+      target.closest(".nodeTags")
+    ) return;
+
+    const anchorId = event.shiftKey
+      ? selectionAnchorIdRef.current || selectedIdRef.current || node.id
+      : node.id;
+    const drag: NodeSelectionDrag = {
+      pointerId: event.pointerId,
+      anchorId,
+      startX: event.clientX,
+      startY: event.clientY,
+      additive: event.metaKey || event.ctrlKey,
+      baseSelection: event.metaKey || event.ctrlKey
+        ? new Set([...selectedNodeIdsRef.current].filter(id => filteredNodes.includes(id)))
+        : new Set(),
+      moved: false
+    };
+    nodeSelectionDragRef.current = drag;
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const move = (pointerEvent: globalThis.PointerEvent) => {
+      const current = nodeSelectionDragRef.current;
+      if (!current || current.pointerId !== pointerEvent.pointerId) return;
+      const distance = Math.hypot(pointerEvent.clientX - current.startX, pointerEvent.clientY - current.startY);
+      if (!current.moved && distance < 5) return;
+
+      current.moved = true;
+      pointerEvent.preventDefault();
+      document.body.classList.add("isSelectingNodes");
+      window.getSelection()?.removeAllRanges();
+
+      const targetElement = document
+        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
+        ?.closest<HTMLElement>("[data-node-id]");
+      const targetId = targetElement?.dataset.nodeId;
+      if (!targetId || !filteredNodes.includes(targetId)) return;
+
+      const range = getNodeSelectionRange(filteredNodes, current.anchorId, targetId);
+      const next = current.additive ? new Set([...current.baseSelection, ...range]) : new Set(range);
+      setNodeSelection(next, targetId, current.anchorId);
+
+      const surface = outlineSurfaceRef.current;
+      if (!surface) return;
+      const bounds = surface.getBoundingClientRect();
+      if (pointerEvent.clientY < bounds.top + 28) surface.scrollTop -= 18;
+      else if (pointerEvent.clientY > bounds.bottom - 28) surface.scrollTop += 18;
+    };
+
+    const end = (pointerEvent: globalThis.PointerEvent) => {
+      const current = nodeSelectionDragRef.current;
+      if (!current || current.pointerId !== pointerEvent.pointerId) return;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      document.body.classList.remove("isSelectingNodes");
+      nodeSelectionDragRef.current = null;
+      if (current.moved) {
+        suppressSelectionClickRef.current = true;
+        window.setTimeout(() => {
+          suppressSelectionClickRef.current = false;
+        }, 0);
+      }
+    };
+
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
   };
 
   const cycleTheme = () => setTheme(nextTheme(theme));
 
   const startNodeDrag = (node: FlatNodeData, event: PointerEvent<HTMLButtonElement>) => {
     if (isSearching || isTagFiltering) return;
+    const currentState = flatStateRef.current;
+    if (!currentState) return;
+    const draggingIds = selectedNodeIdsRef.current.has(node.id)
+      ? filteredNodes.filter(id => selectedNodeIdsRef.current.has(id))
+      : [node.id];
+    const movingIds = getTopLevelNodeIds(currentState, draggingIds);
+    if (movingIds.length === 0) return;
+
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    draggingIdRef.current = node.id;
     dragTargetRef.current = null;
-    setSelectedId(node.id);
-    setDragState({ draggingId: node.id, title: node.title, x: event.clientX, y: event.clientY });
+    if (draggingIds.length > 1) {
+      setNodeSelection(draggingIds, node.id, selectionAnchorIdRef.current || node.id);
+    } else {
+      setSingleSelectedId(node.id);
+    }
+    const title = draggingIds.length > 1 ? `${draggingIds.length} nodes` : node.title;
+    setDragState({ draggingIds, movingIds, title, x: event.clientX, y: event.clientY });
     document.body.classList.add("isDraggingNode");
 
     const move = (pointerEvent: globalThis.PointerEvent) => {
       const nextDragState = {
-        draggingId: node.id,
-        title: node.title,
+        draggingIds,
+        movingIds,
+        title,
         x: pointerEvent.clientX,
         y: pointerEvent.clientY
       };
@@ -707,9 +928,13 @@ export function App() {
         .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
         ?.closest<HTMLElement>("[data-node-id]");
       const targetId = targetElement?.dataset.nodeId;
-      const target = targetId && flatState ? getNode(flatState, targetId) : undefined;
+      const target = targetId ? getNode(currentState, targetId) : undefined;
 
-      if (!flatState || !targetElement || !target || target.id === node.id || isDescendant(flatState, node.id, target.id)) {
+      if (
+        !targetElement ||
+        !target ||
+        movingIds.some(id => id === target.id || isDescendant(currentState, id, target.id))
+      ) {
         dragTargetRef.current = null;
         setDragState(nextDragState);
         return;
@@ -724,11 +949,14 @@ export function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      const target = dragTargetRef.current?.overId && flatState ? getNode(flatState, dragTargetRef.current.overId) : undefined;
+      const latestState = flatStateRef.current;
+      const target = dragTargetRef.current?.overId && latestState
+        ? getNode(latestState, dragTargetRef.current.overId)
+        : undefined;
       const placement = dragTargetRef.current?.placement;
       finishNodeDrag();
       if (target && placement) {
-        moveNodeToTarget(node, target, placement).catch(toError(setError));
+        moveNodesToTarget(movingIds, target, placement).catch(toError(setError));
       }
     };
 
@@ -738,55 +966,72 @@ export function App() {
   };
 
   const finishNodeDrag = () => {
-    draggingIdRef.current = "";
     dragTargetRef.current = null;
     document.body.classList.remove("isDraggingNode");
     setDragState(null);
   };
 
-  const moveNodeToTarget = async (source: FlatNodeData, target: FlatNodeData, placement: DropPlacement) => {
-    if (!flatState || source.id === target.id || isDescendant(flatState, source.id, target.id)) return;
-    if (placement === "inside") {
-      const before = flatStateRef.current;
-      if (!before) return;
-      const currentSource = getNode(before, source.id);
-      const currentTarget = getNode(before, target.id);
-      if (!currentSource || !currentTarget || isDescendant(before, currentSource.id, currentTarget.id)) return;
-      const restoreScroll = preserveOutlineScroll();
-      const newState = moveNodeInside(before, currentSource.id, currentTarget.id);
-      if (newState === before) return;
-      setFlatState(newState);
-      setVisibleIds(computeVisibleIds(newState));
-      flatStateRef.current = newState;
-      selectNode(currentSource.id);
-      restoreScroll();
-      const moveIncludesTempNode = currentSource.id.startsWith("temp-") || currentTarget.id.startsWith("temp-");
+  const moveNodesToTarget = async (ids: string[], target: FlatNodeData, placement: DropPlacement) => {
+    const before = flatStateRef.current;
+    if (!before) return;
+    const movingIds = getTopLevelNodeIds(before, ids);
+    const currentTarget = getNode(before, target.id);
+    if (
+      movingIds.length === 0 ||
+      !currentTarget ||
+      movingIds.some(id => id === currentTarget.id || isDescendant(before, id, currentTarget.id))
+    ) return;
 
-      try {
-        if (currentTarget.collapsed) await patchNode(currentTarget.id, { collapsed: false });
-        if (moveIncludesTempNode) return;
-        await apiPost(`/api/nodes/${currentSource.id}/move`, {
-          parentId: currentTarget.id,
-          position: currentTarget.childIds.length
-        });
-        restoreScroll();
-      } catch (error) {
-        setFlatState(before);
-        setVisibleIds(computeVisibleIds(before));
-        flatStateRef.current = before;
-        focusNode(currentSource.id);
-        throw error;
-      } finally {
-        window.setTimeout(() => {
-          restoreScroll();
-        }, 80);
-      }
-      return;
+    const containsTempNode = movingIds.some(id => id.startsWith("temp-"));
+    let parentId: string;
+    let position: number;
+    let workingState = before;
+    const movingIdSet = new Set(movingIds);
+    if (placement === "inside") {
+      parentId = currentTarget.id;
+      position = currentTarget.childIds.filter(id => !movingIdSet.has(id)).length;
+      if (currentTarget.collapsed) workingState = updateNode(workingState, currentTarget.id, { collapsed: false });
+    } else {
+      parentId = currentTarget.parentId ?? before.rootId;
+      const remainingSiblings = before.nodes[parentId].childIds.filter(id => !movingIdSet.has(id));
+      const targetIndex = remainingSiblings.indexOf(currentTarget.id);
+      if (targetIndex < 0) return;
+      position = targetIndex + (placement === "after" ? 1 : 0);
+    }
+    if (movingIds.length > 1 && (containsTempNode || parentId.startsWith("temp-"))) {
+      throw new Error("Wait for new nodes to finish saving before moving the selection.");
     }
 
-    const parentId = target.parentId ?? flatState.rootId;
-    const position = target.position + (placement === "after" ? 1 : 0);
-    await moveNodeOptimistically(source, parentId, position);
+    const restoreScroll = preserveOutlineScroll();
+    const newState = moveNodes(workingState, movingIds, parentId, position);
+    if (newState === workingState) return;
+    const selectionBefore = new Set(selectedNodeIdsRef.current);
+    const primaryBefore = selectedIdRef.current;
+    const anchorBefore = selectionAnchorIdRef.current;
+    setFlatState(newState);
+    setVisibleIds(computeVisibleIds(newState));
+    flatStateRef.current = newState;
+    setNodeSelection(selectionBefore, primaryBefore, anchorBefore);
+    restoreScroll();
+
+    if (containsTempNode || parentId.startsWith("temp-")) return;
+    try {
+      await apiPost("/api/nodes/move-batch", {
+        ids: movingIds,
+        parentId,
+        position,
+        expandParent: placement === "inside" && currentTarget.collapsed
+      });
+      restoreScroll();
+    } catch (error) {
+      setFlatState(before);
+      setVisibleIds(computeVisibleIds(before));
+      flatStateRef.current = before;
+      setNodeSelection(selectionBefore, primaryBefore, anchorBefore);
+      throw error;
+    } finally {
+      window.setTimeout(restoreScroll, 80);
+    }
   };
 
   const selectWorkspace = useCallback((id: string) => {
@@ -797,13 +1042,14 @@ export function App() {
     tagResultsRequestRef.current += 1;
     setWorkspaceId(id);
     setFlatState(null);
-    setSelectedId("");
+    setVisibleIds([]);
+    setSingleSelectedId("");
     setTags([]);
     setActiveTagFilter("");
     setTagResults([]);
     setTagName("");
     setManagedTagName("");
-  }, []);
+  }, [setSingleSelectedId]);
 
   const createWorkspace = async (folderId?: string | null, parentWorkspaceId?: string | null) => {
     const created = await apiPost<Workspace>(
@@ -814,6 +1060,27 @@ export function App() {
     selectWorkspace(created.id);
   };
 
+  const convertNodeToWorkspace = async () => {
+    const candidate = convertWorkspaceCandidate;
+    if (!candidate || isConvertingWorkspace) return;
+    setIsConvertingWorkspace(true);
+    try {
+      const created = await apiPost<Workspace>(`/api/nodes/${candidate.id}/convert-to-workspace`, {
+        name: candidate.title
+      });
+      setConvertWorkspaceCandidate(null);
+      setCollapsedWorkspaceIds(current => {
+        const next = new Set(current);
+        next.delete(workspaceIdRef.current);
+        return next;
+      });
+      await loadWorkspaces();
+      selectWorkspace(created.id);
+    } finally {
+      setIsConvertingWorkspace(false);
+    }
+  };
+
   const createWorkspaceFolder = async () => {
     const created = await apiPost<WorkspaceFolder>("/api/workspace-folders", { name: "New Folder" });
     setWorkspaceFolders(current => [...current, created]);
@@ -821,7 +1088,10 @@ export function App() {
 
   const updateWorkspaceName = async (workspace: Workspace, name: string) => {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      await loadWorkspaces();
+      return;
+    }
     const updated = await apiPatch<Workspace>(`/api/workspaces/${workspace.id}`, { name: trimmed });
     setWorkspaces(current => current.map(item => (item.id === updated.id ? updated : item)));
     if (updated.id === workspaceIdRef.current) await loadTree(updated.id, { preserveSelection: true });
@@ -1295,10 +1565,6 @@ export function App() {
           </button>
         </div>
         <header className="topbar">
-          <div className="topbarTitle">
-            <span>{isTagFiltering ? `#${activeTagFilter}` : selectedWorkspace?.name ?? "Workspace"}</span>
-            <small>{isTagFiltering ? `${tagResults.length} results` : `${visibleIds.length} nodes`}</small>
-          </div>
           <div className="searchBox">
             <Search size={17} />
             <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search" />
@@ -1377,6 +1643,57 @@ export function App() {
                   <code>Ctrl+K</code>
                   <small>[text](paste)</small>
                 </div>
+                <div>
+                  <span>Highlight</span>
+                  <code>Ctrl+Shift+H</code>
+                  <small>==text==</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {convertWorkspaceCandidate && (
+          <div
+            className="modalBackdrop"
+            role="presentation"
+            onClick={() => {
+              if (!isConvertingWorkspace) setConvertWorkspaceCandidate(null);
+            }}
+          >
+            <div
+              className="convertWorkspaceDialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="convert-workspace-title"
+              onClick={event => event.stopPropagation()}
+            >
+              <div className="convertWorkspaceIcon" aria-hidden="true">
+                <FolderTree size={20} />
+              </div>
+              <div className="convertWorkspaceCopy">
+                <h2 id="convert-workspace-title">Convert to workspace?</h2>
+                <p>
+                  <strong>{convertWorkspaceCandidate.title || "Untitled"}</strong> and all nested outlines will move into a new child workspace.
+                </p>
+                <small>The outline will no longer appear in the current workspace.</small>
+              </div>
+              <div className="convertWorkspaceActions">
+                <button
+                  type="button"
+                  disabled={isConvertingWorkspace}
+                  onClick={() => setConvertWorkspaceCandidate(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={isConvertingWorkspace}
+                  onClick={() => convertNodeToWorkspace().catch(toError(setError))}
+                >
+                  {isConvertingWorkspace ? "Converting…" : "Convert"}
+                </button>
               </div>
             </div>
           </div>
@@ -1404,7 +1721,24 @@ export function App() {
         <section className={isInspectorOpen ? "contentGrid" : "contentGrid commentsClosed"}>
           <div className="outlineSurface" ref={outlineSurfaceRef}>
             <div className="outlineHeader">
-              <h1>{isTagFiltering ? `#${activeTagFilter}` : flatState ? getNode(flatState, flatState.rootId)?.title ?? "OpenOutliner" : "OpenOutliner"}</h1>
+              {isTagFiltering ? (
+                <h1>{`#${activeTagFilter}`}</h1>
+              ) : selectedWorkspace ? (
+                <input
+                  className="workspaceTitleInput"
+                  aria-label="Workspace title"
+                  title="Rename workspace"
+                  value={selectedWorkspace.name}
+                  onChange={event => updateWorkspaceDraft(selectedWorkspace.id, event.target.value)}
+                  onBlur={event => updateWorkspaceName(selectedWorkspace, event.target.value).catch(toError(setError))}
+                  onKeyDown={event => {
+                    if (shouldIgnoreTextInputKeyDown(event)) return;
+                    if (event.key === "Enter") event.currentTarget.blur();
+                  }}
+                />
+              ) : (
+                <h1>OpenOutliner</h1>
+              )}
               {isTagFiltering && (
                 <button className="tagFilterClear" type="button" onClick={clearTagFilter}>
                   <X size={15} />
@@ -1445,6 +1779,11 @@ export function App() {
                     const node = flatState ? getNode(flatState, nodeId) : undefined;
                     if (!node) return null;
                     const depth = flatState ? getNodeDepth(flatState, nodeId) : 0;
+                    const selectionPosition = getNodeSelectionPosition(
+                      filteredNodes,
+                      selectedNodeIds,
+                      virtualItem.index
+                    );
                     return (
                       <div
                         className="virtualOutlineRow"
@@ -1456,15 +1795,19 @@ export function App() {
                         <NodeRow
                           node={node}
                           depth={depth}
-                          selected={selectedId === node.id}
+                          selected={selectedNodeIds.has(node.id)}
+                          selectionPosition={selectionPosition}
+                          active={selectedId === node.id}
                           canDrag={!isSearching && !isTagFiltering}
-                          dragging={dragState?.draggingId === node.id}
+                          dragging={draggingNodeIds.has(node.id)}
                           dropPlacement={dragState?.overId === node.id ? dragState.placement ?? null : null}
                           registerInput={element => {
                             if (element) inputRefs.current.set(node.id, element);
                             else inputRefs.current.delete(node.id);
                           }}
-                          onSelect={() => setSelectedId(node.id)}
+                          onMouseSelect={event => selectNodeWithMouse(node.id, event)}
+                          onFocusSelect={() => setSingleSelectedId(node.id)}
+                          onSelectionStart={event => startNodeSelection(node, event)}
                           onPatchLocal={patch => {
                             setFlatState(s => {
                               if (!s) return s;
@@ -1493,6 +1836,7 @@ export function App() {
                           onFocusNext={() => focusRelative(node, 1)}
                           onMoveStart={event => startNodeDrag(node, event)}
                           onTagClick={tag => loadTagResults(tag.name).catch(toError(setError))}
+                          onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
                           onDelete={() => deleteNodeOptimistically(node)}
                         />
                       </div>
@@ -1674,11 +2018,15 @@ function NodeRow({
   node,
   depth,
   selected,
+  selectionPosition,
+  active,
   canDrag,
   dragging,
   dropPlacement,
   registerInput,
-  onSelect,
+  onMouseSelect,
+  onFocusSelect,
+  onSelectionStart,
   onPatchLocal,
   onCommit,
   onToggle,
@@ -1689,16 +2037,21 @@ function NodeRow({
   onFocusNext,
   onMoveStart,
   onTagClick,
+  onConvertToWorkspace,
   onDelete
 }: {
   node: FlatNodeData;
   depth: number;
   selected: boolean;
+  selectionPosition: NodeSelectionPosition | null;
+  active: boolean;
   canDrag: boolean;
   dragging: boolean;
   dropPlacement: DropPlacement | null;
   registerInput: (element: HTMLTextAreaElement | null) => void;
-  onSelect: () => void;
+  onMouseSelect: (event: MouseEvent<HTMLElement>) => boolean;
+  onFocusSelect: () => void;
+  onSelectionStart: (event: PointerEvent<HTMLDivElement>) => void;
   onPatchLocal: (patch: Partial<FlatNodeData>) => void;
   onCommit: (patch: Partial<FlatNodeData>) => void;
   onToggle: (patch: Partial<FlatNodeData>) => void;
@@ -1709,11 +2062,17 @@ function NodeRow({
   onFocusNext: () => void;
   onMoveStart: (event: PointerEvent<HTMLButtonElement>) => void;
   onTagClick: (tag: Tag) => void;
+  onConvertToWorkspace: (title: string) => void;
   onDelete: () => Promise<void>;
 }) {
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const dateInputRef = useRef<HTMLInputElement | null>(null);
+  const markdownMenuRef = useRef<HTMLDivElement | null>(null);
+  const nodeContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [localTitle, setLocalTitle] = useState(node.title);
+  const [markdownMenu, setMarkdownMenu] = useState<MarkdownContextMenuState | null>(null);
+  const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
+  const [linkHref, setLinkHref] = useState("");
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync external title changes (drag, undo, etc.) into local state
@@ -1746,9 +2105,100 @@ function NodeRow({
     };
   }, []);
 
+  useEffect(() => {
+    if (!markdownMenu && !nodeContextMenu) return;
+    const closeOnPointerDown = (event: globalThis.PointerEvent) => {
+      const target = event.target as Node;
+      if (markdownMenu && !markdownMenuRef.current?.contains(target)) setMarkdownMenu(null);
+      if (nodeContextMenu && !nodeContextMenuRef.current?.contains(target)) setNodeContextMenu(null);
+    };
+    const closeMenus = () => {
+      setMarkdownMenu(null);
+      setNodeContextMenu(null);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") closeMenus();
+    };
+    document.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("blur", closeMenus);
+    window.addEventListener("resize", closeMenus);
+    window.addEventListener("scroll", closeMenus, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("blur", closeMenus);
+      window.removeEventListener("resize", closeMenus);
+      window.removeEventListener("scroll", closeMenus, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [markdownMenu, nodeContextMenu]);
+
+  const commitMarkdownEdit = (nextTitle: string, selectionStart: number, selectionEnd: number) => {
+    setLocalTitle(nextTitle);
+    flushTitle(nextTitle);
+    onCommit({ title: nextTitle });
+    setMarkdownMenu(null);
+    window.setTimeout(() => {
+      const input = titleInputRef.current;
+      if (!input) return;
+      focusTitleInput(input);
+      input.setSelectionRange(selectionStart, selectionEnd);
+    }, 0);
+  };
+
+  const applyMarkdownStyleFromMenu = (style: MarkdownStyle) => {
+    if (!markdownMenu) return;
+    const result = applyMarkdownStyle(
+      localTitle,
+      markdownMenu.selectionStart,
+      markdownMenu.selectionEnd,
+      style
+    );
+    commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
+  };
+
+  const applyMarkdownLinkFromMenu = () => {
+    if (!markdownMenu || !linkHref.trim()) return;
+    const result = applyMarkdownLink(
+      localTitle,
+      markdownMenu.selectionStart,
+      markdownMenu.selectionEnd,
+      linkHref.trim()
+    );
+    commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
+  };
+
+  const openMarkdownContextMenu = (input: HTMLTextAreaElement, clientX: number, clientY: number) => {
+    const selectionStart = input.selectionStart ?? 0;
+    const selectionEnd = input.selectionEnd ?? selectionStart;
+    if (selectionStart === selectionEnd) return false;
+    const menuWidth = 328;
+    const menuHeight = 176;
+    setLinkHref("");
+    setMarkdownMenu({
+      x: Math.max(12, Math.min(clientX, window.innerWidth - menuWidth - 12)),
+      y: Math.max(12, Math.min(clientY, window.innerHeight - menuHeight - 12)),
+      selectionStart,
+      selectionEnd
+    });
+    return true;
+  };
+
+  const openNodeContextMenu = (clientX: number, clientY: number) => {
+    const menuWidth = 220;
+    const menuHeight = 52;
+    setMarkdownMenu(null);
+    setNodeContextMenu({
+      x: Math.max(12, Math.min(clientX, window.innerWidth - menuWidth - 12)),
+      y: Math.max(12, Math.min(clientY, window.innerHeight - menuHeight - 12))
+    });
+  };
+
   const rowClassName = [
     "nodeRow",
     selected ? "selected" : "",
+    selectionPosition ? `selection-${selectionPosition}` : "",
+    active ? "active" : "",
     node.done ? "completed" : "",
     node.collapsed && node.childIds.length > 0 ? "collapsedChildren" : "",
     dragging ? "dragging" : "",
@@ -1780,18 +2230,28 @@ function NodeRow({
     <div
       className={rowClassName}
       data-node-id={node.id}
+      data-selected={selected ? "true" : "false"}
+      data-active={active ? "true" : "false"}
       style={{ "--depth": depth } as CSSProperties}
+      onPointerDown={onSelectionStart}
+      onContextMenu={event => {
+        if (node.id.startsWith("temp-")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onFocusSelect();
+        openNodeContextMenu(event.clientX, event.clientY);
+      }}
       onClick={event => {
         const target = event.target as HTMLElement;
         if (
           target.closest(".disclosureButton") ||
           target.closest(".dragHandle") ||
           target.closest(".iconButton.danger") ||
-          target.closest(".nodeDateControl")
+          target.closest(".nodeDateControl") ||
+          target.closest(".nodeTags")
         ) return;
         const input = titleInputRef.current;
-        if (input) {
-          onSelect();
+        if (input && onMouseSelect(event)) {
           input.focus({ preventScroll: true });
         }
       }}
@@ -1826,7 +2286,7 @@ function NodeRow({
           placeholder="Untitled"
           rows={1}
           onFocus={() => {
-            onSelect();
+            onFocusSelect();
           }}
           onChange={event => {
             const value = event.target.value;
@@ -1837,6 +2297,16 @@ function NodeRow({
           onBlur={event => {
             flushTitle(event.target.value);
             onCommit({ title: event.target.value });
+          }}
+          onPointerDown={event => {
+            if (event.button !== 2 || !openMarkdownContextMenu(event.currentTarget, event.clientX, event.clientY)) return;
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onContextMenu={event => {
+            if (!openMarkdownContextMenu(event.currentTarget, event.clientX, event.clientY)) return;
+            event.preventDefault();
+            event.stopPropagation();
           }}
           onKeyDown={event => {
             if (shouldIgnoreTextInputKeyDown(event)) return;
@@ -1865,14 +2335,12 @@ function NodeRow({
             }
           }}
         />
-        <button
+        <div
           className="nodeTitlePreview"
-          type="button"
-          tabIndex={-1}
           onClick={event => {
             event.stopPropagation();
-            if (openMarkdownLink(event)) return;
-            onSelect();
+            if ((event.target as HTMLElement).closest(".nodeTitleLink")) return
+            if (!onMouseSelect(event)) return;
             const input = titleInputRef.current;
             if (input) {
               const selectionStart = getPreviewSelectionStart(
@@ -1888,16 +2356,28 @@ function NodeRow({
         >
           {node.title.trim() ? (
             <ReactMarkdown
-              allowedElements={["p", "strong", "em", "del", "code", "a", "br"]}
-              rehypePlugins={[rehypeSanitize]}
+              allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark"]}
+              rehypePlugins={[rehypeHighlight, [rehypeSanitize, markdownSanitizeSchema]]}
               remarkPlugins={[remarkGfm]}
               unwrapDisallowed
               components={{
-                a: ({ children, href }) => (
-                  <span className="nodeTitleLink" data-href={href}>
-                    {children}
-                  </span>
-                ),
+                a: ({ children, href }) => {
+                  const normalizedHref = href ? normalizeLinkHref(href) : undefined
+                  return (
+                    <a
+                      className="nodeTitleLink"
+                      href={normalizedHref}
+                      onPointerDown={event => event.stopPropagation()}
+                      onClick={event => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        if (normalizedHref) window.open(normalizedHref, "_blank", "noopener,noreferrer")
+                      }}
+                    >
+                      {children}
+                    </a>
+                  )
+                },
                 p: ({ children }) => <span>{children}</span>
               }}
             >
@@ -1906,7 +2386,7 @@ function NodeRow({
           ) : (
             <span className="nodeTitlePlaceholder">Untitled</span>
           )}
-        </button>
+        </div>
       </div>
       <div className="nodeDateControl">
         <input
@@ -1958,7 +2438,11 @@ function NodeRow({
           </button>
         )}
       </div>
-      {childCountLabel ? <span className="nodeChildCount">{childCountLabel}</span> : null}
+      {childCountLabel ? (
+        <span className="nodeChildCount">{childCountLabel}</span>
+      ) : (
+        <span className="nodeChildCount nodeChildCountPlaceholder" aria-hidden="true">0</span>
+      )}
       <div className="nodeTags">
         {(node.tags || []).map(tag => (
           <button type="button" key={tag.id} onClick={() => onTagClick(tag)}>
@@ -1969,6 +2453,95 @@ function NodeRow({
       <button className="iconButton danger" type="button" title="Delete" onClick={() => onDelete()}>
         <Trash2 size={15} />
       </button>
+      {markdownMenu && createPortal(
+        <div
+          ref={markdownMenuRef}
+          className="markdownContextMenu"
+          role="dialog"
+          aria-label="Format selected text"
+          style={{ left: markdownMenu.x, top: markdownMenu.y }}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
+          onContextMenu={event => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+        >
+          <div className="markdownContextMenuHeader">
+            <span>Format selection</span>
+            <small>Markdown</small>
+          </div>
+          <div className="markdownFormatButtons">
+            <button type="button" title="Bold · **text**" aria-label="Bold" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("bold")}>
+              <Bold size={16} />
+              <span>Bold</span>
+            </button>
+            <button type="button" title="Italic · *text*" aria-label="Italic" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("italic")}>
+              <Italic size={16} />
+              <span>Italic</span>
+            </button>
+            <button type="button" title="Strike · ~~text~~" aria-label="Strike" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("strike")}>
+              <Strikethrough size={16} />
+              <span>Strike</span>
+            </button>
+            <button type="button" title="Inline code · `text`" aria-label="Inline code" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("code")}>
+              <Code2 size={16} />
+              <span>Code</span>
+            </button>
+            <button type="button" title="Highlight · ==text==" aria-label="Highlight" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("highlight")}>
+              <Highlighter size={16} />
+              <span>Highlight</span>
+            </button>
+          </div>
+          <form
+            className="markdownLinkForm"
+            onSubmit={event => {
+              event.preventDefault();
+              applyMarkdownLinkFromMenu();
+            }}
+          >
+            <Link2 size={15} />
+            <input
+              aria-label="Link URL"
+              value={linkHref}
+              placeholder="https://example.com"
+              onChange={event => setLinkHref(event.target.value)}
+            />
+            <button type="submit" disabled={!linkHref.trim()}>Link</button>
+          </form>
+        </div>,
+        document.body
+      )}
+      {nodeContextMenu && createPortal(
+        <div
+          ref={nodeContextMenuRef}
+          className="nodeContextMenu"
+          role="menu"
+          aria-label="Outline actions"
+          style={{ left: nodeContextMenu.x, top: nodeContextMenu.y }}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
+          onContextMenu={event => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              flushTitle(localTitle);
+              onCommit({ title: localTitle });
+              setNodeContextMenu(null);
+              onConvertToWorkspace(localTitle);
+            }}
+          >
+            <FolderTree size={16} />
+            <span>Convert to workspace</span>
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
@@ -2088,14 +2661,16 @@ function handleMarkdownShortcut(
 
   const shortcut =
     key === "b" && !event.shiftKey
-      ? { before: "**", after: "**", placeholder: "bold" }
+      ? { style: "bold" as const, placeholder: "bold" }
       : key === "i" && !event.shiftKey
-        ? { before: "*", after: "*", placeholder: "italic" }
+        ? { style: "italic" as const, placeholder: "italic" }
         : key === "e" && !event.shiftKey
-          ? { before: "`", after: "`", placeholder: "code" }
+          ? { style: "code" as const, placeholder: "code" }
           : key === "x" && (event.altKey || event.shiftKey)
-            ? { before: "~~", after: "~~", placeholder: "strike" }
-            : null;
+            ? { style: "strike" as const, placeholder: "strike" }
+            : key === "h" && event.shiftKey
+              ? { style: "highlight" as const, placeholder: "highlight" }
+              : null;
 
   if (!shortcut) return false;
 
@@ -2103,35 +2678,80 @@ function handleMarkdownShortcut(
   const input = event.currentTarget;
   const start = input.selectionStart ?? title.length;
   const end = input.selectionEnd ?? start;
-  const selected = title.slice(start, end) || shortcut.placeholder;
-  const nextTitle = `${title.slice(0, start)}${shortcut.before}${selected}${shortcut.after}${title.slice(end)}`;
+  const result = applyMarkdownStyle(title, start, end, shortcut.style, shortcut.placeholder);
 
-  onPatchLocal({ title: nextTitle });
+  onPatchLocal({ title: result.value });
   window.setTimeout(() => {
-    const selectionStart = start + shortcut.before.length;
-    const selectionEnd = selectionStart + selected.length;
-    input.setSelectionRange(selectionStart, selectionEnd);
+    input.setSelectionRange(result.selectionStart, result.selectionEnd);
   }, 0);
   return true;
 }
 
-function openMarkdownLink(event: MouseEvent<HTMLButtonElement>): boolean {
-  if (!event.ctrlKey && !event.metaKey) return false;
+const markdownStyleMarkers: Record<MarkdownStyle, { before: string; after: string }> = {
+  bold: { before: "**", after: "**" },
+  italic: { before: "*", after: "*" },
+  strike: { before: "~~", after: "~~" },
+  code: { before: "`", after: "`" },
+  highlight: { before: "==", after: "==" }
+};
 
-  const target = event.target instanceof HTMLElement ? event.target : null;
-  const link = target?.closest<HTMLElement>(".nodeTitleLink");
-  const href = link?.dataset.href?.trim();
-  if (!href) return false;
+export function applyMarkdownStyle(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  style: MarkdownStyle,
+  placeholder = "text"
+) {
+  const start = Math.max(0, Math.min(selectionStart, value.length));
+  const end = Math.max(start, Math.min(selectionEnd, value.length));
+  const { before, after } = markdownStyleMarkers[style];
+  const selected = value.slice(start, end) || placeholder;
 
-  event.preventDefault();
-  event.stopPropagation();
-  window.open(normalizeLinkHref(href), "_blank", "noopener,noreferrer");
-  return true;
+  if (
+    start >= before.length &&
+    value.slice(start - before.length, start) === before &&
+    value.slice(end, end + after.length) === after
+  ) {
+    return {
+      value: `${value.slice(0, start - before.length)}${selected}${value.slice(end + after.length)}`,
+      selectionStart: start - before.length,
+      selectionEnd: end - before.length
+    };
+  }
+
+  if (selected.startsWith(before) && selected.endsWith(after) && selected.length >= before.length + after.length) {
+    const unwrapped = selected.slice(before.length, selected.length - after.length);
+    return {
+      value: `${value.slice(0, start)}${unwrapped}${value.slice(end)}`,
+      selectionStart: start,
+      selectionEnd: start + unwrapped.length
+    };
+  }
+
+  return {
+    value: `${value.slice(0, start)}${before}${selected}${after}${value.slice(end)}`,
+    selectionStart: start + before.length,
+    selectionEnd: start + before.length + selected.length
+  };
 }
 
-function normalizeLinkHref(href: string): string {
-  if (/^(?:[a-z][a-z\d+.-]*:|#)/i.test(href)) return href;
-  return `https://${href}`;
+export function applyMarkdownLink(value: string, selectionStart: number, selectionEnd: number, href: string) {
+  const start = Math.max(0, Math.min(selectionStart, value.length));
+  const end = Math.max(start, Math.min(selectionEnd, value.length));
+  const selected = value.slice(start, end) || "link";
+  const before = "[";
+  const after = `](${href})`;
+  return {
+    value: `${value.slice(0, start)}${before}${selected}${after}${value.slice(end)}`,
+    selectionStart: start + before.length,
+    selectionEnd: start + before.length + selected.length
+  };
+}
+
+export function normalizeLinkHref(href: string): string {
+  const trimmed = href.trim();
+  if (/^(?:https?:|mailto:|tel:|#)/i.test(trimmed)) return trimmed;
+  return `https://${trimmed.replace(/^\/\//, "")}`;
 }
 
 async function insertMarkdownLinkFromClipboard(
@@ -2143,20 +2763,59 @@ async function insertMarkdownLinkFromClipboard(
   const input = event.currentTarget;
   const start = input.selectionStart ?? title.length;
   const end = input.selectionEnd ?? start;
-  const selected = title.slice(start, end) || "link";
   const clipboardText = await readClipboardText();
   const href = clipboardText || "url";
-  const before = "[";
-  const after = `](${href})`;
-  const nextTitle = `${title.slice(0, start)}${before}${selected}${after}${title.slice(end)}`;
+  const result = applyMarkdownLink(title, start, end, href);
 
-  onPatchLocal({ title: nextTitle });
+  onPatchLocal({ title: result.value });
   window.setTimeout(() => {
-    const selectionStart = start + before.length;
-    const selectionEnd = selectionStart + selected.length;
     focusTitleInput(input);
-    input.setSelectionRange(selectionStart, selectionEnd);
+    input.setSelectionRange(result.selectionStart, result.selectionEnd);
   }, 0);
+}
+
+export function splitMarkdownHighlights(value: string) {
+  const parts: Array<{ value: string; highlighted: boolean }> = [];
+  const pattern = /==([^=\n]+)==/g;
+  let cursor = 0;
+  for (const match of value.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) parts.push({ value: value.slice(cursor, index), highlighted: false });
+    parts.push({ value: match[1], highlighted: true });
+    cursor = index + match[0].length;
+  }
+  if (cursor < value.length) parts.push({ value: value.slice(cursor), highlighted: false });
+  return parts.length > 0 ? parts : [{ value, highlighted: false }];
+}
+
+interface HastNode {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+}
+
+function rehypeHighlight() {
+  return (tree: HastNode) => {
+    const visit = (node: HastNode) => {
+      if (!node.children || node.tagName === "code" || node.tagName === "pre") return;
+      const children: HastNode[] = [];
+      for (const child of node.children) {
+        if (child.type === "text" && child.value?.includes("==")) {
+          children.push(...splitMarkdownHighlights(child.value).map(part => part.highlighted
+            ? { type: "element", tagName: "mark", properties: {}, children: [{ type: "text", value: part.value }] }
+            : { type: "text", value: part.value }
+          ));
+        } else {
+          visit(child);
+          children.push(child);
+        }
+      }
+      node.children = children;
+    };
+    visit(tree);
+  };
 }
 
 function resizeTitleInput(input: HTMLTextAreaElement) {

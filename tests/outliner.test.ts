@@ -9,18 +9,26 @@ import { exportOpml, importOpml } from "../src/backend/importExport/opml.js";
 import { OutlinerService } from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import {
+  applyMarkdownLink,
+  applyMarkdownStyle,
   createWorkspaceRequestBody,
   formatNodeDate,
   getChildCountLabel,
+  getNodeSelectionPosition,
+  getNodeSelectionRange,
+  normalizeLinkHref,
   nextWorkspaceIdAfterDelete,
   nextCollapsedWorkspaceIds,
   shouldIgnoreTextInputKeyDown,
   nextCollapsedWorkspaceFolderIds,
+  splitMarkdownHighlights,
   splitTitleAtSelection
 } from "../src/web/App.js";
 import {
   fromNestedTree,
+  getTopLevelNodeIds,
   moveNode as moveFlatNode,
+  moveNodes as moveFlatNodes,
   moveNodeInside,
   computeVisibleIds,
   replaceNode
@@ -60,6 +68,52 @@ describe("OutlinerService", () => {
 
     expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Gamma", "Alpha"]);
     expect(service.listChildren(alpha.id).map(node => node.title)).toEqual(["Beta"]);
+  });
+
+  it("moves multiple nodes together in one ordered batch", () => {
+    const workspace = service.createWorkspace("Batch Move");
+    const alpha = service.createNode({ parentId: workspace.rootNodeId, title: "Alpha" });
+    const beta = service.createNode({ parentId: workspace.rootNodeId, title: "Beta" });
+    const gamma = service.createNode({ parentId: workspace.rootNodeId, title: "Gamma" });
+    const delta = service.createNode({ parentId: workspace.rootNodeId, title: "Delta" });
+    service.updateNode(delta.id, { collapsed: true });
+
+    service.moveNodes([beta.id, gamma.id], workspace.rootNodeId, 0);
+    expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual([
+      "Beta",
+      "Gamma",
+      "Alpha",
+      "Delta"
+    ]);
+
+    service.moveNodes([beta.id, gamma.id], delta.id, 0, true);
+    expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Alpha", "Delta"]);
+    expect(service.listChildren(delta.id).map(node => node.title)).toEqual(["Beta", "Gamma"]);
+    expect(service.getNode(delta.id).collapsed).toBe(false);
+  });
+
+  it("moves only the selected top-level ancestor when its descendant is also selected", () => {
+    const workspace = service.createWorkspace("Ancestor Batch Move");
+    const parent = service.createNode({ parentId: workspace.rootNodeId, title: "Parent" });
+    const child = service.createNode({ parentId: parent.id, title: "Child" });
+    const sibling = service.createNode({ parentId: workspace.rootNodeId, title: "Sibling" });
+
+    service.moveNodes([parent.id, child.id], workspace.rootNodeId, 1);
+
+    expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Sibling", "Parent"]);
+    expect(service.listChildren(parent.id).map(node => node.title)).toEqual(["Child"]);
+    expect(service.getNode(child.id).parentId).toBe(parent.id);
+  });
+
+  it("rolls back a batch when its destination is inside a selected subtree", () => {
+    const workspace = service.createWorkspace("Invalid Batch Move");
+    const parent = service.createNode({ parentId: workspace.rootNodeId, title: "Parent" });
+    const child = service.createNode({ parentId: parent.id, title: "Child" });
+    const sibling = service.createNode({ parentId: workspace.rootNodeId, title: "Sibling" });
+
+    expect(() => service.moveNodes([parent.id, sibling.id], child.id, 0)).toThrow("descendants");
+    expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Parent", "Sibling"]);
+    expect(service.listChildren(parent.id).map(node => node.title)).toEqual(["Child"]);
   });
 
   it("stores and clears an optional node date", () => {
@@ -111,6 +165,72 @@ describe("OutlinerService", () => {
     expect(tree.children[1].children[0].title).toBe("Nested");
     expect(tree.children[1].children[0].tags[0].name).toBe("deep");
     expect(tree.children[1].children[0].fieldValues[0].value).toBe("ready");
+  });
+
+  it("converts a node subtree into a child workspace without losing metadata", () => {
+    const source = service.createWorkspace("Source", "rocket");
+    const before = service.createNode({ parentId: source.rootNodeId, title: "Before" });
+    const project = service.createNode({
+      parentId: source.rootNodeId,
+      title: "Project",
+      body: "Project notes",
+      done: true
+    });
+    const after = service.createNode({ parentId: source.rootNodeId, title: "After" });
+    const child = service.createNode({ parentId: project.id, title: "Child" });
+    const grandchild = service.createNode({ parentId: child.id, title: "Grandchild" });
+    service.updateNode(project.id, { dueDate: "2026-08-02", collapsed: true });
+    const tag = service.setNodeTag(child.id, "project");
+    const field = service.createFieldDefinition({
+      workspaceId: source.id,
+      tagId: tag.id,
+      name: "Status",
+      type: "select",
+      options: "todo,done"
+    });
+    service.setFieldValue(grandchild.id, field.id, "done");
+
+    const converted = service.convertNodeToWorkspace(project.id);
+    const convertedTree = service.getTree(converted.rootNodeId);
+
+    expect(converted.name).toBe("Project");
+    expect(converted.icon).toBe("layers");
+    expect(converted.parentWorkspaceId).toBe(source.id);
+    expect(converted.folderId).toBeNull();
+    expect(converted.rootNodeId).toBe(project.id);
+    expect(convertedTree).toMatchObject({
+      id: project.id,
+      workspaceId: converted.id,
+      parentId: null,
+      position: 0,
+      body: "Project notes",
+      dueDate: "2026-08-02",
+      done: true,
+      collapsed: true
+    });
+    expect(convertedTree.children[0].id).toBe(child.id);
+    expect(convertedTree.children[0].workspaceId).toBe(converted.id);
+    expect(convertedTree.children[0].tags[0]).toMatchObject({ name: "project", workspaceId: converted.id });
+    expect(convertedTree.children[0].children[0]).toMatchObject({
+      id: grandchild.id,
+      workspaceId: converted.id
+    });
+    expect(convertedTree.children[0].children[0].fieldValues[0]).toMatchObject({ value: "done" });
+    expect(convertedTree.children[0].children[0].fieldValues[0].fieldId).not.toBe(field.id);
+    expect(service.listFieldDefinitions(converted.id)).toEqual([
+      expect.objectContaining({ workspaceId: converted.id, name: "Status", type: "select", options: "todo,done" })
+    ]);
+    expect(service.listChildren(source.rootNodeId).map(node => ({ id: node.id, position: node.position }))).toEqual([
+      { id: before.id, position: 0 },
+      { id: after.id, position: 1 }
+    ]);
+  });
+
+  it("rejects converting a workspace root node", () => {
+    const workspace = service.createWorkspace("Root guard");
+    expect(() => service.convertNodeToWorkspace(workspace.rootNodeId)).toThrow(
+      "Workspace root nodes cannot be converted."
+    );
   });
 
   it("restores a deleted node subtree at its original sibling position", () => {
@@ -309,6 +429,67 @@ describe("OutlinerService", () => {
 });
 
 describe("tree operations", () => {
+  it("selects a contiguous visible node range in either direction", () => {
+    const visibleIds = ["a", "b", "c", "d"];
+
+    expect(getNodeSelectionRange(visibleIds, "b", "d")).toEqual(["b", "c", "d"]);
+    expect(getNodeSelectionRange(visibleIds, "d", "b")).toEqual(["b", "c", "d"]);
+  });
+
+  it("falls back to the target when the selection anchor is no longer visible", () => {
+    expect(getNodeSelectionRange(["a", "b"], "hidden", "b")).toEqual(["b"]);
+    expect(getNodeSelectionRange(["a", "b"], "a", "hidden")).toEqual([]);
+  });
+
+  it("groups adjacent selected rows into visual selection blocks", () => {
+    const visibleIds = ["a", "b", "c", "d", "e"];
+    const selectedIds = new Set(["a", "b", "c", "e"]);
+
+    expect(getNodeSelectionPosition(visibleIds, selectedIds, 0)).toBe("start");
+    expect(getNodeSelectionPosition(visibleIds, selectedIds, 1)).toBe("middle");
+    expect(getNodeSelectionPosition(visibleIds, selectedIds, 2)).toBe("end");
+    expect(getNodeSelectionPosition(visibleIds, selectedIds, 3)).toBeNull();
+    expect(getNodeSelectionPosition(visibleIds, selectedIds, 4)).toBe("single");
+  });
+
+  it("applies and removes inline Markdown styles around a selection", () => {
+    const highlighted = applyMarkdownStyle("Alpha Beta", 6, 10, "highlight");
+    expect(highlighted).toEqual({
+      value: "Alpha ==Beta==",
+      selectionStart: 8,
+      selectionEnd: 12
+    });
+
+    expect(applyMarkdownStyle(highlighted.value, 8, 12, "highlight")).toEqual({
+      value: "Alpha Beta",
+      selectionStart: 6,
+      selectionEnd: 10
+    });
+    expect(applyMarkdownStyle("Alpha", 0, 5, "bold").value).toBe("**Alpha**");
+    expect(applyMarkdownStyle("`Alpha`", 0, 7, "code").value).toBe("Alpha");
+  });
+
+  it("creates Markdown links and normalizes safe link destinations", () => {
+    expect(applyMarkdownLink("Open docs", 5, 9, "example.com")).toEqual({
+      value: "Open [docs](example.com)",
+      selectionStart: 6,
+      selectionEnd: 10
+    });
+    expect(normalizeLinkHref("example.com")).toBe("https://example.com");
+    expect(normalizeLinkHref("https://example.com/path")).toBe("https://example.com/path");
+    expect(normalizeLinkHref("javascript:alert(1)")).toBe("https://javascript:alert(1)");
+  });
+
+  it("splits highlight Markdown without crossing plain text", () => {
+    expect(splitMarkdownHighlights("One ==two== three ==four==")).toEqual([
+      { value: "One ", highlighted: false },
+      { value: "two", highlighted: true },
+      { value: " three ", highlighted: false },
+      { value: "four", highlighted: true }
+    ]);
+    expect(splitMarkdownHighlights("plain")).toEqual([{ value: "plain", highlighted: false }]);
+  });
+
   it("ignores Enter shortcuts while an IME composition is active", () => {
     expect(shouldIgnoreTextInputKeyDown({ key: "Enter", isComposing: true })).toBe(true);
     expect(shouldIgnoreTextInputKeyDown({ key: "Enter", nativeEvent: { isComposing: true } })).toBe(true);
@@ -377,6 +558,35 @@ describe("tree operations", () => {
     expect(next.nodes["a"].childIds).toEqual(["a-child"]);
     expect(next.nodes["b"].childIds).toEqual(["a"]);
     expect(computeVisibleIds(next)).toEqual(["b", "a", "a-child"]);
+  });
+
+  it("moves flat tree selections as an ordered group", () => {
+    const { state } = fromNestedTree({
+      ...testTree(),
+      children: [
+        testNode("a", "Alpha", "root", 0),
+        testNode("b", "Beta", "root", 1),
+        testNode("c", "Gamma", "root", 2),
+        testNode("d", "Delta", "root", 3)
+      ]
+    });
+
+    const next = moveFlatNodes(state, ["b", "c"], "root", 0);
+
+    expect(next.nodes.root.childIds).toEqual(["b", "c", "a", "d"]);
+    expect(next.nodes.b.position).toBe(0);
+    expect(next.nodes.c.position).toBe(1);
+  });
+
+  it("removes selected descendants from a group move without dropping their subtree", () => {
+    const { state } = fromNestedTree(testTree());
+
+    expect(getTopLevelNodeIds(state, ["a", "a-child", "b"])).toEqual(["a", "b"]);
+    const next = moveFlatNodes(state, ["a", "a-child"], "root", 1);
+
+    expect(next.nodes.root.childIds).toEqual(["b", "a"]);
+    expect(next.nodes.a.childIds).toEqual(["a-child"]);
+    expect(next.nodes["a-child"].parentId).toBe("a");
   });
 
   it("moves flat tree nodes inside a target without dropping existing target content", () => {

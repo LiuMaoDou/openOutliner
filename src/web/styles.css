@@ -74,6 +74,9 @@
   --node-count-border: #e4e4e7;
   --soft-foreground: #52525b;
   --drop-indicator: #18181b;
+  --highlight-background: #fef08a;
+  --highlight-foreground: #713f12;
+  --floating-background: rgba(255, 255, 255, 0.96);
   --scrollbar-thumb: rgba(24, 24, 27, 0.12);
   --radius: 8px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -132,6 +135,9 @@
   --node-count-border: #3f3f46;
   --soft-foreground: #d4d4d8;
   --drop-indicator: #fafafa;
+  --highlight-background: #713f12;
+  --highlight-foreground: #fef3c7;
+  --floating-background: rgba(24, 24, 27, 0.96);
   --scrollbar-thumb: rgba(250, 250, 250, 0.12);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 1px 10px rgba(0, 0, 0, 0.28);
@@ -454,6 +460,7 @@ textarea:focus-visible {
   content: "";
   background: transparent;
   border-radius: 999px;
+  pointer-events: none;
 }
 
 .workspaceItem.drop-before::before {
@@ -694,35 +701,15 @@ textarea:focus-visible {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(220px, 420px) auto;
+  grid-template-columns: minmax(220px, 420px) auto;
   align-items: center;
+  justify-content: end;
   gap: 12px;
   min-height: 58px;
   padding: 10px 16px;
   background: var(--topbar-background);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(12px);
-}
-
-.topbarTitle {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.topbarTitle span {
-  overflow: hidden;
-  color: var(--foreground);
-  font-size: 0.93rem;
-  font-weight: 620;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.topbarTitle small {
-  color: var(--muted-foreground);
-  font-size: 0.78rem;
 }
 
 .searchBox {
@@ -953,6 +940,85 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.convertWorkspaceDialog {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 14px;
+  width: min(440px, 100%);
+  padding: 18px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 52px rgba(9, 9, 11, 0.22), var(--shadow-md);
+}
+
+.convertWorkspaceIcon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: var(--foreground);
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+
+.convertWorkspaceCopy h2 {
+  margin: 1px 0 7px;
+  font-size: 1rem;
+  font-weight: 730;
+}
+
+.convertWorkspaceCopy p {
+  margin: 0;
+  color: var(--secondary-foreground);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.convertWorkspaceCopy strong {
+  overflow-wrap: anywhere;
+}
+
+.convertWorkspaceCopy small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.convertWorkspaceActions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.convertWorkspaceActions button {
+  min-width: 82px;
+  height: 34px;
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  border: 1px solid var(--border);
+}
+
+.convertWorkspaceActions button:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.convertWorkspaceActions button.primary {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.convertWorkspaceActions button.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
 .contentGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 264px;
@@ -981,7 +1047,8 @@ textarea:focus-visible {
   margin: 0 auto 18px;
 }
 
-.outlineHeader h1 {
+.outlineHeader h1,
+.workspaceTitleInput {
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -991,6 +1058,28 @@ textarea:focus-visible {
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspaceTitleInput {
+  width: min(100%, 720px);
+  height: 38px;
+  padding: 0 6px;
+  color: var(--foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  outline: 0;
+}
+
+.workspaceTitleInput:hover {
+  background: var(--selected);
+  border-color: var(--selected-border);
+}
+
+.workspaceTitleInput:focus {
+  background: var(--background);
+  border-color: var(--input);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 18%, transparent);
 }
 
 .tagFilterClear {
@@ -1057,6 +1146,7 @@ textarea:focus-visible {
   content: "";
   background: transparent;
   border-radius: 999px;
+  pointer-events: none;
 }
 
 .nodeRow.drop-before::before {
@@ -1121,7 +1211,35 @@ textarea:focus-visible {
 }
 
 .nodeRow.selected {
+  background: color-mix(in srgb, var(--selected) 72%, transparent);
   border-color: var(--selected-border);
+}
+
+.nodeRow.selection-start {
+  border-bottom-color: transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.nodeRow.selection-middle {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  border-radius: 0;
+}
+
+.nodeRow.selection-end {
+  border-top-color: transparent;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.nodeRow.active {
+  background: var(--selected);
+  box-shadow: inset 3px 0 0 var(--selected-border);
+}
+
+body.isSelectingNodes .outlineSurface,
+body.isSelectingNodes .nodeTitlePreview {
+  cursor: default;
+  user-select: none;
 }
 
 .nodeRow.completed .nodeTitle,
@@ -1354,8 +1472,15 @@ textarea:focus-visible {
   background: var(--muted);
   border: 1px solid var(--border);
   border-radius: 5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "OpenOutlinerCJK", monospace;
   font-size: 0.86em;
+}
+
+.nodeTitlePreview mark {
+  padding: 0 2px;
+  color: var(--highlight-foreground);
+  background: var(--highlight-background);
+  border-radius: 3px;
 }
 
 .nodeTitleLink {
@@ -1365,21 +1490,179 @@ textarea:focus-visible {
   text-underline-offset: 2px;
 }
 
+.nodeTitleLink:hover {
+  color: var(--accent-foreground);
+  text-decoration-thickness: 2px;
+}
+
+.markdownContextMenu {
+  position: fixed;
+  z-index: 90;
+  width: min(328px, calc(100vw - 24px));
+  padding: 10px;
+  color: var(--foreground);
+  background: var(--floating-background);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(9, 9, 11, 0.18), var(--shadow-md);
+  backdrop-filter: blur(14px);
+}
+
+.nodeContextMenu {
+  position: fixed;
+  z-index: 90;
+  width: min(220px, calc(100vw - 24px));
+  padding: 6px;
+  color: var(--foreground);
+  background: var(--floating-background);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(9, 9, 11, 0.18), var(--shadow-md);
+  backdrop-filter: blur(14px);
+}
+
+.nodeContextMenu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  color: var(--foreground);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+}
+
+.nodeContextMenu button:hover,
+.nodeContextMenu button:focus-visible {
+  background: var(--accent);
+}
+
+.nodeContextMenu button span {
+  overflow: hidden;
+  font-size: 0.84rem;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdownContextMenuHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 8px;
+}
+
+.markdownContextMenuHeader span {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.markdownContextMenuHeader small {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+}
+
+.markdownFormatButtons {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.markdownFormatButtons button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  height: 52px;
+  padding: 4px 2px;
+  color: var(--muted-foreground);
+  background: var(--secondary);
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.markdownFormatButtons button:hover {
+  color: var(--foreground);
+  background: var(--accent);
+  border-color: var(--border);
+}
+
+.markdownFormatButtons button:last-child {
+  color: var(--highlight-foreground);
+  background: color-mix(in srgb, var(--highlight-background) 54%, transparent);
+}
+
+.markdownFormatButtons span {
+  overflow: hidden;
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+}
+
+.markdownLinkForm {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 5px 5px 8px;
+  color: var(--muted-foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 8px;
+}
+
+.markdownLinkForm:focus-within {
+  color: var(--foreground);
+  border-color: var(--ring);
+}
+
+.markdownLinkForm input {
+  min-width: 0;
+  padding: 2px 0;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 0.75rem;
+}
+
+.markdownLinkForm button {
+  height: 28px;
+  padding: 0 9px;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border: 0;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.markdownLinkForm button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 .nodeTitlePlaceholder {
   color: var(--muted-foreground);
 }
 
-.nodeRow.selected .nodeTitlePreview,
+.nodeRow.active .nodeTitlePreview,
 .nodeTitle:focus + .nodeTitlePreview {
   opacity: 0;
   pointer-events: none;
 }
 
-.nodeRow:not(.selected) .nodeTitle:not(:focus) {
+.nodeRow:not(.active) .nodeTitle:not(:focus) {
   opacity: 0;
+  pointer-events: none;
 }
 
-.nodeRow.selected .nodeTitle,
+.nodeRow.active .nodeTitle,
 .nodeTitle:focus {
   opacity: 1;
 }
@@ -1407,6 +1690,10 @@ textarea:focus-visible {
   font-size: 0.72rem;
   line-height: 1;
   white-space: nowrap;
+}
+
+.nodeChildCountPlaceholder {
+  visibility: hidden;
 }
 
 .nodeDateControl {
@@ -1925,7 +2212,7 @@ textarea:focus-visible {
   }
 
   .topbar {
-    grid-template-columns: minmax(160px, 1fr) minmax(180px, 360px) auto;
+    grid-template-columns: minmax(180px, 360px) auto;
   }
 }
 
@@ -1940,10 +2227,6 @@ textarea:focus-visible {
     gap: 9px;
     min-height: auto;
     padding: 10px 12px;
-  }
-
-  .topbarTitle {
-    display: none;
   }
 
   .searchBox {
@@ -1992,7 +2275,8 @@ textarea:focus-visible {
     margin-bottom: 12px;
   }
 
-  .outlineHeader h1 {
+  .outlineHeader h1,
+  .workspaceTitleInput {
     max-width: 100%;
     font-size: 1.22rem;
   }

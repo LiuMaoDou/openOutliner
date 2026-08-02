@@ -137,9 +137,22 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
+  const convertNodeToWorkspaceMatch = path.match(/^\/api\/nodes\/([^/]+)\/convert-to-workspace$/);
+  if (method === "POST" && convertNodeToWorkspaceMatch) {
+    const body = await readJson<{ name?: string }>(req);
+    sendJson(res, service.convertNodeToWorkspace(convertNodeToWorkspaceMatch[1], body.name), 201);
+    return;
+  }
+
   const restoreMatch = path.match(/^\/api\/nodes\/([^/]+)\/restore$/);
   if (method === "POST" && restoreMatch) {
     sendJson(res, service.restoreNode(restoreMatch[1]));
+    return;
+  }
+
+  if (method === "POST" && path === "/api/nodes/move-batch") {
+    const body = await readJson<{ ids?: string[]; parentId: string; position?: number; expandParent?: boolean }>(req);
+    sendJson(res, service.moveNodes(body.ids ?? [], body.parentId, body.position, body.expandParent));
     return;
   }
 
