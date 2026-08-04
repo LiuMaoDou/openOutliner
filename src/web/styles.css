@@ -217,11 +217,19 @@ textarea {
     box-shadow 120ms ease;
 }
 
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible {
+button:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
+}
+
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible {
+  outline: 0;
+  box-shadow: none;
 }
 
 .searchBox input:focus-visible {
@@ -230,7 +238,7 @@ textarea:focus-visible {
 
 .appShell {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-columns: clamp(200px, var(--sidebar-width, 264px), min(420px, 42vw)) minmax(0, 1fr);
   height: 100vh;
   min-height: 0;
   overflow: hidden;
@@ -293,6 +301,53 @@ textarea:focus-visible {
   color: var(--sidebar-foreground);
   background: var(--sidebar);
   border-right: 1px solid var(--border);
+}
+
+.panelResizeHandle {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  padding: 0;
+  touch-action: none;
+  cursor: col-resize;
+  outline: 0;
+}
+
+.panelResizeHandle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  content: "";
+  background: transparent;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.panelResizeHandle:hover::after,
+.panelResizeHandle:focus-visible::after,
+body.isResizingPanel .panelResizeHandle::after {
+  background: var(--ring);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ring) 22%, transparent);
+}
+
+.sidebarResizeHandle {
+  right: -1px;
+}
+
+.inspectorResizeHandle {
+  left: -1px;
+}
+
+body.isResizingPanel {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.isResizingPanel .appShell {
+  transition: none;
 }
 
 .sidebarHeader {
@@ -1021,7 +1076,7 @@ textarea:focus-visible {
 
 .contentGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 264px;
+  grid-template-columns: minmax(0, 1fr) clamp(220px, var(--inspector-width, 264px), min(480px, 45%));
   position: relative;
   min-height: 0;
   overflow: hidden;
@@ -1079,7 +1134,7 @@ textarea:focus-visible {
 .workspaceTitleInput:focus {
   background: var(--background);
   border-color: var(--input);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 18%, transparent);
+  box-shadow: none;
 }
 
 .tagFilterClear {
@@ -1921,7 +1976,7 @@ body.isSelectingNodes .nodeTitlePreview {
 .inspector textarea:focus,
 .tagInput:focus-within {
   border-color: var(--ring);
-  box-shadow: 0 0 0 3px rgba(161, 161, 170, 0.22);
+  box-shadow: none;
 }
 
 .notesAlert {
@@ -2162,6 +2217,10 @@ body.isSelectingNodes .nodeTitlePreview {
   }
 
   .sidebar {
+    display: none;
+  }
+
+  .panelResizeHandle {
     display: none;
   }
 

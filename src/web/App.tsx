@@ -187,6 +187,18 @@ interface ConvertWorkspaceCandidate {
   title: string;
 }
 
+type ResizablePanel = "sidebar" | "inspector";
+
+const DEFAULT_SIDEBAR_WIDTH = 264;
+const MIN_SIDEBAR_WIDTH = 200;
+const MAX_SIDEBAR_WIDTH = 420;
+const DEFAULT_INSPECTOR_WIDTH = 264;
+const MIN_INSPECTOR_WIDTH = 220;
+const MAX_INSPECTOR_WIDTH = 480;
+const PANEL_RESIZE_STEP = 16;
+const SIDEBAR_WIDTH_STORAGE_KEY = "openoutliner.sidebar-width";
+const INSPECTOR_WIDTH_STORAGE_KEY = "openoutliner.inspector-width";
+
 const iconNameSet = new Set<string>(iconNames);
 const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -211,6 +223,17 @@ export function App() {
   const [tagResults, setTagResults] = useState<TaggedNodeResult[]>([]);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    readStoredPanelWidth(SIDEBAR_WIDTH_STORAGE_KEY, DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
+  );
+  const [inspectorWidth, setInspectorWidth] = useState(() =>
+    readStoredPanelWidth(
+      INSPECTOR_WIDTH_STORAGE_KEY,
+      DEFAULT_INSPECTOR_WIDTH,
+      MIN_INSPECTOR_WIDTH,
+      MAX_INSPECTOR_WIDTH
+    )
+  );
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
   const [workspaceDragTarget, setWorkspaceDragTarget] = useState<WorkspaceDragTarget | null>(null);
@@ -234,10 +257,81 @@ export function App() {
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const contentGridRef = useRef<HTMLElement | null>(null);
+  const panelResizeCleanupRef = useRef<(() => void) | null>(null);
   const flatStateRef = useRef<FlatTreeState | null>(null);
   const rowResizeObserversRef = useRef(new Map<string, ResizeObserver>());
   const selectedIndexRef = useRef(-1);
   const cancelledTempIdsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    storePanelWidth(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth);
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    storePanelWidth(INSPECTOR_WIDTH_STORAGE_KEY, inspectorWidth);
+  }, [inspectorWidth]);
+
+  useEffect(() => () => panelResizeCleanupRef.current?.(), []);
+
+  const panelWidthBounds = (panel: ResizablePanel) => {
+    if (panel === "sidebar") {
+      const inspectorSpace = isInspectorOpen ? inspectorWidth : 0;
+      const responsiveMax = window.innerWidth - inspectorSpace - 360;
+      return {
+        min: MIN_SIDEBAR_WIDTH,
+        max: Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, responsiveMax))
+      };
+    }
+
+    const contentWidth = contentGridRef.current?.getBoundingClientRect().width ?? window.innerWidth - sidebarWidth;
+    return {
+      min: MIN_INSPECTOR_WIDTH,
+      max: Math.max(MIN_INSPECTOR_WIDTH, Math.min(MAX_INSPECTOR_WIDTH, contentWidth - 360))
+    };
+  };
+
+  const updatePanelWidth = (panel: ResizablePanel, width: number) => {
+    const bounds = panelWidthBounds(panel);
+    const nextWidth = clampPanelWidth(width, bounds.min, bounds.max);
+    if (panel === "sidebar") setSidebarWidth(nextWidth);
+    else setInspectorWidth(nextWidth);
+  };
+
+  const startPanelResize = (panel: ResizablePanel, event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    panelResizeCleanupRef.current?.();
+
+    const startX = event.clientX;
+    const startWidth = panel === "sidebar" ? sidebarWidth : inspectorWidth;
+    const move = (pointerEvent: globalThis.PointerEvent) => {
+      const delta = pointerEvent.clientX - startX;
+      updatePanelWidth(panel, startWidth + (panel === "sidebar" ? delta : -delta));
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      document.body.classList.remove("isResizingPanel");
+      panelResizeCleanupRef.current = null;
+    };
+
+    panelResizeCleanupRef.current = finish;
+    document.body.classList.add("isResizingPanel");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  };
+
+  const resizePanelWithKeyboard = (panel: ResizablePanel, event: KeyboardEvent<HTMLDivElement>) => {
+    const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+    if (!direction) return;
+    event.preventDefault();
+    const currentWidth = panel === "sidebar" ? sidebarWidth : inspectorWidth;
+    const panelDirection = panel === "sidebar" ? direction : -direction;
+    updatePanelWidth(panel, currentWidth + panelDirection * PANEL_RESIZE_STEP);
+  };
 
   const setNodeSelection = useCallback((ids: Iterable<string>, primaryId: string, anchorId = primaryId) => {
     const next = new Set(ids);
@@ -1427,7 +1521,10 @@ export function App() {
   };
 
   return (
-    <div className={`appShell${sidebarCollapsed ? " sidebarCollapsed" : ""}`}>
+    <div
+      className={`appShell${sidebarCollapsed ? " sidebarCollapsed" : ""}`}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+    >
       <aside className="sidebar">
         <div className="sidebarHeader">
           <div className="brand">
@@ -1537,6 +1634,22 @@ export function App() {
             workspaces.filter(workspace => !workspace.parentWorkspaceId).map(workspace => renderWorkspaceItem(workspace))
           )}
         </div>
+        {!sidebarCollapsed && (
+          <div
+            className="panelResizeHandle sidebarResizeHandle"
+            role="separator"
+            aria-label="Resize workspace sidebar"
+            aria-orientation="vertical"
+            aria-valuemin={MIN_SIDEBAR_WIDTH}
+            aria-valuemax={MAX_SIDEBAR_WIDTH}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            title="Drag to resize; double-click to reset"
+            onPointerDown={event => startPanelResize("sidebar", event)}
+            onKeyDown={event => resizePanelWithKeyboard("sidebar", event)}
+            onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
+          />
+        )}
       </aside>
 
       <main className="mainPane">
@@ -1718,7 +1831,11 @@ export function App() {
           </div>
         )}
 
-        <section className={isInspectorOpen ? "contentGrid" : "contentGrid commentsClosed"}>
+        <section
+          className={isInspectorOpen ? "contentGrid" : "contentGrid commentsClosed"}
+          ref={contentGridRef}
+          style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
+        >
           <div className="outlineSurface" ref={outlineSurfaceRef}>
             <div className="outlineHeader">
               {isTagFiltering ? (
@@ -1860,6 +1977,20 @@ export function App() {
 
           {isInspectorOpen && (
             <aside className="inspector">
+              <div
+                className="panelResizeHandle inspectorResizeHandle"
+                role="separator"
+                aria-label="Resize comments sidebar"
+                aria-orientation="vertical"
+                aria-valuemin={MIN_INSPECTOR_WIDTH}
+                aria-valuemax={MAX_INSPECTOR_WIDTH}
+                aria-valuenow={inspectorWidth}
+                tabIndex={0}
+                title="Drag to resize; double-click to reset"
+                onPointerDown={event => startPanelResize("inspector", event)}
+                onKeyDown={event => resizePanelWithKeyboard("inspector", event)}
+                onDoubleClick={() => setInspectorWidth(DEFAULT_INSPECTOR_WIDTH)}
+              />
               <div className="inspectorHeader">
                 <div>
                   <span>Comments</span>
@@ -2816,6 +2947,28 @@ function rehypeHighlight() {
     };
     visit(tree);
   };
+}
+
+export function clampPanelWidth(value: number, min: number, max: number): number {
+  return Math.round(Math.min(Math.max(value, min), max));
+}
+
+function readStoredPanelWidth(key: string, fallback: number, min: number, max: number): number {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = Number(window.localStorage.getItem(key));
+    return Number.isFinite(stored) && stored > 0 ? clampPanelWidth(stored, min, max) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function storePanelWidth(key: string, value: number) {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // Width persistence is optional when storage is unavailable.
+  }
 }
 
 function resizeTitleInput(input: HTMLTextAreaElement) {

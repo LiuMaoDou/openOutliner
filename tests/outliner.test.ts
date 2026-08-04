@@ -11,6 +11,7 @@ import type { OutlineTreeNode } from "../src/web/api.js";
 import {
   applyMarkdownLink,
   applyMarkdownStyle,
+  clampPanelWidth,
   createWorkspaceRequestBody,
   formatNodeDate,
   getChildCountLabel,
@@ -864,6 +865,14 @@ describe("direct child count label", () => {
   it("returns a label only for nodes with direct children", () => {
     expect(getChildCountLabel(3)).toBe("3");
     expect(getChildCountLabel(0)).toBeNull();
+  });
+});
+
+describe("panel width bounds", () => {
+  it("rounds widths and keeps them inside the available range", () => {
+    expect(clampPanelWidth(263.6, 200, 420)).toBe(264);
+    expect(clampPanelWidth(160, 200, 420)).toBe(200);
+    expect(clampPanelWidth(520, 200, 420)).toBe(420);
   });
 });
 
