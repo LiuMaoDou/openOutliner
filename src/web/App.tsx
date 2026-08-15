@@ -11,6 +11,7 @@ import {
   Code2,
   FileDown,
   FolderClosed,
+  FolderInput,
   FolderOpen,
   FolderPlus,
   FolderTree,
@@ -187,6 +188,12 @@ interface ConvertWorkspaceCandidate {
   title: string;
 }
 
+interface MoveWorkspaceCandidate {
+  id: string;
+  title: string;
+  sourceWorkspaceId: string;
+}
+
 type ResizablePanel = "sidebar" | "inspector";
 
 const DEFAULT_SIDEBAR_WIDTH = 264;
@@ -243,7 +250,11 @@ export function App() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [convertWorkspaceCandidate, setConvertWorkspaceCandidate] = useState<ConvertWorkspaceCandidate | null>(null);
   const [isConvertingWorkspace, setIsConvertingWorkspace] = useState(false);
+  const [moveWorkspaceCandidate, setMoveWorkspaceCandidate] = useState<MoveWorkspaceCandidate | null>(null);
+  const [moveWorkspaceTargetId, setMoveWorkspaceTargetId] = useState("");
+  const [isMovingToWorkspace, setIsMovingToWorkspace] = useState(false);
   const workspaceIdRef = useRef("");
+  const pendingWorkspaceFocusIdRef = useRef("");
   const treeRequestRef = useRef(0);
   const tagsRequestRef = useRef(0);
   const tagResultsRequestRef = useRef(0);
@@ -383,10 +394,15 @@ export function App() {
     setFlatState(state);
     setVisibleIds(vids);
     flatStateRef.current = state;
+    const pendingFocusId = pendingWorkspaceFocusIdRef.current;
     const current = selectedIdRef.current;
-    setSingleSelectedId(
-      options.preserveSelection && current && hasNode(state, current) ? current : state.rootId
-    );
+    const nextSelectedId = pendingFocusId && hasNode(state, pendingFocusId)
+      ? pendingFocusId
+      : options.preserveSelection && current && hasNode(state, current)
+        ? current
+        : state.rootId;
+    if (pendingFocusId === nextSelectedId) pendingWorkspaceFocusIdRef.current = "";
+    setSingleSelectedId(nextSelectedId);
   }, [setSingleSelectedId]);
 
   const loadTags = useCallback(async (id: string) => {
@@ -451,6 +467,15 @@ export function App() {
   }, [convertWorkspaceCandidate, isConvertingWorkspace]);
 
   useEffect(() => {
+    if (!moveWorkspaceCandidate || isMovingToWorkspace) return;
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setMoveWorkspaceCandidate(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isMovingToWorkspace, moveWorkspaceCandidate]);
+
+  useEffect(() => {
     if (!pendingDelete) return;
     const timer = window.setTimeout(() => setPendingDelete(current =>
       current?.createdAt === pendingDelete.createdAt ? null : current
@@ -499,6 +524,17 @@ export function App() {
     }
     return map;
   }, [workspaces]);
+  const moveWorkspaceOptions = useMemo(() => {
+    const sourceWorkspaceId = moveWorkspaceCandidate?.sourceWorkspaceId ?? workspaceId;
+    const workspacesById = new Map(workspaces.map(workspace => [workspace.id, workspace]));
+    const foldersById = new Map(workspaceFolders.map(folder => [folder.id, folder]));
+    return workspaces
+      .filter(workspace => workspace.id !== sourceWorkspaceId)
+      .map(workspace => ({
+        workspace,
+        label: getWorkspacePathLabel(workspace, workspacesById, foldersById)
+      }));
+  }, [moveWorkspaceCandidate?.sourceWorkspaceId, workspaceFolders, workspaceId, workspaces]);
   const isSearching = search.trim().length > 0;
   const isTagFiltering = activeTagFilter.length > 0;
   const filteredNodes = isSearching && flatState
@@ -1175,6 +1211,25 @@ export function App() {
     }
   };
 
+  const moveNodeToWorkspace = async () => {
+    const candidate = moveWorkspaceCandidate;
+    const targetWorkspaceId = moveWorkspaceTargetId;
+    if (!candidate || !targetWorkspaceId || isMovingToWorkspace) return;
+
+    setIsMovingToWorkspace(true);
+    try {
+      await apiPost("/api/nodes/move-to-workspace", {
+        ids: [candidate.id],
+        workspaceId: targetWorkspaceId
+      });
+      pendingWorkspaceFocusIdRef.current = candidate.id;
+      setMoveWorkspaceCandidate(null);
+      selectWorkspace(targetWorkspaceId);
+    } finally {
+      setIsMovingToWorkspace(false);
+    }
+  };
+
   const createWorkspaceFolder = async () => {
     const created = await apiPost<WorkspaceFolder>("/api/workspace-folders", { name: "New Folder" });
     setWorkspaceFolders(current => [...current, created]);
@@ -1812,6 +1867,69 @@ export function App() {
           </div>
         )}
 
+        {moveWorkspaceCandidate && (
+          <div
+            className="modalBackdrop"
+            role="presentation"
+            onClick={() => {
+              if (!isMovingToWorkspace) setMoveWorkspaceCandidate(null);
+            }}
+          >
+            <div
+              className="convertWorkspaceDialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="move-workspace-title"
+              onClick={event => event.stopPropagation()}
+            >
+              <div className="convertWorkspaceIcon" aria-hidden="true">
+                <FolderInput size={20} />
+              </div>
+              <div className="convertWorkspaceCopy">
+                <h2 id="move-workspace-title">Move to workspace</h2>
+                <p>
+                  Move <strong>{moveWorkspaceCandidate.title || "Untitled"}</strong> and all nested outlines to another workspace.
+                </p>
+                <label className="moveWorkspaceField">
+                  <span>Destination</span>
+                  <select
+                    aria-label="Destination workspace"
+                    value={moveWorkspaceTargetId}
+                    disabled={isMovingToWorkspace || moveWorkspaceOptions.length === 0}
+                    onChange={event => setMoveWorkspaceTargetId(event.target.value)}
+                  >
+                    {moveWorkspaceOptions.length === 0 ? (
+                      <option value="">No other workspace</option>
+                    ) : (
+                      moveWorkspaceOptions.map(option => (
+                        <option key={option.workspace.id} value={option.workspace.id}>{option.label}</option>
+                      ))
+                    )}
+                  </select>
+                </label>
+                <small>Tags, custom fields, notes, dates, and nested outlines will be preserved.</small>
+              </div>
+              <div className="convertWorkspaceActions">
+                <button
+                  type="button"
+                  disabled={isMovingToWorkspace}
+                  onClick={() => setMoveWorkspaceCandidate(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={isMovingToWorkspace || !moveWorkspaceTargetId}
+                  onClick={() => moveNodeToWorkspace().catch(toError(setError))}
+                >
+                  {isMovingToWorkspace ? "Moving…" : "Move"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="errorBar">
             <span>{error}</span>
@@ -1954,6 +2072,11 @@ export function App() {
                           onMoveStart={event => startNodeDrag(node, event)}
                           onTagClick={tag => loadTagResults(tag.name).catch(toError(setError))}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
+                          onMoveToWorkspace={title => {
+                            const firstTargetId = moveWorkspaceOptions[0]?.workspace.id ?? "";
+                            setMoveWorkspaceTargetId(firstTargetId);
+                            setMoveWorkspaceCandidate({ id: node.id, title, sourceWorkspaceId: workspaceId });
+                          }}
                           onDelete={() => deleteNodeOptimistically(node)}
                         />
                       </div>
@@ -2169,6 +2292,7 @@ function NodeRow({
   onMoveStart,
   onTagClick,
   onConvertToWorkspace,
+  onMoveToWorkspace,
   onDelete
 }: {
   node: FlatNodeData;
@@ -2194,6 +2318,7 @@ function NodeRow({
   onMoveStart: (event: PointerEvent<HTMLButtonElement>) => void;
   onTagClick: (tag: Tag) => void;
   onConvertToWorkspace: (title: string) => void;
+  onMoveToWorkspace: (title: string) => void;
   onDelete: () => Promise<void>;
 }) {
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2317,7 +2442,7 @@ function NodeRow({
 
   const openNodeContextMenu = (clientX: number, clientY: number) => {
     const menuWidth = 220;
-    const menuHeight = 52;
+    const menuHeight = 96;
     setMarkdownMenu(null);
     setNodeContextMenu({
       x: Math.max(12, Math.min(clientX, window.innerWidth - menuWidth - 12)),
@@ -2664,6 +2789,19 @@ function NodeRow({
               flushTitle(localTitle);
               onCommit({ title: localTitle });
               setNodeContextMenu(null);
+              onMoveToWorkspace(localTitle);
+            }}
+          >
+            <FolderInput size={16} />
+            <span>Move to workspace</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              flushTitle(localTitle);
+              onCommit({ title: localTitle });
+              setNodeContextMenu(null);
               onConvertToWorkspace(localTitle);
             }}
           >
@@ -2775,6 +2913,28 @@ function isWorkspaceDescendant(workspaces: Workspace[], workspaceId: string, anc
     current = workspaces.find(workspace => workspace.id === current?.parentWorkspaceId);
   }
   return false;
+}
+
+function getWorkspacePathLabel(
+  workspace: Workspace,
+  workspacesById: ReadonlyMap<string, Workspace>,
+  foldersById: ReadonlyMap<string, WorkspaceFolder>
+): string {
+  const parts = [workspace.name];
+  const visited = new Set([workspace.id]);
+  let current = workspace;
+  while (current.parentWorkspaceId && !visited.has(current.parentWorkspaceId)) {
+    const parent = workspacesById.get(current.parentWorkspaceId);
+    if (!parent) break;
+    visited.add(parent.id);
+    parts.unshift(parent.name);
+    current = parent;
+  }
+  if (current.folderId) {
+    const folder = foldersById.get(current.folderId);
+    if (folder) parts.unshift(folder.name);
+  }
+  return parts.join(" / ");
 }
 
 function handleMarkdownShortcut(

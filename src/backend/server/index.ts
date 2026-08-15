@@ -156,6 +156,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
+  if (method === "POST" && path === "/api/nodes/move-to-workspace") {
+    const body = await readJson<{ ids?: string[]; workspaceId: string }>(req);
+    sendJson(res, service.moveNodesToWorkspace(body.ids ?? [], body.workspaceId));
+    return;
+  }
+
   const moveMatch = path.match(/^\/api\/nodes\/([^/]+)\/move$/);
   if (method === "POST" && moveMatch) {
     const body = await readJson<{ parentId: string; position?: number }>(req);

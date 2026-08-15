@@ -633,6 +633,83 @@ export class OutlinerService {
     return movingIds.map(id => this.getNode(id));
   }
 
+  moveNodesToWorkspace(ids: string[], targetWorkspaceId: string): OutlineNode[] {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) throw new ValidationError("At least one node is required.");
+
+    const selectedIds = new Set(uniqueIds);
+    const requestedNodes = uniqueIds.map(id => this.getNode(id));
+    const movingNodes = requestedNodes.filter(node => {
+      let ancestorId = node.parentId;
+      while (ancestorId) {
+        if (selectedIds.has(ancestorId)) return false;
+        ancestorId = this.getNode(ancestorId).parentId;
+      }
+      return true;
+    });
+    if (movingNodes.some(node => !node.parentId)) {
+      throw new ValidationError("Workspace root nodes cannot be moved.");
+    }
+
+    const sourceWorkspaceId = movingNodes[0]?.workspaceId;
+    if (!sourceWorkspaceId || movingNodes.some(node => node.workspaceId !== sourceWorkspaceId)) {
+      throw new ValidationError("Nodes must come from the same workspace.");
+    }
+    if (sourceWorkspaceId === targetWorkspaceId) {
+      throw new ValidationError("Choose a different workspace.");
+    }
+
+    const sourceWorkspace = this.getWorkspace(sourceWorkspaceId);
+    const targetWorkspace = this.getWorkspace(targetWorkspaceId);
+    const movingIds = movingNodes.map(node => node.id);
+    const placeholders = movingIds.map(() => "?").join(", ");
+    const subtreeRows = this.db
+      .prepare(
+        `WITH RECURSIVE subtree(id) AS (
+          SELECT id FROM nodes WHERE id IN (${placeholders}) AND deleted_at IS NULL
+          UNION
+          SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
+          WHERE nodes.deleted_at IS NULL
+        )
+        SELECT id FROM subtree`
+      )
+      .all(...movingIds) as Row[];
+    const subtreeIds = subtreeRows.map(row => text(row.id));
+    const sourceParentIds = [...new Set(movingNodes.map(node => node.parentId as string))];
+    const movingIdSet = new Set(movingIds);
+    const sourceChildrenByParent = new Map(
+      sourceParentIds.map(parentId => [
+        parentId,
+        this.listChildren(parentId).map(node => node.id).filter(id => !movingIdSet.has(id))
+      ])
+    );
+    const targetPosition = this.listChildren(targetWorkspace.rootNodeId).length;
+    const now = timestamp();
+
+    this.transaction(() => {
+      this.migrateNodeMetadata(subtreeIds, sourceWorkspace, targetWorkspace, now);
+
+      const updatePosition = this.db.prepare(
+        "UPDATE nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?"
+      );
+      for (const [parentId, childIds] of sourceChildrenByParent) {
+        childIds.forEach((childId, index) => updatePosition.run(parentId, index, now, childId));
+      }
+
+      this.db
+        .prepare(`UPDATE nodes SET workspace_id = ?, updated_at = ? WHERE id IN (${subtreeIds.map(() => "?").join(", ")})`)
+        .run(targetWorkspace.id, now, ...subtreeIds);
+      movingIds.forEach((id, index) => {
+        updatePosition.run(targetWorkspace.rootNodeId, targetPosition + index, now, id);
+      });
+      this.db
+        .prepare("UPDATE workspaces SET updated_at = ? WHERE id IN (?, ?)")
+        .run(now, sourceWorkspace.id, targetWorkspace.id);
+    });
+
+    return movingIds.map(id => this.getNode(id));
+  }
+
   deleteNode(id: string): { deleted: string[] } {
     const node = this.getNode(id);
     const workspace = this.getWorkspace(node.workspaceId);
@@ -993,6 +1070,118 @@ export class OutlinerService {
       .prepare("SELECT * FROM field_values WHERE node_id = ? ORDER BY field_id ASC")
       .all(nodeId)
       .map(rowToFieldValue);
+  }
+
+  private migrateNodeMetadata(
+    nodeIds: string[],
+    sourceWorkspace: Workspace,
+    targetWorkspace: Workspace,
+    now: string
+  ): void {
+    if (nodeIds.length === 0) return;
+
+    const placeholders = nodeIds.map(() => "?").join(", ");
+    const nodeTagRows = this.db
+      .prepare(
+        `SELECT node_tags.node_id, tags.* FROM node_tags
+         JOIN tags ON tags.id = node_tags.tag_id
+         WHERE node_tags.node_id IN (${placeholders})`
+      )
+      .all(...nodeIds) as Row[];
+    const fieldValueRows = this.db
+      .prepare(
+        `SELECT field_values.*, field_definitions.tag_id AS source_tag_id
+         FROM field_values
+         JOIN field_definitions ON field_definitions.id = field_values.field_id
+         WHERE field_values.node_id IN (${placeholders})`
+      )
+      .all(...nodeIds) as Row[];
+
+    const sourceTagRows = new Map<string, Row>();
+    for (const row of nodeTagRows) sourceTagRows.set(text(row.id), row);
+    for (const row of fieldValueRows) {
+      const tagId = text(row.source_tag_id);
+      if (sourceTagRows.has(tagId)) continue;
+      const tagRow = this.db.prepare("SELECT * FROM tags WHERE id = ?").get(tagId) as Row | undefined;
+      if (tagRow) sourceTagRows.set(tagId, tagRow);
+    }
+
+    const targetTagIds = new Map<string, string>();
+    for (const [sourceTagId, row] of sourceTagRows) {
+      const name = text(row.name);
+      const existing = this.db
+        .prepare("SELECT id FROM tags WHERE workspace_id = ? AND name = ?")
+        .get(targetWorkspace.id, name) as Row | undefined;
+      const targetTagId = existing ? text(existing.id) : randomUUID();
+      if (!existing) {
+        this.db
+          .prepare("INSERT INTO tags (id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)")
+          .run(targetTagId, targetWorkspace.id, name, text(row.color), now);
+      }
+      targetTagIds.set(sourceTagId, targetTagId);
+    }
+
+    const sourceTagIds = [...sourceTagRows.keys()];
+    const fieldRows = sourceTagIds.length === 0
+      ? []
+      : this.db
+          .prepare(`SELECT * FROM field_definitions WHERE tag_id IN (${sourceTagIds.map(() => "?").join(", ")})`)
+          .all(...sourceTagIds) as Row[];
+    const targetFieldIds = new Map<string, string>();
+    for (const row of fieldRows) {
+      const targetTagId = targetTagIds.get(text(row.tag_id));
+      if (!targetTagId) continue;
+
+      const type = text(row.type);
+      const options = nullableText(row.options);
+      const originalName = text(row.name);
+      let targetName = originalName;
+      let suffix = 2;
+      let existing = this.db
+        .prepare("SELECT * FROM field_definitions WHERE tag_id = ? AND name = ?")
+        .get(targetTagId, targetName) as Row | undefined;
+      while (existing && (text(existing.type) !== type || nullableText(existing.options) !== options)) {
+        targetName = `${originalName} (${sourceWorkspace.name}${suffix === 2 ? "" : ` ${suffix}`})`;
+        suffix += 1;
+        existing = this.db
+          .prepare("SELECT * FROM field_definitions WHERE tag_id = ? AND name = ?")
+          .get(targetTagId, targetName) as Row | undefined;
+      }
+
+      const targetFieldId = existing ? text(existing.id) : randomUUID();
+      if (!existing) {
+        this.db
+          .prepare(
+            `INSERT INTO field_definitions
+              (id, workspace_id, tag_id, name, type, options, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(targetFieldId, targetWorkspace.id, targetTagId, targetName, type, options, now);
+      }
+      targetFieldIds.set(text(row.id), targetFieldId);
+    }
+
+    for (const row of nodeTagRows) {
+      const targetTagId = targetTagIds.get(text(row.id));
+      if (!targetTagId) continue;
+      this.db
+        .prepare("INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?, ?)")
+        .run(text(row.node_id), targetTagId);
+      this.db
+        .prepare("DELETE FROM node_tags WHERE node_id = ? AND tag_id = ?")
+        .run(text(row.node_id), text(row.id));
+    }
+
+    for (const row of fieldValueRows) {
+      const targetFieldId = targetFieldIds.get(text(row.field_id));
+      if (!targetFieldId) continue;
+      this.db
+        .prepare("INSERT INTO field_values (node_id, field_id, value, updated_at) VALUES (?, ?, ?, ?)")
+        .run(text(row.node_id), targetFieldId, text(row.value), now);
+      this.db
+        .prepare("DELETE FROM field_values WHERE node_id = ? AND field_id = ?")
+        .run(text(row.node_id), text(row.field_id));
+    }
   }
 
   private isDescendant(candidateId: string, ancestorId: string): boolean {

@@ -117,6 +117,92 @@ describe("OutlinerService", () => {
     expect(service.listChildren(parent.id).map(node => node.title)).toEqual(["Child"]);
   });
 
+  it("moves a complete subtree to another workspace without losing metadata", () => {
+    const source = service.createWorkspace("Source");
+    const target = service.createWorkspace("Target");
+    const before = service.createNode({ parentId: source.rootNodeId, title: "Before" });
+    const project = service.createNode({
+      parentId: source.rootNodeId,
+      title: "Project",
+      body: "Project notes",
+      done: true
+    });
+    const after = service.createNode({ parentId: source.rootNodeId, title: "After" });
+    const child = service.createNode({ parentId: project.id, title: "Child" });
+    const existing = service.createNode({ parentId: target.rootNodeId, title: "Existing" });
+    service.updateNode(project.id, { dueDate: "2026-08-15", collapsed: true });
+
+    const sourceTag = service.setNodeTag(child.id, "project");
+    const sourceField = service.createFieldDefinition({
+      workspaceId: source.id,
+      tagId: sourceTag.id,
+      name: "Status",
+      type: "select",
+      options: "todo,done"
+    });
+    service.setFieldValue(child.id, sourceField.id, "done");
+
+    const targetTag = service.createTag(target.id, "project", "#123456");
+    service.createFieldDefinition({
+      workspaceId: target.id,
+      tagId: targetTag.id,
+      name: "Status",
+      type: "text"
+    });
+
+    service.moveNodesToWorkspace([project.id], target.id);
+
+    expect(service.listChildren(source.rootNodeId).map(node => ({ id: node.id, position: node.position }))).toEqual([
+      { id: before.id, position: 0 },
+      { id: after.id, position: 1 }
+    ]);
+    expect(service.listChildren(target.rootNodeId).map(node => ({ id: node.id, position: node.position }))).toEqual([
+      { id: existing.id, position: 0 },
+      { id: project.id, position: 1 }
+    ]);
+
+    const targetTree = service.getTree(target.rootNodeId);
+    const movedProject = targetTree.children[1];
+    expect(movedProject).toMatchObject({
+      id: project.id,
+      workspaceId: target.id,
+      parentId: target.rootNodeId,
+      body: "Project notes",
+      dueDate: "2026-08-15",
+      done: true,
+      collapsed: true
+    });
+    expect(movedProject.children[0]).toMatchObject({ id: child.id, workspaceId: target.id });
+    expect(movedProject.children[0].tags).toEqual([
+      expect.objectContaining({ id: targetTag.id, workspaceId: target.id, name: "project" })
+    ]);
+
+    const targetFields = service.listFieldDefinitions(target.id);
+    expect(targetFields.map(field => ({ name: field.name, type: field.type, options: field.options }))).toEqual([
+      { name: "Status", type: "text", options: null },
+      { name: "Status (Source)", type: "select", options: "todo,done" }
+    ]);
+    const migratedField = targetFields.find(field => field.name === "Status (Source)");
+    expect(service.listFieldValues(child.id)).toEqual([
+      expect.objectContaining({ fieldId: migratedField?.id, value: "done" })
+    ]);
+  });
+
+  it("moves selected ancestors once and preserves their requested order across workspaces", () => {
+    const source = service.createWorkspace("Source batch");
+    const target = service.createWorkspace("Target batch");
+    const parent = service.createNode({ parentId: source.rootNodeId, title: "Parent" });
+    const child = service.createNode({ parentId: parent.id, title: "Child" });
+    const sibling = service.createNode({ parentId: source.rootNodeId, title: "Sibling" });
+
+    service.moveNodesToWorkspace([sibling.id, parent.id, child.id], target.id);
+
+    expect(service.listChildren(source.rootNodeId)).toEqual([]);
+    expect(service.listChildren(target.rootNodeId).map(node => node.title)).toEqual(["Sibling", "Parent"]);
+    expect(service.listChildren(parent.id).map(node => node.title)).toEqual(["Child"]);
+    expect(service.getNode(child.id).workspaceId).toBe(target.id);
+  });
+
   it("stores and clears an optional node date", () => {
     const workspace = service.createWorkspace("Dates");
     const node = service.createNode({ parentId: workspace.rootNodeId, title: "Review" });
