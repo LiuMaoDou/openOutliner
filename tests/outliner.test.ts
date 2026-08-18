@@ -567,6 +567,24 @@ describe("tree operations", () => {
     expect(normalizeLinkHref("javascript:alert(1)")).toBe("https://javascript:alert(1)");
   });
 
+  it("updates existing Markdown links without nesting or duplicating long URLs", () => {
+    const href = "https://help.aliyun.com/zh/cloud-network-well-architected-design/alibaba-cloud-ai-network-white-paper";
+    const markdownLink = `[${href}](${href})`;
+
+    expect(applyMarkdownLink(markdownLink, 0, markdownLink.length, href)).toEqual({
+      value: markdownLink,
+      selectionStart: 1,
+      selectionEnd: href.length + 1
+    });
+    expect(applyMarkdownLink("AI white paper", 0, 14, markdownLink)).toEqual({
+      value: `[AI white paper](${href})`,
+      selectionStart: 1,
+      selectionEnd: 15
+    });
+    expect(applyMarkdownLink("[docs](https://old.example/a_(b))", 0, 34, "https://new.example").value)
+      .toBe("[docs](https://new.example)");
+  });
+
   it("splits highlight Markdown without crossing plain text", () => {
     expect(splitMarkdownHighlights("One ==two== three ==four==")).toEqual([
       { value: "One ", highlighted: false },

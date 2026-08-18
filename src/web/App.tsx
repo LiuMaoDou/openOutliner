@@ -2372,28 +2372,43 @@ function NodeRow({
       setMarkdownMenu(null);
       setNodeContextMenu(null);
     };
+    const closeOnWindowBlur = () => {
+      if (markdownMenu) return;
+      closeMenus();
+    };
+    const closeOnScroll = (event: Event) => {
+      const target = event.target;
+      if (markdownMenu && target instanceof Node && markdownMenuRef.current?.contains(target)) return;
+      closeMenus();
+    };
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") closeMenus();
     };
     document.addEventListener("pointerdown", closeOnPointerDown);
-    window.addEventListener("blur", closeMenus);
+    window.addEventListener("blur", closeOnWindowBlur);
     window.addEventListener("resize", closeMenus);
-    window.addEventListener("scroll", closeMenus, true);
+    window.addEventListener("scroll", closeOnScroll, true);
     window.addEventListener("keydown", closeOnEscape);
     return () => {
       document.removeEventListener("pointerdown", closeOnPointerDown);
-      window.removeEventListener("blur", closeMenus);
+      window.removeEventListener("blur", closeOnWindowBlur);
       window.removeEventListener("resize", closeMenus);
-      window.removeEventListener("scroll", closeMenus, true);
+      window.removeEventListener("scroll", closeOnScroll, true);
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [markdownMenu, nodeContextMenu]);
 
-  const commitMarkdownEdit = (nextTitle: string, selectionStart: number, selectionEnd: number) => {
+  const commitMarkdownEdit = (
+    nextTitle: string,
+    selectionStart: number,
+    selectionEnd: number,
+    restoreFocus = true
+  ) => {
     setLocalTitle(nextTitle);
     flushTitle(nextTitle);
     onCommit({ title: nextTitle });
     setMarkdownMenu(null);
+    if (!restoreFocus) return;
     window.setTimeout(() => {
       const input = titleInputRef.current;
       if (!input) return;
@@ -2421,7 +2436,7 @@ function NodeRow({
       markdownMenu.selectionEnd,
       linkHref.trim()
     );
-    commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
+    commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd, false);
   };
 
   const openMarkdownContextMenu = (input: HTMLTextAreaElement, clientX: number, clientY: number) => {
@@ -2762,6 +2777,7 @@ function NodeRow({
               value={linkHref}
               placeholder="https://example.com"
               onChange={event => setLinkHref(event.target.value)}
+              onContextMenu={event => event.stopPropagation()}
             />
             <button type="submit" disabled={!linkHref.trim()}>Link</button>
           </form>
@@ -3030,13 +3046,58 @@ export function applyMarkdownLink(value: string, selectionStart: number, selecti
   const start = Math.max(0, Math.min(selectionStart, value.length));
   const end = Math.max(start, Math.min(selectionEnd, value.length));
   const selected = value.slice(start, end) || "link";
+  const existingLink = parseWholeMarkdownLink(selected);
+  const label = existingLink?.label ?? selected;
+  const normalizedHref = parseWholeMarkdownLink(href.trim())?.href.trim() || href.trim();
   const before = "[";
-  const after = `](${href})`;
+  const after = `](${normalizedHref})`;
   return {
-    value: `${value.slice(0, start)}${before}${selected}${after}${value.slice(end)}`,
+    value: `${value.slice(0, start)}${before}${label}${after}${value.slice(end)}`,
     selectionStart: start + before.length,
-    selectionEnd: start + before.length + selected.length
+    selectionEnd: start + before.length + label.length
   };
+}
+
+function parseWholeMarkdownLink(value: string): { label: string; href: string } | null {
+  if (!value.startsWith("[") || !value.endsWith(")")) return null;
+
+  let bracketDepth = 1;
+  let closingBracket = -1;
+  for (let index = 1; index < value.length; index += 1) {
+    if (value[index] === "\\") {
+      index += 1;
+      continue;
+    }
+    if (value[index] === "[") bracketDepth += 1;
+    else if (value[index] === "]") {
+      bracketDepth -= 1;
+      if (bracketDepth === 0) {
+        closingBracket = index;
+        break;
+      }
+    }
+  }
+
+  if (closingBracket < 0 || value[closingBracket + 1] !== "(") return null;
+
+  let parenthesisDepth = 1;
+  for (let index = closingBracket + 2; index < value.length; index += 1) {
+    if (value[index] === "\\") {
+      index += 1;
+      continue;
+    }
+    if (value[index] === "(") parenthesisDepth += 1;
+    else if (value[index] === ")") {
+      parenthesisDepth -= 1;
+      if (parenthesisDepth === 0) {
+        if (index !== value.length - 1) return null;
+        const href = value.slice(closingBracket + 2, index);
+        return href ? { label: value.slice(1, closingBracket), href } : null;
+      }
+    }
+  }
+
+  return null;
 }
 
 export function normalizeLinkHref(href: string): string {

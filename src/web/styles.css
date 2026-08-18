@@ -1465,6 +1465,7 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .nodeTitleCell {
+  position: relative;
   display: grid;
   align-items: center;
   min-width: 0;
@@ -1728,18 +1729,18 @@ body.isSelectingNodes .nodeTitlePreview {
   color: var(--muted-foreground);
 }
 
-.nodeRow.active .nodeTitlePreview,
 .nodeTitle:focus + .nodeTitlePreview {
   opacity: 0;
   pointer-events: none;
 }
 
-.nodeRow:not(.active) .nodeTitle:not(:focus) {
+.nodeTitle:not(:focus) {
+  position: absolute;
+  inset: 0;
   opacity: 0;
   pointer-events: none;
 }
 
-.nodeRow.active .nodeTitle,
 .nodeTitle:focus {
   opacity: 1;
 }
