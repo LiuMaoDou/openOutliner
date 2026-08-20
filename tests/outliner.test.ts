@@ -9,6 +9,7 @@ import { exportOpml, importOpml } from "../src/backend/importExport/opml.js";
 import { OutlinerService } from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import {
+  applyCachedNodeTitles,
   applyMarkdownLink,
   applyMarkdownStyle,
   clampPanelWidth,
@@ -20,6 +21,8 @@ import {
   normalizeLinkHref,
   nextWorkspaceIdAfterDelete,
   nextCollapsedWorkspaceIds,
+  resolvePendingNodeTitle,
+  resolveStoredBoolean,
   shouldIgnoreTextInputKeyDown,
   nextCollapsedWorkspaceFolderIds,
   splitMarkdownHighlights,
@@ -977,6 +980,30 @@ describe("panel width bounds", () => {
     expect(clampPanelWidth(263.6, 200, 420)).toBe(264);
     expect(clampPanelWidth(160, 200, 420)).toBe(200);
     expect(clampPanelWidth(520, 200, 420)).toBe(420);
+  });
+});
+
+describe("workspace sidebar collapse persistence", () => {
+  it("restores valid stored values and ignores invalid data", () => {
+    expect(resolveStoredBoolean("true", false)).toBe(true);
+    expect(resolveStoredBoolean("false", true)).toBe(false);
+    expect(resolveStoredBoolean("invalid", false)).toBe(false);
+  });
+});
+
+describe("optimistic node title cache", () => {
+  it("prefers the latest local title while a temporary node is being created", () => {
+    expect(resolvePendingNodeTitle("快速输入", "older draft", "server title")).toBe("快速输入");
+    expect(resolvePendingNodeTitle("", "older draft", "server title")).toBe("");
+    expect(resolvePendingNodeTitle(undefined, "draft", "server title")).toBe("draft");
+  });
+
+  it("reapplies cached titles when a later response carries stale tree state", () => {
+    const { state } = fromNestedTree(testTree());
+    const next = applyCachedNodeTitles(state, new Map([["a", "最新本地标题"]]));
+
+    expect(next.nodes.a.title).toBe("最新本地标题");
+    expect(next.nodes.b.title).toBe("Beta");
   });
 });
 

@@ -203,6 +203,7 @@ const DEFAULT_INSPECTOR_WIDTH = 264;
 const MIN_INSPECTOR_WIDTH = 220;
 const MAX_INSPECTOR_WIDTH = 480;
 const PANEL_RESIZE_STEP = 16;
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "openoutliner.sidebar-collapsed:v1";
 const SIDEBAR_WIDTH_STORAGE_KEY = "openoutliner.sidebar-width";
 const INSPECTOR_WIDTH_STORAGE_KEY = "openoutliner.inspector-width";
 
@@ -229,7 +230,9 @@ export function App() {
   const [activeTagFilter, setActiveTagFilter] = useState("");
   const [tagResults, setTagResults] = useState<TaggedNodeResult[]>([]);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
+    readStoredBoolean(SIDEBAR_COLLAPSED_STORAGE_KEY, false)
+  );
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     readStoredPanelWidth(SIDEBAR_WIDTH_STORAGE_KEY, DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
   );
@@ -263,6 +266,7 @@ export function App() {
   const selectedIdRef = useRef("");
   const selectedNodeIdsRef = useRef(new Set<string>());
   const selectionAnchorIdRef = useRef("");
+  const editingNodeIdRef = useRef("");
   const nodeSelectionDragRef = useRef<NodeSelectionDrag | null>(null);
   const suppressSelectionClickRef = useRef(false);
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
@@ -274,6 +278,15 @@ export function App() {
   const rowResizeObserversRef = useRef(new Map<string, ResizeObserver>());
   const selectedIndexRef = useRef(-1);
   const cancelledTempIdsRef = useRef(new Set<string>());
+  const localNodeTitlesRef = useRef(new Map<string, string>());
+  const reconcilingNodeIdsRef = useRef(new Set<string>());
+  const pendingNodeCreateCountRef = useRef(0);
+  const nodeCreateQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const nodePatchQueuesRef = useRef(new Map<string, Promise<void>>());
+
+  useEffect(() => {
+    storeBoolean(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed);
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     storePanelWidth(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth);
@@ -624,9 +637,17 @@ export function App() {
     [loadTree, setSingleSelectedId, workspaceId]
   );
 
-  const patchNode = async (id: string, patch: Partial<OutlineTreeNode>) => {
-    if (id.startsWith("temp-")) return;
-    await apiPatch(`/api/nodes/${id}`, patch);
+  const patchNode = (id: string, patch: Partial<OutlineTreeNode>): Promise<void> => {
+    if (id.startsWith("temp-")) return Promise.resolve();
+    const previous = nodePatchQueuesRef.current.get(id) ?? Promise.resolve();
+    const request = previous
+      .catch(() => undefined)
+      .then(() => apiPatch(`/api/nodes/${id}`, patch))
+      .then(() => undefined);
+    nodePatchQueuesRef.current.set(id, request);
+    return request.finally(() => {
+      if (nodePatchQueuesRef.current.get(id) === request) nodePatchQueuesRef.current.delete(id);
+    });
   };
 
   const focusNode = (id: string) => {
@@ -686,7 +707,6 @@ export function App() {
     const currentFlatState = flatStateRef.current;
     if (!currentFlatState) return;
     const tempId = `temp-${crypto.randomUUID()}`;
-    const originalState = currentFlatState;
     const preppedState =
       current && currentTitle !== undefined ? updateNode(currentFlatState, current.id, { title: currentTitle }) : currentFlatState;
     const tempNode: FlatNodeData = {
@@ -712,29 +732,38 @@ export function App() {
     setVisibleIds(computeVisibleIds(newState));
     flatStateRef.current = newState;
     setSingleSelectedId(tempId);
+    editingNodeIdRef.current = tempId;
     focusWhenReady(tempId);
+    pendingNodeCreateCountRef.current += 1;
 
     try {
-      const created = await apiPost<OutlineTreeNode>("/api/nodes", {
-        parentId,
-        title,
-        position
-      });
+      const createRequest = nodeCreateQueueRef.current.then(() =>
+        apiPost<OutlineTreeNode>("/api/nodes", {
+          parentId,
+          title,
+          position
+        })
+      );
+      nodeCreateQueueRef.current = createRequest.then(() => undefined, () => undefined);
+      const created = await createRequest;
       if (cancelledTempIdsRef.current.has(tempId)) {
         cancelledTempIdsRef.current.delete(tempId);
+        localNodeTitlesRef.current.delete(tempId);
         apiDelete(`/api/nodes/${created.id}`).catch(toError(setError));
         return;
       }
       const draft = flatStateRef.current ? getNode(flatStateRef.current, tempId) : undefined;
+      const pendingTitle = localNodeTitlesRef.current.get(tempId);
       const draftParentId = draft?.parentId ?? parentId;
       const createdPosition = created.position ?? position;
       const draftPosition = draft?.position ?? createdPosition;
+      const latestTitle = resolvePendingNodeTitle(pendingTitle, draft?.title, created.title);
       const replacement: FlatNodeData = {
         id: created.id,
         workspaceId: created.workspaceId,
         parentId: draftParentId,
         position: draftPosition,
-        title: draft?.title ?? created.title ?? "",
+        title: latestTitle,
         body: draft?.body ?? created.body ?? "",
         dueDate: draft?.dueDate ?? created.dueDate ?? null,
         done: draft?.done ?? created.done ?? false,
@@ -745,16 +774,32 @@ export function App() {
         fieldValues: draft?.fieldValues ?? created.fieldValues ?? [],
         childIds: draft?.childIds ?? [],
       };
-      const currentRef = flatStateRef.current ?? newState;
+      const currentRef = applyCachedNodeTitles(flatStateRef.current ?? newState, localNodeTitlesRef.current);
       const withCreated = draft
         ? replaceNode(currentRef, tempId, replacement)
         : insertNode(removeNode(currentRef, tempId), parentId, replacement, position);
-      // Batch: state + visible + selected in one shot
+      const tempWasSelected = selectedNodeIdsRef.current.has(tempId);
+      const tempWasPrimary = selectedIdRef.current === tempId;
+      const tempWasAnchor = selectionAnchorIdRef.current === tempId;
+      const tempWasEditing = editingNodeIdRef.current === tempId;
+      if (tempWasEditing) editingNodeIdRef.current = created.id;
       setFlatState(withCreated);
       setVisibleIds(computeVisibleIds(withCreated));
       flatStateRef.current = withCreated;
-      setSingleSelectedId(created.id);
-      focusWhenReady(created.id);
+      localNodeTitlesRef.current.delete(tempId);
+      localNodeTitlesRef.current.set(created.id, latestTitle);
+      reconcilingNodeIdsRef.current.add(created.id);
+      if (tempWasSelected || tempWasPrimary || tempWasAnchor || tempWasEditing) {
+        const nextSelectedIds = new Set(selectedNodeIdsRef.current);
+        nextSelectedIds.delete(tempId);
+        nextSelectedIds.add(created.id);
+        setNodeSelection(
+          nextSelectedIds,
+          tempWasPrimary || tempWasEditing ? created.id : selectedIdRef.current,
+          tempWasAnchor ? created.id : selectionAnchorIdRef.current
+        );
+        if (tempWasPrimary || tempWasEditing) focusWhenReady(created.id);
+      }
       if (
         draft &&
         draftParentId &&
@@ -766,25 +811,42 @@ export function App() {
           position: draftPosition
         }).catch(toError(setError));
       }
-      if (draft && (draft.title || draft.body || draft.dueDate || draft.done || draft.collapsed)) {
+      if (pendingTitle !== undefined || (draft && (draft.title || draft.body || draft.dueDate || draft.done || draft.collapsed))) {
         patchNode(created.id, {
-          title: draft.title,
-          body: draft.body,
-          dueDate: draft.dueDate,
-          done: draft.done,
-          collapsed: draft.collapsed
+          title: latestTitle,
+          body: replacement.body,
+          dueDate: replacement.dueDate,
+          done: replacement.done,
+          collapsed: replacement.collapsed
         }).catch(toError(setError));
       }
     } catch (error) {
       if (cancelledTempIdsRef.current.has(tempId)) {
         cancelledTempIdsRef.current.delete(tempId);
+        localNodeTitlesRef.current.delete(tempId);
         return;
       }
-      setFlatState(originalState);
-      setVisibleIds(computeVisibleIds(originalState));
-      flatStateRef.current = originalState;
-      focusNode(current?.id ?? parentId);
+      const latestState = flatStateRef.current;
+      const withoutFailed = latestState && getNode(latestState, tempId)
+        ? removeNode(latestState, tempId)
+        : latestState;
+      localNodeTitlesRef.current.delete(tempId);
+      if (withoutFailed) {
+        setFlatState(withoutFailed);
+        setVisibleIds(computeVisibleIds(withoutFailed));
+        flatStateRef.current = withoutFailed;
+      }
+      if (selectedIdRef.current === tempId || editingNodeIdRef.current === tempId) {
+        editingNodeIdRef.current = current?.id ?? "";
+        focusNode(current?.id ?? parentId);
+      }
       throw error;
+    } finally {
+      pendingNodeCreateCountRef.current = Math.max(0, pendingNodeCreateCountRef.current - 1);
+      if (pendingNodeCreateCountRef.current === 0) {
+        for (const id of reconcilingNodeIdsRef.current) localNodeTitlesRef.current.delete(id);
+        reconcilingNodeIdsRef.current.clear();
+      }
     }
   };
 
@@ -795,6 +857,8 @@ export function App() {
     const prevIdx = visibleIds.indexOf(node.id);
     const previousId = prevIdx > 0 ? visibleIds[prevIdx - 1] : flatState.rootId;
     const newState = removeNode(before, node.id);
+    localNodeTitlesRef.current.delete(node.id);
+    reconcilingNodeIdsRef.current.delete(node.id);
     setFlatState(newState);
     setVisibleIds(computeVisibleIds(newState));
     flatStateRef.current = newState;
@@ -2041,15 +2105,25 @@ export function App() {
                             else inputRefs.current.delete(node.id);
                           }}
                           onMouseSelect={event => selectNodeWithMouse(node.id, event)}
-                          onFocusSelect={() => setSingleSelectedId(node.id)}
+                          onFocusSelect={() => {
+                            editingNodeIdRef.current = node.id;
+                            setSingleSelectedId(node.id);
+                          }}
+                          onBlurFocus={() => {
+                            if (editingNodeIdRef.current === node.id) editingNodeIdRef.current = "";
+                          }}
                           onSelectionStart={event => startNodeSelection(node, event)}
                           onPatchLocal={patch => {
-                            setFlatState(s => {
-                              if (!s) return s;
-                              const next = updateNode(s, node.id, patch);
-                              flatStateRef.current = next;
-                              return next;
-                            });
+                            const current = flatStateRef.current;
+                            if (!current) return;
+                            const next = updateNode(current, node.id, patch);
+                            flatStateRef.current = next;
+                            setFlatState(next);
+                          }}
+                          onCacheTitle={title => {
+                            if (node.id.startsWith("temp-") || reconcilingNodeIdsRef.current.has(node.id)) {
+                              localNodeTitlesRef.current.set(node.id, title);
+                            }
                           }}
                           onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
                           onToggle={patch => {
@@ -2280,8 +2354,10 @@ function NodeRow({
   registerInput,
   onMouseSelect,
   onFocusSelect,
+  onBlurFocus,
   onSelectionStart,
   onPatchLocal,
+  onCacheTitle,
   onCommit,
   onToggle,
   onCreateAfter,
@@ -2306,8 +2382,10 @@ function NodeRow({
   registerInput: (element: HTMLTextAreaElement | null) => void;
   onMouseSelect: (event: MouseEvent<HTMLElement>) => boolean;
   onFocusSelect: () => void;
+  onBlurFocus: () => void;
   onSelectionStart: (event: PointerEvent<HTMLDivElement>) => void;
   onPatchLocal: (patch: Partial<FlatNodeData>) => void;
+  onCacheTitle: (title: string) => void;
   onCommit: (patch: Partial<FlatNodeData>) => void;
   onToggle: (patch: Partial<FlatNodeData>) => void;
   onCreateAfter: (title?: string, currentTitle?: string) => void;
@@ -2342,17 +2420,20 @@ function NodeRow({
       clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
     }
+    onCacheTitle(title);
     onPatchLocal({ title });
-  }, [onPatchLocal]);
+  }, [onCacheTitle, onPatchLocal]);
 
   // Debounced sync during typing
   const syncTitleDebounced = useCallback((title: string) => {
+    onCacheTitle(title);
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
       onPatchLocal({ title });
+      onCommit({ title });
       syncTimerRef.current = null;
     }, 300);
-  }, [onPatchLocal]);
+  }, [onCacheTitle, onCommit, onPatchLocal]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -2568,6 +2649,7 @@ function NodeRow({
           onBlur={event => {
             flushTitle(event.target.value);
             onCommit({ title: event.target.value });
+            onBlurFocus();
           }}
           onPointerDown={event => {
             if (event.button !== 2 || !openMarkdownContextMenu(event.currentTarget, event.clientX, event.clientY)) return;
@@ -3189,6 +3271,48 @@ function storePanelWidth(key: string, value: number) {
     window.localStorage.setItem(key, String(value));
   } catch {
     // Width persistence is optional when storage is unavailable.
+  }
+}
+
+export function resolveStoredBoolean(value: string | null, fallback: boolean): boolean {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return fallback;
+}
+
+export function resolvePendingNodeTitle(
+  pendingTitle: string | undefined,
+  draftTitle: string | undefined,
+  createdTitle: string | undefined
+): string {
+  return pendingTitle ?? draftTitle ?? createdTitle ?? "";
+}
+
+export function applyCachedNodeTitles(
+  state: FlatTreeState,
+  titles: ReadonlyMap<string, string>
+): FlatTreeState {
+  let next = state;
+  for (const [id, title] of titles) {
+    if (next.nodes[id]?.title !== title) next = updateNode(next, id, { title });
+  }
+  return next;
+}
+
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  if (typeof window === "undefined") return fallback;
+  try {
+    return resolveStoredBoolean(window.localStorage.getItem(key), fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+function storeBoolean(key: string, value: boolean) {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // State persistence is optional when storage is unavailable.
   }
 }
 
