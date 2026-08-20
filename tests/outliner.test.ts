@@ -23,6 +23,7 @@ import {
   nextCollapsedWorkspaceIds,
   resolvePendingNodeTitle,
   resolveStoredBoolean,
+  resolveStoredIdSet,
   shouldIgnoreTextInputKeyDown,
   nextCollapsedWorkspaceFolderIds,
   splitMarkdownHighlights,
@@ -965,6 +966,21 @@ describe("workspace hierarchy collapse state", () => {
     const collapsed = nextCollapsedWorkspaceIds(new Set<string>(), "workspace-a");
     expect([...collapsed]).toEqual(["workspace-a"]);
     expect([...nextCollapsedWorkspaceIds(collapsed, "workspace-a")]).toEqual([]);
+  });
+});
+
+describe("workspace hierarchy collapse persistence", () => {
+  it("restores stored ids and removes duplicates", () => {
+    expect([...resolveStoredIdSet('["workspace-b","workspace-a","workspace-a"]')]).toEqual([
+      "workspace-b",
+      "workspace-a"
+    ]);
+  });
+
+  it("ignores malformed values and non-string entries", () => {
+    expect([...resolveStoredIdSet('["workspace-a",42,null]')]).toEqual(["workspace-a"]);
+    expect([...resolveStoredIdSet("not-json")]).toEqual([]);
+    expect([...resolveStoredIdSet('{"id":"workspace-a"}')]).toEqual([]);
   });
 });
 

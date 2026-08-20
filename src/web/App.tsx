@@ -204,6 +204,8 @@ const MIN_INSPECTOR_WIDTH = 220;
 const MAX_INSPECTOR_WIDTH = 480;
 const PANEL_RESIZE_STEP = 16;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "openoutliner.sidebar-collapsed:v1";
+const COLLAPSED_WORKSPACE_FOLDERS_STORAGE_KEY = "openoutliner.collapsed-workspace-folders:v1";
+const COLLAPSED_WORKSPACES_STORAGE_KEY = "openoutliner.collapsed-workspaces:v1";
 const SIDEBAR_WIDTH_STORAGE_KEY = "openoutliner.sidebar-width";
 const INSPECTOR_WIDTH_STORAGE_KEY = "openoutliner.inspector-width";
 
@@ -247,8 +249,12 @@ export function App() {
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
   const [workspaceDragTarget, setWorkspaceDragTarget] = useState<WorkspaceDragTarget | null>(null);
-  const [collapsedWorkspaceFolderIds, setCollapsedWorkspaceFolderIds] = useState<Set<string>>(() => new Set());
-  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
+  const [collapsedWorkspaceFolderIds, setCollapsedWorkspaceFolderIds] = useState<Set<string>>(() =>
+    readStoredIdSet(COLLAPSED_WORKSPACE_FOLDERS_STORAGE_KEY)
+  );
+  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() =>
+    readStoredIdSet(COLLAPSED_WORKSPACES_STORAGE_KEY)
+  );
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [convertWorkspaceCandidate, setConvertWorkspaceCandidate] = useState<ConvertWorkspaceCandidate | null>(null);
@@ -287,6 +293,14 @@ export function App() {
   useEffect(() => {
     storeBoolean(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed);
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    storeIdSet(COLLAPSED_WORKSPACE_FOLDERS_STORAGE_KEY, collapsedWorkspaceFolderIds);
+  }, [collapsedWorkspaceFolderIds]);
+
+  useEffect(() => {
+    storeIdSet(COLLAPSED_WORKSPACES_STORAGE_KEY, collapsedWorkspaceIds);
+  }, [collapsedWorkspaceIds]);
 
   useEffect(() => {
     storePanelWidth(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth);
@@ -3280,6 +3294,17 @@ export function resolveStoredBoolean(value: string | null, fallback: boolean): b
   return fallback;
 }
 
+export function resolveStoredIdSet(value: string | null): Set<string> {
+  if (!value) return new Set();
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
 export function resolvePendingNodeTitle(
   pendingTitle: string | undefined,
   draftTitle: string | undefined,
@@ -3311,6 +3336,23 @@ function readStoredBoolean(key: string, fallback: boolean): boolean {
 function storeBoolean(key: string, value: boolean) {
   try {
     window.localStorage.setItem(key, String(value));
+  } catch {
+    // State persistence is optional when storage is unavailable.
+  }
+}
+
+function readStoredIdSet(key: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    return resolveStoredIdSet(window.localStorage.getItem(key));
+  } catch {
+    return new Set();
+  }
+}
+
+function storeIdSet(key: string, values: ReadonlySet<string>) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify([...values].sort()));
   } catch {
     // State persistence is optional when storage is unavailable.
   }
