@@ -298,6 +298,41 @@ export function moveNodes(
   return next;
 }
 
+function getFlatNodeDepth(state: FlatTreeState, id: string): number {
+  let depth = 0;
+  let current = state.nodes[id];
+  while (current?.parentId && current.parentId !== state.rootId) {
+    depth += 1;
+    current = state.nodes[current.parentId];
+  }
+  return depth;
+}
+
+/** Find the previous node that can receive exactly one level of indentation. */
+export function getIndentTargetId(
+  state: FlatTreeState,
+  visibleIds: string[],
+  currentId: string
+): string | undefined {
+  const currentIndex = visibleIds.indexOf(currentId);
+  const current = state.nodes[currentId];
+  if (!current || currentIndex <= 0 || currentId === state.rootId) return undefined;
+
+  const currentDepth = getFlatNodeDepth(state, currentId);
+  let candidate = state.nodes[visibleIds[currentIndex - 1]];
+  if (!candidate) return undefined;
+
+  let candidateDepth = getFlatNodeDepth(state, candidate.id);
+  if (candidateDepth < currentDepth) return undefined;
+  while (candidate.parentId && candidateDepth > currentDepth) {
+    candidate = state.nodes[candidate.parentId];
+    if (!candidate) return undefined;
+    candidateDepth -= 1;
+  }
+
+  return candidateDepth === currentDepth ? candidate.id : undefined;
+}
+
 export function moveNodeInside(
   state: FlatTreeState,
   id: string,

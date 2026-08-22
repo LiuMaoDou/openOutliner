@@ -11,13 +11,17 @@ import type { OutlineTreeNode } from "../src/web/api.js";
 import {
   applyCachedNodeTitles,
   applyMarkdownLink,
+  applyPastedMarkdownLink,
   applyMarkdownStyle,
   clampPanelWidth,
   createWorkspaceRequestBody,
   formatNodeDate,
   getChildCountLabel,
+  getNodeEnterAction,
+  getOutlineHistoryShortcut,
   getNodeSelectionPosition,
   getNodeSelectionRange,
+  isPastedMarkdownLink,
   normalizeLinkHref,
   nextWorkspaceIdAfterDelete,
   nextCollapsedWorkspaceIds,
@@ -25,13 +29,17 @@ import {
   resolveStoredBoolean,
   resolveStoredIdSet,
   shouldIgnoreTextInputKeyDown,
+  shouldHandleMultiSelectionDelete,
+  shouldHandleMultiSelectionTab,
   nextCollapsedWorkspaceFolderIds,
   splitMarkdownHighlights,
   splitTitleAtSelection
 } from "../src/web/App.js";
 import {
   fromNestedTree,
+  getIndentTargetId,
   getTopLevelNodeIds,
+  insertNode,
   moveNode as moveFlatNode,
   moveNodes as moveFlatNodes,
   moveNodeInside,
@@ -62,6 +70,96 @@ afterEach(() => {
 });
 
 describe("OutlinerService", () => {
+  it("persists create undo and redo across a service restart", () => {
+    const dbPath = join(tempDir, "test.sqlite");
+    const workspace = service.createWorkspace("Persistent History");
+    const alpha = service.createNode({ parentId: workspace.rootNodeId, title: "Alpha" });
+
+    expect(service.getOutlineHistoryState(workspace.id)).toMatchObject({
+      canUndo: true,
+      canRedo: false,
+      undoLabel: "Create outline"
+    });
+
+    db.close();
+    db = openDatabase(dbPath);
+    service = new OutlinerService(db);
+
+    const undone = service.undoOutline(workspace.id);
+    expect(undone.tree.children).toEqual([]);
+    expect(undone.history).toMatchObject({ canUndo: false, canRedo: true });
+    expect(() => service.getNode(alpha.id)).toThrow("Node not found");
+
+    const redone = service.redoOutline(workspace.id);
+    expect(redone.tree.children.map(node => node.title)).toEqual(["Alpha"]);
+    expect(redone.history).toMatchObject({ canUndo: true, canRedo: false });
+    expect(service.getNode(alpha.id).id).toBe(alpha.id);
+  });
+
+  it("coalesces consecutive text edits and clears redo after a new edit", () => {
+    const workspace = service.createWorkspace("Text History");
+    const node = service.createNode({ parentId: workspace.rootNodeId, title: "Original" });
+
+    service.updateNode(node.id, { title: "Original" });
+    expect(service.getOutlineHistoryState(workspace.id).undoLabel).toBe("Create outline");
+
+    service.updateNode(node.id, { title: "Draft" });
+    service.updateNode(node.id, { title: "Final" });
+    expect(service.getOutlineHistoryState(workspace.id).undoLabel).toBe("Edit title");
+
+    service.undoOutline(workspace.id);
+    expect(service.getNode(node.id).title).toBe("Original");
+    expect(service.getOutlineHistoryState(workspace.id).canRedo).toBe(true);
+
+    service.updateNode(node.id, { body: "New notes" });
+    expect(service.getOutlineHistoryState(workspace.id).canRedo).toBe(false);
+    service.undoOutline(workspace.id);
+    expect(service.getNode(node.id).body).toBe("");
+  });
+
+  it("undoes and redoes subtree deletion and ordered multi-node moves", () => {
+    const workspace = service.createWorkspace("Structural History");
+    const alpha = service.createNode({ parentId: workspace.rootNodeId, title: "Alpha" });
+    const child = service.createNode({ parentId: alpha.id, title: "Child" });
+    const beta = service.createNode({ parentId: workspace.rootNodeId, title: "Beta" });
+    const target = service.createNode({ parentId: workspace.rootNodeId, title: "Target" });
+
+    service.moveNodes([alpha.id, beta.id], target.id, 0, true);
+    expect(service.listChildren(target.id).map(node => node.title)).toEqual(["Alpha", "Beta"]);
+    service.undoOutline(workspace.id);
+    expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Alpha", "Beta", "Target"]);
+    expect(service.listChildren(target.id)).toEqual([]);
+    service.redoOutline(workspace.id);
+    expect(service.listChildren(target.id).map(node => node.title)).toEqual(["Alpha", "Beta"]);
+
+    service.deleteNode(alpha.id);
+    expect(() => service.getNode(child.id)).toThrow("Node not found");
+    service.undoOutline(workspace.id);
+    expect(service.getNode(alpha.id).title).toBe("Alpha");
+    expect(service.getNode(child.id).title).toBe("Child");
+    service.redoOutline(workspace.id);
+    expect(() => service.getNode(alpha.id)).toThrow("Node not found");
+    expect(() => service.getNode(child.id)).toThrow("Node not found");
+  });
+
+  it("deletes a selected group in one undoable history entry", () => {
+    const workspace = service.createWorkspace("Batch Delete");
+    const alpha = service.createNode({ parentId: workspace.rootNodeId, title: "Alpha" });
+    const child = service.createNode({ parentId: alpha.id, title: "Alpha child" });
+    const beta = service.createNode({ parentId: workspace.rootNodeId, title: "Beta" });
+    const gamma = service.createNode({ parentId: workspace.rootNodeId, title: "Gamma" });
+
+    const result = service.deleteNodes([alpha.id, child.id, gamma.id]);
+
+    expect(new Set(result.deleted)).toEqual(new Set([alpha.id, child.id, gamma.id]));
+    expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Beta"]);
+    expect(service.getOutlineHistoryState(workspace.id).undoLabel).toBe("Delete outline");
+
+    service.undoOutline(workspace.id);
+    expect(service.listChildren(workspace.rootNodeId).map(node => node.title)).toEqual(["Alpha", "Beta", "Gamma"]);
+    expect(service.getNode(child.id).parentId).toBe(alpha.id);
+  });
+
   it("creates and moves nodes while preserving sibling order", () => {
     const workspace = service.createWorkspace("Test");
     const alpha = service.createNode({ parentId: workspace.rootNodeId, title: "Alpha" });
@@ -589,6 +687,27 @@ describe("tree operations", () => {
       .toBe("[docs](https://new.example)");
   });
 
+  it("turns a pasted URL into a Markdown link when text is selected", () => {
+    expect(applyPastedMarkdownLink("Open docs now", 5, 9, "https://example.com/guide")).toEqual({
+      value: "Open [docs](https://example.com/guide) now",
+      selectionStart: 6,
+      selectionEnd: 10
+    });
+    expect(applyPastedMarkdownLink("Open docs", 5, 9, "docs.example.com/guide")).toEqual({
+      value: "Open [docs](https://docs.example.com/guide)",
+      selectionStart: 6,
+      selectionEnd: 10
+    });
+  });
+
+  it("keeps ordinary paste behavior for plain text or an empty selection", () => {
+    expect(isPastedMarkdownLink("https://example.com/docs")).toBe(true);
+    expect(isPastedMarkdownLink("example.com/docs")).toBe(true);
+    expect(isPastedMarkdownLink("plain replacement")).toBe(false);
+    expect(applyPastedMarkdownLink("Open docs", 5, 9, "plain replacement")).toBeNull();
+    expect(applyPastedMarkdownLink("Open docs", 5, 5, "https://example.com/docs")).toBeNull();
+  });
+
   it("splits highlight Markdown without crossing plain text", () => {
     expect(splitMarkdownHighlights("One ==two== three ==four==")).toEqual([
       { value: "One ", highlighted: false },
@@ -606,6 +725,23 @@ describe("tree operations", () => {
     expect(shouldIgnoreTextInputKeyDown({ key: "Enter" })).toBe(false);
   });
 
+  it("routes Tab to a completed multi-selection without double handling", () => {
+    expect(shouldHandleMultiSelectionTab({ key: "Tab" }, 2, true)).toBe(true);
+    expect(shouldHandleMultiSelectionTab({ key: "Tab", defaultPrevented: true }, 2, true)).toBe(false);
+    expect(shouldHandleMultiSelectionTab({ key: "Tab", shiftKey: true }, 2, true)).toBe(false);
+    expect(shouldHandleMultiSelectionTab({ key: "Tab" }, 1, true)).toBe(false);
+    expect(shouldHandleMultiSelectionTab({ key: "Tab" }, 2, false)).toBe(false);
+  });
+
+  it("routes Delete to an active outline multi-selection only", () => {
+    expect(shouldHandleMultiSelectionDelete({ key: "Delete" }, 2, true, false, false)).toBe(true);
+    expect(shouldHandleMultiSelectionDelete({ key: "Delete" }, 2, true, true, true)).toBe(true);
+    expect(shouldHandleMultiSelectionDelete({ key: "Delete" }, 2, true, true, false)).toBe(false);
+    expect(shouldHandleMultiSelectionDelete({ key: "Delete", defaultPrevented: true }, 2, true, false, false)).toBe(false);
+    expect(shouldHandleMultiSelectionDelete({ key: "Backspace" }, 2, true, false, false)).toBe(false);
+    expect(shouldHandleMultiSelectionDelete({ key: "Delete" }, 1, true, false, false)).toBe(false);
+  });
+
   it("splits node titles at the selection start", () => {
     expect(splitTitleAtSelection("Alpha Beta", 6)).toEqual({
       currentTitle: "Alpha ",
@@ -617,6 +753,23 @@ describe("tree operations", () => {
     });
     expect(splitTitleAtSelection("Alpha Beta", 99)).toEqual({
       currentTitle: "Alpha Beta",
+      nextTitle: ""
+    });
+  });
+
+  it("inserts before the whole node when Enter is pressed at the title start", () => {
+    expect(getNodeEnterAction("Parent", 0, 0)).toEqual({ type: "insert-before" });
+    expect(getNodeEnterAction("Parent", 3, 3)).toEqual({
+      type: "split",
+      currentTitle: "Par",
+      nextTitle: "ent"
+    });
+  });
+
+  it("creates and focuses the following row when Enter is pressed on an empty node", () => {
+    expect(getNodeEnterAction("", 0, 0)).toEqual({
+      type: "split",
+      currentTitle: "",
       nextTitle: ""
     });
   });
@@ -685,6 +838,52 @@ describe("tree operations", () => {
     expect(next.nodes.root.childIds).toEqual(["b", "c", "a", "d"]);
     expect(next.nodes.b.position).toBe(0);
     expect(next.nodes.c.position).toBe(1);
+  });
+
+  it("indents a selected group under the previous same-level node", () => {
+    const { state, visibleIds } = fromNestedTree({
+      ...testTree(),
+      children: [
+        testNode("a", "Alpha", "root", 0),
+        testNode("b", "Beta", "root", 1),
+        testNode("c", "Gamma", "root", 2)
+      ]
+    });
+
+    const targetId = getIndentTargetId(state, visibleIds, "b");
+    const next = moveFlatNodes(state, ["b", "c"], targetId as string, 0);
+
+    expect(targetId).toBe("a");
+    expect(next.nodes.root.childIds).toEqual(["a"]);
+    expect(next.nodes.a.childIds).toEqual(["b", "c"]);
+    expect(next.nodes.b.parentId).toBe("a");
+    expect(next.nodes.c.parentId).toBe("a");
+  });
+
+  it("indents only one level when the immediately previous node is deeper", () => {
+    const { state, visibleIds } = fromNestedTree(testTree());
+
+    expect(visibleIds).toEqual(["a", "a-child", "b"]);
+    expect(getIndentTargetId(state, visibleIds, "b")).toBe("a");
+    expect(getIndentTargetId(state, visibleIds, "a-child")).toBeUndefined();
+
+    const next = moveFlatNode(state, "b", "a", state.nodes.a.childIds.length);
+    expect(next.nodes.a.childIds).toEqual(["a-child", "b"]);
+    expect(next.nodes.b.parentId).toBe("a");
+  });
+
+  it("keeps a node subtree together when inserting an empty sibling before it", () => {
+    const { state } = fromNestedTree(testTree());
+    const next = insertNode(state, "root", {
+      ...state.nodes.a,
+      id: "temp-before",
+      title: "",
+      childIds: []
+    }, state.nodes.a.position);
+
+    expect(next.nodes.root.childIds).toEqual(["temp-before", "a", "b"]);
+    expect(next.nodes.a.childIds).toEqual(["a-child"]);
+    expect(next.nodes["a-child"].parentId).toBe("a");
   });
 
   it("removes selected descendants from a group move without dropping their subtree", () => {
@@ -988,6 +1187,36 @@ describe("direct child count label", () => {
   it("returns a label only for nodes with direct children", () => {
     expect(getChildCountLabel(3)).toBe("3");
     expect(getChildCountLabel(0)).toBeNull();
+  });
+});
+
+describe("outline history shortcut", () => {
+  const commandZ = { key: "z", metaKey: true, ctrlKey: false, shiftKey: false };
+
+  it("uses outline undo inside an outline editor before history state refreshes", () => {
+    expect(getOutlineHistoryShortcut(commandZ, false, false, true, true)).toBe("undo");
+  });
+
+  it("leaves unrelated inputs and unavailable global history alone", () => {
+    expect(getOutlineHistoryShortcut(commandZ, true, false, true, false)).toBeNull();
+    expect(getOutlineHistoryShortcut(commandZ, false, false, false, false)).toBeNull();
+  });
+
+  it("supports both redo shortcuts when redo history exists", () => {
+    expect(getOutlineHistoryShortcut(
+      { key: "z", metaKey: true, ctrlKey: false, shiftKey: true },
+      true,
+      true,
+      true,
+      true
+    )).toBe("redo");
+    expect(getOutlineHistoryShortcut(
+      { key: "y", metaKey: false, ctrlKey: true, shiftKey: false },
+      true,
+      true,
+      false,
+      false
+    )).toBe("redo");
   });
 });
 

@@ -90,6 +90,23 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
+  const workspaceHistoryMatch = path.match(/^\/api\/workspaces\/([^/]+)\/history$/);
+  if (method === "GET" && workspaceHistoryMatch) {
+    sendJson(res, service.getOutlineHistoryState(workspaceHistoryMatch[1]));
+    return;
+  }
+
+  const workspaceHistoryActionMatch = path.match(/^\/api\/workspaces\/([^/]+)\/(undo|redo)$/);
+  if (method === "POST" && workspaceHistoryActionMatch) {
+    sendJson(
+      res,
+      workspaceHistoryActionMatch[2] === "undo"
+        ? service.undoOutline(workspaceHistoryActionMatch[1])
+        : service.redoOutline(workspaceHistoryActionMatch[1])
+    );
+    return;
+  }
+
   const workspaceMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
   if (method === "PATCH" && workspaceMatch) {
     const body = await readJson<{ name?: string; folderId?: string | null; parentWorkspaceId?: string | null; position?: number }>(req);
@@ -134,6 +151,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
 
   if (method === "POST" && path === "/api/nodes") {
     sendJson(res, service.createNode(await readJson(req)), 201);
+    return;
+  }
+
+  if (method === "POST" && path === "/api/nodes/delete-batch") {
+    const body = await readJson<{ ids?: string[] }>(req);
+    sendJson(res, service.deleteNodes(body.ids ?? []));
     return;
   }
 

@@ -17,6 +17,35 @@ import type {
 type Row = Record<string, unknown>;
 type SqlValue = string | number | bigint | Buffer | null;
 
+interface OutlineNodeSnapshot {
+  id: string;
+  parentId: string | null;
+  position: number;
+  title: string;
+  body: string;
+  dueDate: string | null;
+  done: boolean;
+  collapsed: boolean;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutlineHistoryState {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel: string | null;
+  redoLabel: string | null;
+}
+
+export interface OutlineHistoryResult {
+  tree: OutlineTreeNode;
+  history: OutlineHistoryState;
+}
+
+const outlineHistoryLimit = 100;
+const outlineHistoryCoalesceWindowMs = 1500;
+
 const tagColors = ["#266dd3", "#2a9d8f", "#c2410c", "#7c3aed", "#0f766e", "#be123c"];
 const workspaceIcons = [
   "album",
@@ -58,6 +87,7 @@ const workspaceIcons = [
 
 export class OutlinerService {
   private transactionDepth = 0;
+  private outlineHistorySuppressionDepth = 0;
 
   constructor(private readonly db: OpenOutlinerDb) {}
 
@@ -66,21 +96,23 @@ export class OutlinerService {
     if (existing) return existing;
 
     const workspace = this.createWorkspace("OpenOutliner Demo");
-    const inbox = this.createNode({
-      parentId: workspace.rootNodeId,
-      title: "Inbox",
-      body: "Capture ideas here before organizing them."
+    this.withoutOutlineHistory(() => {
+      const inbox = this.createNode({
+        parentId: workspace.rootNodeId,
+        title: "Inbox",
+        body: "Capture ideas here before organizing them."
+      });
+      this.createNode({ parentId: inbox.id, title: "Press Enter to add a sibling" });
+      this.createNode({ parentId: inbox.id, title: "Use Tab and Shift+Tab to change depth" });
+      const project = this.createNode({
+        parentId: workspace.rootNodeId,
+        title: "LLM workspace",
+        body: "MCP and CLI share the same local SQLite data."
+      });
+      this.setNodeTag(project.id, "project");
+      this.createNode({ parentId: project.id, title: "Expose search_nodes over MCP" });
+      this.createNode({ parentId: project.id, title: "Export outline to Markdown and OPML" });
     });
-    this.createNode({ parentId: inbox.id, title: "Press Enter to add a sibling" });
-    this.createNode({ parentId: inbox.id, title: "Use Tab and Shift+Tab to change depth" });
-    const project = this.createNode({
-      parentId: workspace.rootNodeId,
-      title: "LLM workspace",
-      body: "MCP and CLI share the same local SQLite data."
-    });
-    this.setNodeTag(project.id, "project");
-    this.createNode({ parentId: project.id, title: "Expose search_nodes over MCP" });
-    this.createNode({ parentId: project.id, title: "Export outline to Markdown and OPML" });
     return workspace;
   }
 
@@ -232,6 +264,7 @@ export class OutlinerService {
     }
 
     this.transaction(() => {
+      this.db.prepare("DELETE FROM outline_history WHERE workspace_id = ?").run(sourceWorkspace.id);
       this.db
         .prepare(
           "INSERT INTO workspaces (id, name, icon, folder_id, parent_workspace_id, position, root_node_id, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)"
@@ -431,10 +464,12 @@ export class OutlinerService {
   }
 
   replaceAllWorkspaces<T>(build: () => T): T {
-    return this.transaction(() => {
-      this.db.prepare("DELETE FROM workspaces").run();
-      return build();
-    });
+    return this.withoutOutlineHistory(() =>
+      this.transaction(() => {
+        this.db.prepare("DELETE FROM workspaces").run();
+        return build();
+      })
+    );
   }
 
   getNode(id: string): OutlineNode {
@@ -458,77 +493,96 @@ export class OutlinerService {
 
   createNode(input: CreateNodeInput): OutlineNode {
     const parent = this.getNode(input.parentId);
-    const siblingCount = number(
-      (this.db
-        .prepare("SELECT COUNT(*) AS count FROM nodes WHERE parent_id IS ? AND deleted_at IS NULL")
-        .get(input.parentId) as Row).count
-    );
-    const position = clamp(input.position ?? siblingCount, 0, siblingCount);
-    const id = randomUUID();
-    const now = timestamp();
+    return this.recordOutlineMutation(parent.workspaceId, "Create outline", null, () => {
+      const siblingCount = number(
+        (this.db
+          .prepare("SELECT COUNT(*) AS count FROM nodes WHERE parent_id IS ? AND deleted_at IS NULL")
+          .get(input.parentId) as Row).count
+      );
+      const position = clamp(input.position ?? siblingCount, 0, siblingCount);
+      const id = randomUUID();
+      const now = timestamp();
 
-    this.transaction(() => {
-      this.db
-        .prepare(
-          `UPDATE nodes
-           SET position = position + 1, updated_at = ?
-           WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position >= ?`
-        )
-        .run(now, parent.workspaceId, input.parentId, position);
+      this.transaction(() => {
+        this.db
+          .prepare(
+            `UPDATE nodes
+             SET position = position + 1, updated_at = ?
+             WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position >= ?`
+          )
+          .run(now, parent.workspaceId, input.parentId, position);
 
-      this.db
-        .prepare(
-          `INSERT INTO nodes
-            (id, workspace_id, parent_id, position, title, body, done, collapsed, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
-        )
-        .run(
-          id,
-          parent.workspaceId,
-          input.parentId,
-          position,
-          input.title ?? "",
-          input.body ?? "",
-          input.done ? 1 : 0,
-          now,
-          now
-        );
+        this.db
+          .prepare(
+            `INSERT INTO nodes
+              (id, workspace_id, parent_id, position, title, body, done, collapsed, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+          )
+          .run(
+            id,
+            parent.workspaceId,
+            input.parentId,
+            position,
+            input.title ?? "",
+            input.body ?? "",
+            input.done ? 1 : 0,
+            now,
+            now
+          );
+      });
+
+      return this.getNode(id);
     });
-
-    return this.getNode(id);
   }
 
   updateNode(id: string, input: UpdateNodeInput): OutlineNode {
-    this.getNode(id);
+    const node = this.getNode(id);
     const sets: string[] = [];
     const values: SqlValue[] = [];
+    const fields: string[] = [];
 
-    if (input.title !== undefined) {
+    if (input.title !== undefined && input.title !== node.title) {
       sets.push("title = ?");
       values.push(input.title);
+      fields.push("title");
     }
-    if (input.body !== undefined) {
+    if (input.body !== undefined && input.body !== node.body) {
       sets.push("body = ?");
       values.push(input.body);
+      fields.push("body");
     }
     if (input.dueDate !== undefined) {
-      sets.push("due_date = ?");
-      values.push(normalizeDueDate(input.dueDate));
+      const dueDate = normalizeDueDate(input.dueDate);
+      if (dueDate !== node.dueDate) {
+        sets.push("due_date = ?");
+        values.push(dueDate);
+        fields.push("dueDate");
+      }
     }
-    if (input.done !== undefined) {
+    if (input.done !== undefined && input.done !== node.done) {
       sets.push("done = ?");
       values.push(input.done ? 1 : 0);
+      fields.push("done");
     }
-    if (input.collapsed !== undefined) {
+    if (input.collapsed !== undefined && input.collapsed !== node.collapsed) {
       sets.push("collapsed = ?");
       values.push(input.collapsed ? 1 : 0);
+      fields.push("collapsed");
     }
 
-    if (sets.length === 0) return this.getNode(id);
-    sets.push("updated_at = ?");
-    values.push(timestamp(), id);
-    this.db.prepare(`UPDATE nodes SET ${sets.join(", ")} WHERE id = ?`).run(...values);
-    return this.getNode(id);
+    if (sets.length === 0) return node;
+    fields.sort();
+    return this.recordOutlineMutation(
+      node.workspaceId,
+      outlineUpdateLabel(fields),
+      `update:${id}:${fields.join(",")}`,
+      () => {
+        sets.push("updated_at = ?");
+        values.push(timestamp(), id);
+        this.db.prepare(`UPDATE nodes SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+        return this.getNode(id);
+      }
+    );
   }
 
   moveNode(id: string, parentId: string, position?: number): OutlineNode {
@@ -550,29 +604,31 @@ export class OutlinerService {
     const targetPosition = clamp(position ?? targetCount, 0, targetCount);
     const now = timestamp();
 
-    this.transaction(() => {
-      this.db
-        .prepare(
-          `UPDATE nodes
-           SET position = position - 1, updated_at = ?
-           WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position > ?`
-        )
-        .run(now, node.workspaceId, node.parentId, node.position);
+    return this.recordOutlineMutation(node.workspaceId, "Move outline", null, () => {
+      this.transaction(() => {
+        this.db
+          .prepare(
+            `UPDATE nodes
+             SET position = position - 1, updated_at = ?
+             WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position > ?`
+          )
+          .run(now, node.workspaceId, node.parentId, node.position);
 
-      this.db
-        .prepare(
-          `UPDATE nodes
-           SET position = position + 1, updated_at = ?
-           WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position >= ?`
-        )
-        .run(now, node.workspaceId, parentId, targetPosition);
+        this.db
+          .prepare(
+            `UPDATE nodes
+             SET position = position + 1, updated_at = ?
+             WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position >= ?`
+          )
+          .run(now, node.workspaceId, parentId, targetPosition);
 
-      this.db
-        .prepare("UPDATE nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?")
-        .run(parentId, targetPosition, now, id);
+        this.db
+          .prepare("UPDATE nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?")
+          .run(parentId, targetPosition, now, id);
+      });
+
+      return this.getNode(id);
     });
-
-    return this.getNode(id);
   }
 
   moveNodes(ids: string[], parentId: string, position?: number, expandParent = false): OutlineNode[] {
@@ -618,19 +674,26 @@ export class OutlinerService {
     childrenByParent.set(parentId, targetChildren);
     const now = timestamp();
 
-    this.transaction(() => {
-      const update = this.db.prepare(
-        "UPDATE nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?"
-      );
-      for (const [affectedParentId, childIds] of childrenByParent) {
-        childIds.forEach((childId, index) => update.run(affectedParentId, index, now, childId));
-      }
-      if (expandParent) {
-        this.db.prepare("UPDATE nodes SET collapsed = 0, updated_at = ? WHERE id = ?").run(now, parentId);
-      }
-    });
+    return this.recordOutlineMutation(
+      nextParent.workspaceId,
+      movingIds.length === 1 ? "Move outline" : `Move ${movingIds.length} outlines`,
+      null,
+      () => {
+        this.transaction(() => {
+          const update = this.db.prepare(
+            "UPDATE nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?"
+          );
+          for (const [affectedParentId, childIds] of childrenByParent) {
+            childIds.forEach((childId, index) => update.run(affectedParentId, index, now, childId));
+          }
+          if (expandParent) {
+            this.db.prepare("UPDATE nodes SET collapsed = 0, updated_at = ? WHERE id = ?").run(now, parentId);
+          }
+        });
 
-    return movingIds.map(id => this.getNode(id));
+        return movingIds.map(id => this.getNode(id));
+      }
+    );
   }
 
   moveNodesToWorkspace(ids: string[], targetWorkspaceId: string): OutlineNode[] {
@@ -687,6 +750,7 @@ export class OutlinerService {
     const now = timestamp();
 
     this.transaction(() => {
+      this.db.prepare("DELETE FROM outline_history WHERE workspace_id IN (?, ?)").run(sourceWorkspace.id, targetWorkspace.id);
       this.migrateNodeMetadata(subtreeIds, sourceWorkspace, targetWorkspace, now);
 
       const updatePosition = this.db.prepare(
@@ -711,44 +775,69 @@ export class OutlinerService {
   }
 
   deleteNode(id: string): { deleted: string[] } {
-    const node = this.getNode(id);
-    const workspace = this.getWorkspace(node.workspaceId);
-    if (workspace.rootNodeId === id) throw new ValidationError("Workspace root nodes cannot be deleted.");
+    return this.deleteNodes([id]);
+  }
+
+  deleteNodes(ids: string[]): { deleted: string[] } {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) throw new ValidationError("At least one node is required.");
+
+    const selectedIds = new Set(uniqueIds);
+    const requestedNodes = uniqueIds.map(id => this.getNode(id));
+    const workspaceId = requestedNodes[0]?.workspaceId;
+    if (!workspaceId || requestedNodes.some(node => node.workspaceId !== workspaceId)) {
+      throw new ValidationError("Nodes must come from the same workspace.");
+    }
+    const workspace = this.getWorkspace(workspaceId);
+    if (requestedNodes.some(node => workspace.rootNodeId === node.id)) {
+      throw new ValidationError("Workspace root nodes cannot be deleted.");
+    }
+
+    const deletingNodes = requestedNodes.filter(node => {
+      let ancestorId = node.parentId;
+      while (ancestorId) {
+        if (selectedIds.has(ancestorId)) return false;
+        ancestorId = this.getNode(ancestorId).parentId;
+      }
+      return true;
+    });
+    const deletingIds = deletingNodes.map(node => node.id);
+    const placeholders = deletingIds.map(() => "?").join(", ");
     const now = timestamp();
     const rows = this.db
       .prepare(
         `WITH RECURSIVE subtree(id) AS (
-          SELECT id FROM nodes WHERE id = ?
-          UNION ALL
+          SELECT id FROM nodes WHERE id IN (${placeholders}) AND deleted_at IS NULL
+          UNION
           SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
           WHERE nodes.deleted_at IS NULL
         )
         SELECT id FROM subtree`
       )
-      .all(id) as Row[];
+      .all(...deletingIds) as Row[];
 
-    this.transaction(() => {
-      this.db
-        .prepare(
-          `WITH RECURSIVE subtree(id) AS (
-            SELECT id FROM nodes WHERE id = ?
-            UNION ALL
-            SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
-            WHERE nodes.deleted_at IS NULL
+    return this.recordOutlineMutation(workspaceId, "Delete outline", null, () => {
+      this.transaction(() => {
+        this.db
+          .prepare(
+            `WITH RECURSIVE subtree(id) AS (
+              SELECT id FROM nodes WHERE id IN (${placeholders}) AND deleted_at IS NULL
+              UNION
+              SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
+              WHERE nodes.deleted_at IS NULL
+            )
+            UPDATE nodes SET deleted_at = ?, updated_at = ? WHERE id IN (SELECT id FROM subtree)`
           )
-          UPDATE nodes SET deleted_at = ?, updated_at = ? WHERE id IN (SELECT id FROM subtree)`
-        )
-        .run(id, now, now);
-      this.db
-        .prepare(
-          `UPDATE nodes
-           SET position = position - 1, updated_at = ?
-           WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position > ?`
-        )
-        .run(now, node.workspaceId, node.parentId, node.position);
-    });
+          .run(...deletingIds, now, now);
 
-    return { deleted: rows.map(row => text(row.id)) };
+        const updatePosition = this.db.prepare("UPDATE nodes SET position = ?, updated_at = ? WHERE id = ?");
+        for (const parentId of new Set(deletingNodes.map(node => node.parentId as string))) {
+          this.listChildren(parentId).forEach((child, position) => updatePosition.run(position, now, child.id));
+        }
+      });
+
+      return { deleted: rows.map(row => text(row.id)) };
+    });
   }
 
   restoreNode(id: string): OutlineTreeNode {
@@ -882,6 +971,34 @@ export class OutlinerService {
     const tree = treeNodes.get(rootId);
     if (!tree) throw new NotFoundError(`Node not found: ${rootId}`);
     return tree;
+  }
+
+  getOutlineHistoryState(workspaceId: string): OutlineHistoryState {
+    this.getWorkspace(workspaceId);
+    const undo = this.db
+      .prepare(
+        "SELECT label FROM outline_history WHERE workspace_id = ? AND undone = 0 ORDER BY seq DESC LIMIT 1"
+      )
+      .get(workspaceId) as Row | undefined;
+    const redo = this.db
+      .prepare(
+        "SELECT label FROM outline_history WHERE workspace_id = ? AND undone = 1 ORDER BY seq ASC LIMIT 1"
+      )
+      .get(workspaceId) as Row | undefined;
+    return {
+      canUndo: Boolean(undo),
+      canRedo: Boolean(redo),
+      undoLabel: undo ? text(undo.label) : null,
+      redoLabel: redo ? text(redo.label) : null
+    };
+  }
+
+  undoOutline(workspaceId: string): OutlineHistoryResult {
+    return this.replayOutlineHistory(workspaceId, "undo");
+  }
+
+  redoOutline(workspaceId: string): OutlineHistoryResult {
+    return this.replayOutlineHistory(workspaceId, "redo");
   }
 
   listTags(workspaceId: string): Tag[] {
@@ -1184,6 +1301,159 @@ export class OutlinerService {
     }
   }
 
+  private recordOutlineMutation<T>(
+    workspaceId: string,
+    label: string,
+    coalesceKey: string | null,
+    mutation: () => T
+  ): T {
+    if (this.outlineHistorySuppressionDepth > 0) return mutation();
+
+    return this.transaction(() => {
+      const beforeSnapshot = JSON.stringify(this.captureOutlineSnapshot(workspaceId));
+      const result = mutation();
+      const afterSnapshot = JSON.stringify(this.captureOutlineSnapshot(workspaceId));
+      if (beforeSnapshot === afterSnapshot) return result;
+
+      const now = timestamp();
+      this.db.prepare("DELETE FROM outline_history WHERE workspace_id = ? AND undone = 1").run(workspaceId);
+      const previous = coalesceKey
+        ? this.db
+            .prepare(
+              `SELECT seq, updated_at FROM outline_history
+               WHERE workspace_id = ? AND undone = 0 AND coalesce_key = ?
+               ORDER BY seq DESC LIMIT 1`
+            )
+            .get(workspaceId, coalesceKey) as Row | undefined
+        : undefined;
+      const latest = this.db
+        .prepare("SELECT seq FROM outline_history WHERE workspace_id = ? AND undone = 0 ORDER BY seq DESC LIMIT 1")
+        .get(workspaceId) as Row | undefined;
+      const canCoalesce = previous && latest && number(previous.seq) === number(latest.seq) &&
+        Date.now() - Date.parse(text(previous.updated_at)) <= outlineHistoryCoalesceWindowMs;
+
+      if (canCoalesce) {
+        this.db
+          .prepare("UPDATE outline_history SET label = ?, after_snapshot = ?, updated_at = ? WHERE seq = ?")
+          .run(label, afterSnapshot, now, number(previous.seq));
+      } else {
+        this.db
+          .prepare(
+            `INSERT INTO outline_history
+              (id, workspace_id, label, before_snapshot, after_snapshot, coalesce_key, undone, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`
+          )
+          .run(randomUUID(), workspaceId, label, beforeSnapshot, afterSnapshot, coalesceKey, now, now);
+      }
+
+      this.db
+        .prepare(
+          `DELETE FROM outline_history
+           WHERE workspace_id = ? AND seq IN (
+             SELECT seq FROM outline_history WHERE workspace_id = ? ORDER BY seq DESC LIMIT -1 OFFSET ?
+           )`
+        )
+        .run(workspaceId, workspaceId, outlineHistoryLimit);
+      return result;
+    });
+  }
+
+  private replayOutlineHistory(workspaceId: string, direction: "undo" | "redo"): OutlineHistoryResult {
+    const workspace = this.getWorkspace(workspaceId);
+    return this.transaction(() => {
+      const entry = this.db
+        .prepare(
+          direction === "undo"
+            ? "SELECT * FROM outline_history WHERE workspace_id = ? AND undone = 0 ORDER BY seq DESC LIMIT 1"
+            : "SELECT * FROM outline_history WHERE workspace_id = ? AND undone = 1 ORDER BY seq ASC LIMIT 1"
+        )
+        .get(workspaceId) as Row | undefined;
+      if (!entry) {
+        return {
+          tree: this.getTree(workspace.rootNodeId),
+          history: this.getOutlineHistoryState(workspaceId)
+        };
+      }
+
+      const snapshot = JSON.parse(
+        text(direction === "undo" ? entry.before_snapshot : entry.after_snapshot)
+      ) as OutlineNodeSnapshot[];
+      this.withoutOutlineHistory(() => this.applyOutlineSnapshot(workspaceId, snapshot));
+      this.db
+        .prepare("UPDATE outline_history SET undone = ?, updated_at = ? WHERE seq = ?")
+        .run(direction === "undo" ? 1 : 0, timestamp(), number(entry.seq));
+      return {
+        tree: this.getTree(workspace.rootNodeId),
+        history: this.getOutlineHistoryState(workspaceId)
+      };
+    });
+  }
+
+  private captureOutlineSnapshot(workspaceId: string): OutlineNodeSnapshot[] {
+    return (this.db
+      .prepare("SELECT * FROM nodes WHERE workspace_id = ? ORDER BY created_at ASC, id ASC")
+      .all(workspaceId) as Row[]).map(row => ({
+      id: text(row.id),
+      parentId: nullableText(row.parent_id),
+      position: number(row.position),
+      title: text(row.title),
+      body: text(row.body),
+      dueDate: nullableText(row.due_date),
+      done: Boolean(number(row.done)),
+      collapsed: Boolean(number(row.collapsed)),
+      deletedAt: nullableText(row.deleted_at),
+      createdAt: text(row.created_at),
+      updatedAt: text(row.updated_at)
+    }));
+  }
+
+  private applyOutlineSnapshot(workspaceId: string, snapshot: OutlineNodeSnapshot[]): void {
+    const snapshotIds = new Set(snapshot.map(node => node.id));
+    const currentIds = (this.db
+      .prepare("SELECT id FROM nodes WHERE workspace_id = ?")
+      .all(workspaceId) as Row[]).map(row => text(row.id));
+    const update = this.db.prepare(
+      `UPDATE nodes SET
+        parent_id = ?, position = ?, title = ?, body = ?, due_date = ?, done = ?, collapsed = ?,
+        deleted_at = ?, created_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ?`
+    );
+
+    for (const node of snapshot) {
+      update.run(
+        node.parentId,
+        node.position,
+        node.title,
+        node.body,
+        node.dueDate,
+        node.done ? 1 : 0,
+        node.collapsed ? 1 : 0,
+        node.deletedAt,
+        node.createdAt,
+        node.updatedAt,
+        node.id,
+        workspaceId
+      );
+    }
+
+    const markDeleted = this.db.prepare(
+      "UPDATE nodes SET deleted_at = COALESCE(deleted_at, ?), updated_at = ? WHERE id = ? AND workspace_id = ?"
+    );
+    const now = timestamp();
+    for (const id of currentIds) {
+      if (!snapshotIds.has(id)) markDeleted.run(now, now, id, workspaceId);
+    }
+  }
+
+  private withoutOutlineHistory<T>(fn: () => T): T {
+    this.outlineHistorySuppressionDepth += 1;
+    try {
+      return fn();
+    } finally {
+      this.outlineHistorySuppressionDepth -= 1;
+    }
+  }
+
   private isDescendant(candidateId: string, ancestorId: string): boolean {
     let current: OutlineNode | null = this.getNode(candidateId);
     while (current.parentId) {
@@ -1304,6 +1574,16 @@ function normalizeDueDate(value: string | null): string | null {
     throw new ValidationError("Date must use the YYYY-MM-DD format.");
   }
   return value;
+}
+
+function outlineUpdateLabel(fields: string[]): string {
+  if (fields.length !== 1) return "Edit outline";
+  if (fields[0] === "title") return "Edit title";
+  if (fields[0] === "body") return "Edit notes";
+  if (fields[0] === "dueDate") return "Change date";
+  if (fields[0] === "done") return "Toggle completion";
+  if (fields[0] === "collapsed") return "Toggle outline";
+  return "Edit outline";
 }
 
 function rowToTag(row: Row): Tag {

@@ -1205,7 +1205,7 @@ body.isResizingPanel .appShell {
 .nodeRow {
   --depth: 0;
   display: grid;
-  grid-template-columns: 26px 24px minmax(120px, 1fr) auto auto auto 30px;
+  grid-template-columns: 26px 26px 24px minmax(120px, 1fr) auto auto auto 30px;
   align-items: center;
   gap: 3px;
   min-height: 36px;
@@ -1458,6 +1458,18 @@ body.isSelectingNodes .nodeTitlePreview {
   opacity: 0;
 }
 
+.nodeMenuButton {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nodeRow:hover .nodeMenuButton,
+.nodeMenuButton:focus-visible,
+.nodeMenuButton[aria-expanded="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .nodeRow:hover .iconButton.danger,
 .nodeRow.selected .iconButton.danger,
 .iconButton.danger:focus-visible {
@@ -1520,6 +1532,22 @@ body.isSelectingNodes .nodeTitlePreview {
   cursor: text;
 }
 
+.nodeTitleMeasure {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 7px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  border: 1px solid transparent;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .nodeTitlePreview > span,
 .nodeTitlePreview p {
   min-width: 0;
@@ -1576,8 +1604,8 @@ body.isSelectingNodes .nodeTitlePreview {
 .markdownContextMenu {
   position: fixed;
   z-index: 90;
-  width: min(328px, calc(100vw - 24px));
-  padding: 10px;
+  width: min(292px, calc(100vw - 24px));
+  padding: 8px;
   color: var(--foreground);
   background: var(--floating-background);
   border: 1px solid var(--border);
@@ -1627,10 +1655,7 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .markdownContextMenuHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 2px 8px;
+  display: none;
 }
 
 .markdownContextMenuHeader span {
@@ -1650,14 +1675,13 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .markdownFormatButtons button {
+  position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
   min-width: 0;
-  height: 52px;
-  padding: 4px 2px;
+  height: 40px;
+  padding: 0;
   color: var(--muted-foreground);
   background: var(--secondary);
   border: 1px solid transparent;
@@ -1676,53 +1700,32 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .markdownFormatButtons span {
-  overflow: hidden;
-  font-size: 0.66rem;
-  text-overflow: ellipsis;
-}
-
-.markdownLinkForm {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 5px 5px 5px 8px;
-  color: var(--muted-foreground);
-  background: var(--background);
-  border: 1px solid var(--input);
-  border-radius: 8px;
-}
-
-.markdownLinkForm:focus-within {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  z-index: 3;
+  width: max-content;
+  max-width: 150px;
+  padding: 5px 7px;
   color: var(--foreground);
-  border-color: var(--ring);
-}
-
-.markdownLinkForm input {
-  min-width: 0;
-  padding: 2px 0;
-  color: var(--foreground);
-  background: transparent;
-  border: 0;
-  outline: 0;
-  font-size: 0.75rem;
-}
-
-.markdownLinkForm button {
-  height: 28px;
-  padding: 0 9px;
-  color: var(--primary-foreground);
-  background: var(--primary);
-  border: 0;
+  background: var(--floating-background);
+  border: 1px solid var(--border);
   border-radius: 6px;
+  box-shadow: var(--shadow-md);
   font-size: 0.7rem;
-  font-weight: 700;
+  font-weight: 650;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 3px);
+  transition: opacity 100ms ease, transform 100ms ease;
+  white-space: nowrap;
 }
 
-.markdownLinkForm button:disabled {
-  cursor: default;
-  opacity: 0.4;
+.markdownFormatButtons button:hover span,
+.markdownFormatButtons button:focus-visible span {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .nodeTitlePlaceholder {
@@ -2383,7 +2386,7 @@ body.isSelectingNodes .nodeTitlePreview {
   }
 
   .nodeRow {
-    grid-template-columns: 28px 28px minmax(0, 1fr) auto auto 32px;
+    grid-template-columns: 28px 28px 28px minmax(0, 1fr) auto auto 32px;
     gap: 3px;
     min-height: 42px;
     padding-left: min(calc(var(--depth) * 14px), 64px);
@@ -2399,13 +2402,9 @@ body.isSelectingNodes .nodeTitlePreview {
     height: 32px;
   }
 
-  .nodeTitle {
-    min-height: 34px;
-    padding: 4px 5px;
-    font-size: 0.95rem;
-  }
-
-  .nodeTitlePreview {
+  .nodeTitle,
+  .nodeTitlePreview,
+  .nodeTitleMeasure {
     min-height: 34px;
     padding: 4px 5px;
     font-size: 0.95rem;
@@ -2451,6 +2450,13 @@ body.isSelectingNodes .nodeTitlePreview {
   }
 }
 
+@media (hover: none) {
+  .nodeMenuButton {
+    opacity: 0.72;
+    pointer-events: auto;
+  }
+}
+
 @media (max-width: 440px) {
   .mobileWorkspaceBar {
     grid-template-columns: 30px minmax(0, 1fr) 34px;
@@ -2488,7 +2494,7 @@ body.isSelectingNodes .nodeTitlePreview {
   }
 
   .nodeRow {
-    grid-template-columns: 24px 24px minmax(0, 1fr) auto auto 28px;
+    grid-template-columns: 24px 24px 24px minmax(0, 1fr) auto auto 28px;
     padding-left: min(calc(var(--depth) * 10px), 42px);
   }
 

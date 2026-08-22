@@ -50,6 +50,18 @@ export interface OutlineTreeNode {
   children: OutlineTreeNode[];
 }
 
+export interface OutlineHistoryState {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel: string | null;
+  redoLabel: string | null;
+}
+
+export interface OutlineHistoryResult {
+  tree: OutlineTreeNode;
+  history: OutlineHistoryState;
+}
+
 export interface TaggedNodeResult {
   node: Omit<OutlineTreeNode, "tags" | "fieldValues" | "children">;
   tags: Tag[];

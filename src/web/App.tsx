@@ -17,11 +17,12 @@ import {
   FolderTree,
   Highlighter,
   Italic,
-  Link2,
+  Ellipsis,
   Monitor,
   Moon,
   PanelRight,
   Plus,
+  Redo2,
   Search,
   Strikethrough,
   Sun,
@@ -55,6 +56,8 @@ import {
   apiPatch,
   apiPost,
   apiText,
+  type OutlineHistoryResult,
+  type OutlineHistoryState,
   type OutlineTreeNode,
   type Tag,
   type TaggedNodeResult,
@@ -74,6 +77,7 @@ import {
   moveNode,
   moveNodes,
   getTopLevelNodeIds,
+  getIndentTargetId,
   getNode,
   getParentId,
   isDescendant,
@@ -176,9 +180,11 @@ interface NodeSelectionDrag {
 }
 
 interface PendingDelete {
-  nodeId: string;
+  selectedIds: string[];
+  primaryId: string;
+  anchorId: string;
+  nodeCount: number;
   workspaceId: string;
-  snapshot: FlatTreeState;
   focusAfterDeleteId: string;
   createdAt: number;
 }
@@ -208,6 +214,12 @@ const COLLAPSED_WORKSPACE_FOLDERS_STORAGE_KEY = "openoutliner.collapsed-workspac
 const COLLAPSED_WORKSPACES_STORAGE_KEY = "openoutliner.collapsed-workspaces:v1";
 const SIDEBAR_WIDTH_STORAGE_KEY = "openoutliner.sidebar-width";
 const INSPECTOR_WIDTH_STORAGE_KEY = "openoutliner.inspector-width";
+const EMPTY_OUTLINE_HISTORY: OutlineHistoryState = {
+  canUndo: false,
+  canRedo: false,
+  undoLabel: null,
+  redoLabel: null
+};
 
 const iconNameSet = new Set<string>(iconNames);
 const markdownSanitizeSchema = {
@@ -257,6 +269,7 @@ export function App() {
   );
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [outlineHistory, setOutlineHistory] = useState<OutlineHistoryState>(EMPTY_OUTLINE_HISTORY);
   const [convertWorkspaceCandidate, setConvertWorkspaceCandidate] = useState<ConvertWorkspaceCandidate | null>(null);
   const [isConvertingWorkspace, setIsConvertingWorkspace] = useState(false);
   const [moveWorkspaceCandidate, setMoveWorkspaceCandidate] = useState<MoveWorkspaceCandidate | null>(null);
@@ -267,11 +280,15 @@ export function App() {
   const treeRequestRef = useRef(0);
   const tagsRequestRef = useRef(0);
   const tagResultsRequestRef = useRef(0);
+  const outlineHistoryRequestRef = useRef(0);
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
   const workspaceDragTargetRef = useRef<WorkspaceDragTarget | null>(null);
   const selectedIdRef = useRef("");
   const selectedNodeIdsRef = useRef(new Set<string>());
   const selectionAnchorIdRef = useRef("");
+  const multiSelectionKeyboardActiveRef = useRef(false);
+  const indentSelectionRef = useRef<((current: FlatNodeData) => Promise<void>) | null>(null);
+  const deleteSelectionRef = useRef<((current: FlatNodeData) => Promise<void>) | null>(null);
   const editingNodeIdRef = useRef("");
   const nodeSelectionDragRef = useRef<NodeSelectionDrag | null>(null);
   const suppressSelectionClickRef = useRef(false);
@@ -377,6 +394,7 @@ export function App() {
     selectedNodeIdsRef.current = next;
     selectedIdRef.current = primaryId;
     selectionAnchorIdRef.current = anchorId;
+    multiSelectionKeyboardActiveRef.current = next.size > 1;
     setSelectedNodeIds(next);
     setSelectedId(primaryId);
   }, []);
@@ -432,6 +450,18 @@ export function App() {
     setSingleSelectedId(nextSelectedId);
   }, [setSingleSelectedId]);
 
+  const loadOutlineHistory = useCallback(async (id: string) => {
+    const requestId = ++outlineHistoryRequestRef.current;
+    if (!id) {
+      setOutlineHistory(EMPTY_OUTLINE_HISTORY);
+      return;
+    }
+    const next = await apiGet<OutlineHistoryState>(`/api/workspaces/${id}/history`);
+    if (requestId !== outlineHistoryRequestRef.current || id !== workspaceIdRef.current) return;
+    setOutlineHistory(next);
+    if (next.undoLabel !== "Delete outline") setPendingDelete(null);
+  }, []);
+
   const loadTags = useCallback(async (id: string) => {
     const requestId = ++tagsRequestRef.current;
     if (!id) {
@@ -478,6 +508,10 @@ export function App() {
   useEffect(() => {
     loadTags(workspaceId).catch(toError(setError));
   }, [loadTags, workspaceId]);
+
+  useEffect(() => {
+    loadOutlineHistory(workspaceId).catch(toError(setError));
+  }, [loadOutlineHistory, workspaceId]);
 
   useEffect(() => {
     setIsTagManagerOpen(false);
@@ -640,6 +674,77 @@ export function App() {
     }
   }, []);
 
+  const runOutlineHistory = useCallback(async (
+    direction: "undo" | "redo",
+    preferredFocusId?: string,
+    preferredSelection?: { ids: string[]; primaryId: string; anchorId: string }
+  ) => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    await Promise.resolve();
+    await nodeCreateQueueRef.current.catch(() => undefined);
+    await Promise.all([...nodePatchQueuesRef.current.values()].map(request => request.catch(() => undefined)));
+
+    const currentWorkspaceId = workspaceIdRef.current;
+    if (!currentWorkspaceId) return;
+    outlineHistoryRequestRef.current += 1;
+    const result = await apiPost<OutlineHistoryResult>(
+      `/api/workspaces/${currentWorkspaceId}/${direction}`,
+      {}
+    );
+    if (currentWorkspaceId !== workspaceIdRef.current) return;
+
+    const { state, visibleIds: nextVisibleIds } = fromNestedTree(result.tree);
+    const currentSelectedId = selectedIdRef.current;
+    const restoredSelectionIds = preferredSelection?.ids.filter(id => hasNode(state, id)) ?? [];
+    const restoredSelection = new Set(restoredSelectionIds);
+    const restoredPrimaryId = preferredSelection?.primaryId && restoredSelection.has(preferredSelection.primaryId)
+      ? preferredSelection.primaryId
+      : restoredSelectionIds[0];
+    const nextSelectedId = restoredPrimaryId
+      ? restoredPrimaryId
+      : preferredFocusId && hasNode(state, preferredFocusId)
+      ? preferredFocusId
+      : currentSelectedId && hasNode(state, currentSelectedId)
+        ? currentSelectedId
+        : nextVisibleIds[0] ?? state.rootId;
+    localNodeTitlesRef.current.clear();
+    reconcilingNodeIdsRef.current.clear();
+    setFlatState(state);
+    setVisibleIds(nextVisibleIds);
+    flatStateRef.current = state;
+    setOutlineHistory(result.history);
+    setPendingDelete(null);
+    if (restoredPrimaryId) {
+      const restoredAnchorId = preferredSelection?.anchorId && restoredSelection.has(preferredSelection.anchorId)
+        ? preferredSelection.anchorId
+        : restoredPrimaryId;
+      setNodeSelection(restoredSelectionIds, restoredPrimaryId, restoredAnchorId);
+    } else {
+      setSingleSelectedId(nextSelectedId);
+    }
+    if (nextSelectedId !== state.rootId && restoredSelectionIds.length <= 1) {
+      window.setTimeout(() => focusWhenReady(nextSelectedId), 30);
+    }
+  }, [focusWhenReady, setNodeSelection, setSingleSelectedId]);
+
+  useEffect(() => {
+    const handleOutlineHistoryShortcut = (event: globalThis.KeyboardEvent) => {
+      const direction = getOutlineHistoryShortcut(
+        event,
+        outlineHistory.canUndo,
+        outlineHistory.canRedo,
+        isEditableElement(event.target),
+        isOutlineEditableElement(event.target)
+      );
+      if (!direction) return;
+      event.preventDefault();
+      runOutlineHistory(direction).catch(toError(setError));
+    };
+
+    window.addEventListener("keydown", handleOutlineHistoryShortcut);
+    return () => window.removeEventListener("keydown", handleOutlineHistoryShortcut);
+  }, [outlineHistory.canRedo, outlineHistory.canUndo, runOutlineHistory]);
+
   const refresh = useCallback(
     async (focusId?: string) => {
       await loadTree(workspaceId, { preserveSelection: true });
@@ -657,7 +762,9 @@ export function App() {
     const request = previous
       .catch(() => undefined)
       .then(() => apiPatch(`/api/nodes/${id}`, patch))
-      .then(() => undefined);
+      .then(() => {
+        loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
+      });
     nodePatchQueuesRef.current.set(id, request);
     return request.finally(() => {
       if (nodePatchQueuesRef.current.get(id) === request) nodePatchQueuesRef.current.delete(id);
@@ -760,10 +867,13 @@ export function App() {
       );
       nodeCreateQueueRef.current = createRequest.then(() => undefined, () => undefined);
       const created = await createRequest;
+      loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
       if (cancelledTempIdsRef.current.has(tempId)) {
         cancelledTempIdsRef.current.delete(tempId);
         localNodeTitlesRef.current.delete(tempId);
-        apiDelete(`/api/nodes/${created.id}`).catch(toError(setError));
+        apiDelete(`/api/nodes/${created.id}`)
+          .then(() => loadOutlineHistory(workspaceIdRef.current))
+          .catch(toError(setError));
         return;
       }
       const draft = flatStateRef.current ? getNode(flatStateRef.current, tempId) : undefined;
@@ -823,7 +933,9 @@ export function App() {
         apiPost(`/api/nodes/${created.id}/move`, {
           parentId: draftParentId,
           position: draftPosition
-        }).catch(toError(setError));
+        })
+          .then(() => loadOutlineHistory(workspaceIdRef.current))
+          .catch(toError(setError));
       }
       if (pendingTitle !== undefined || (draft && (draft.title || draft.body || draft.dueDate || draft.done || draft.collapsed))) {
         patchNode(created.id, {
@@ -865,29 +977,52 @@ export function App() {
   };
 
   const deleteNodeOptimistically = async (node: FlatNodeData) => {
-    if (!flatState || node.id === flatState.rootId) return;
-    const before = flatState;
+    const before = flatStateRef.current;
+    if (!before || node.id === before.rootId) return;
+    const visibleBefore = computeVisibleIds(before);
+    const selectedIds = selectedNodeIdsRef.current.has(node.id) && selectedNodeIdsRef.current.size > 1
+      ? visibleBefore.filter(id => selectedNodeIdsRef.current.has(id))
+      : [node.id];
+    const deletingIds = getTopLevelNodeIds(before, selectedIds);
+    if (deletingIds.length === 0) return;
+    if (deletingIds.some(id => id.startsWith("temp-")) && deletingIds.length > 1) {
+      setError("Wait for new nodes to finish saving before deleting the selection.");
+      return;
+    }
+
     const currentWorkspaceId = workspaceId;
-    const prevIdx = visibleIds.indexOf(node.id);
-    const previousId = prevIdx > 0 ? visibleIds[prevIdx - 1] : flatState.rootId;
-    const newState = removeNode(before, node.id);
-    localNodeTitlesRef.current.delete(node.id);
-    reconcilingNodeIdsRef.current.delete(node.id);
+    const selectionBefore = new Set(selectedNodeIdsRef.current);
+    const primaryBefore = selectedIdRef.current;
+    const anchorBefore = selectionAnchorIdRef.current;
+    const firstDeleteIndex = Math.min(...deletingIds.map(id => visibleBefore.indexOf(id)).filter(index => index >= 0));
+    const newState = deletingIds.reduce((state, id) => removeNode(state, id), before);
+    const removedIds = Object.keys(before.nodes).filter(id => !newState.nodes[id]);
+    const previousId = visibleBefore
+      .slice(0, Number.isFinite(firstDeleteIndex) ? firstDeleteIndex : 0)
+      .reverse()
+      .find(id => Boolean(newState.nodes[id])) ?? before.rootId;
+    for (const id of removedIds) {
+      localNodeTitlesRef.current.delete(id);
+      reconcilingNodeIdsRef.current.delete(id);
+    }
     setFlatState(newState);
     setVisibleIds(computeVisibleIds(newState));
     flatStateRef.current = newState;
     focusNode(previousId);
-    if (node.id.startsWith("temp-")) {
-      cancelledTempIdsRef.current.add(node.id);
+    if (deletingIds[0]?.startsWith("temp-")) {
+      cancelledTempIdsRef.current.add(deletingIds[0]);
       return;
     }
 
     try {
-      await apiDelete(`/api/nodes/${node.id}`);
+      await apiPost("/api/nodes/delete-batch", { ids: deletingIds });
+      loadOutlineHistory(currentWorkspaceId).catch(toError(setError));
       setPendingDelete({
-        nodeId: node.id,
+        selectedIds,
+        primaryId: selectedIds.includes(primaryBefore) ? primaryBefore : selectedIds[0],
+        anchorId: selectedIds.includes(anchorBefore) ? anchorBefore : selectedIds[0],
+        nodeCount: selectedIds.length,
         workspaceId: currentWorkspaceId,
-        snapshot: before,
         focusAfterDeleteId: previousId,
         createdAt: Date.now()
       });
@@ -895,22 +1030,58 @@ export function App() {
       setFlatState(before);
       setVisibleIds(computeVisibleIds(before));
       flatStateRef.current = before;
-      focusNode(node.id);
+      setNodeSelection(selectionBefore, primaryBefore, anchorBefore);
+      window.setTimeout(() => focusTitleInput(inputRefs.current.get(primaryBefore)), 30);
       throw error;
     }
   };
+  deleteSelectionRef.current = deleteNodeOptimistically;
+
+  useEffect(() => {
+    const handleMultiSelectionDelete = (event: globalThis.KeyboardEvent) => {
+      if (!shouldHandleMultiSelectionDelete(
+        event,
+        selectedNodeIdsRef.current.size,
+        multiSelectionKeyboardActiveRef.current,
+        isEditableElement(event.target),
+        isOutlineEditableElement(event.target)
+      )) return;
+
+      const currentState = flatStateRef.current;
+      if (!currentState) return;
+      const primaryId = selectedNodeIdsRef.current.has(selectedIdRef.current)
+        ? selectedIdRef.current
+        : computeVisibleIds(currentState).find(id => selectedNodeIdsRef.current.has(id));
+      const current = primaryId ? getNode(currentState, primaryId) : undefined;
+      if (!current) return;
+
+      event.preventDefault();
+      deleteSelectionRef.current?.(current).catch(toError(setError));
+    };
+
+    window.addEventListener("keydown", handleMultiSelectionDelete);
+    return () => window.removeEventListener("keydown", handleMultiSelectionDelete);
+  }, []);
 
   const undoPendingDelete = async () => {
     const pending = pendingDelete;
     if (!pending || pending.workspaceId !== workspaceIdRef.current) return;
-    setPendingDelete(null);
     try {
-      await apiPost<OutlineTreeNode>(`/api/nodes/${pending.nodeId}/restore`, {});
-      setFlatState(pending.snapshot);
-      setVisibleIds(computeVisibleIds(pending.snapshot));
-      flatStateRef.current = pending.snapshot;
-      setSingleSelectedId(pending.nodeId);
-      focusWhenReady(pending.nodeId);
+      await runOutlineHistory("undo", pending.primaryId, {
+        ids: pending.selectedIds,
+        primaryId: pending.primaryId,
+        anchorId: pending.anchorId
+      });
+      const restoredState = flatStateRef.current;
+      if (restoredState && pending.workspaceId === workspaceIdRef.current) {
+        const restoredIds = pending.selectedIds.filter(id => hasNode(restoredState, id));
+        const restoredIdSet = new Set(restoredIds);
+        const restoredPrimaryId = restoredIdSet.has(pending.primaryId) ? pending.primaryId : restoredIds[0];
+        if (restoredPrimaryId) {
+          const restoredAnchorId = restoredIdSet.has(pending.anchorId) ? pending.anchorId : restoredPrimaryId;
+          setNodeSelection(restoredIds, restoredPrimaryId, restoredAnchorId);
+        }
+      }
     } catch (error) {
       focusNode(pending.focusAfterDeleteId);
       throw error;
@@ -940,6 +1111,7 @@ export function App() {
 
     try {
       await apiPost(`/api/nodes/${currentSource.id}/move`, { parentId, position: nextPosition });
+      loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
     } catch (error) {
       setFlatState(before);
       setVisibleIds(computeVisibleIds(before));
@@ -960,20 +1132,58 @@ export function App() {
     await createOptimisticNode(parentId, current.position + 1, current, title, currentTitle);
   };
 
+  const createBefore = async (current: FlatNodeData, currentTitle = current.title) => {
+    const currentFlatState = flatStateRef.current;
+    if (!currentFlatState) return;
+    const parentId = current.parentId ?? currentFlatState.rootId;
+    await createOptimisticNode(parentId, current.position, current, "", currentTitle);
+  };
+
   const createFirstNode = async () => {
     if (!flatState) return;
     await createOptimisticNode(flatState.rootId, 0);
   };
 
   const indent = async (current: FlatNodeData) => {
-    if (!flatState) return;
-    const index = visibleIds.indexOf(current.id);
-    const prevId = index > 0 ? visibleIds[index - 1] : undefined;
-    if (!prevId || prevId === current.parentId) return;
-    const previous = getNode(flatState, prevId);
-    if (!previous) return;
-    await moveNodeOptimistically(current, prevId, previous.childIds.length);
+    const currentState = flatStateRef.current;
+    if (!currentState) return;
+    const selectedIds = selectedNodeIdsRef.current.has(current.id)
+      ? visibleIds.filter(id => selectedNodeIdsRef.current.has(id))
+      : [current.id];
+    const movingIds = getTopLevelNodeIds(currentState, selectedIds);
+    const movingIdSet = new Set(movingIds);
+    const firstMovingId = visibleIds.find(id => movingIdSet.has(id));
+    if (!firstMovingId) return;
+    const targetId = getIndentTargetId(currentState, visibleIds, firstMovingId);
+    const target = targetId ? getNode(currentState, targetId) : undefined;
+    if (!target) return;
+    await moveNodesToTarget(movingIds, target, "inside");
   };
+  indentSelectionRef.current = indent;
+
+  useEffect(() => {
+    const handleMultiSelectionTab = (event: globalThis.KeyboardEvent) => {
+      if (!shouldHandleMultiSelectionTab(
+        event,
+        selectedNodeIdsRef.current.size,
+        multiSelectionKeyboardActiveRef.current
+      )) return;
+
+      const currentState = flatStateRef.current;
+      if (!currentState) return;
+      const primaryId = selectedNodeIdsRef.current.has(selectedIdRef.current)
+        ? selectedIdRef.current
+        : computeVisibleIds(currentState).find(id => selectedNodeIdsRef.current.has(id));
+      const current = primaryId ? getNode(currentState, primaryId) : undefined;
+      if (!current) return;
+
+      event.preventDefault();
+      indentSelectionRef.current?.(current).catch(toError(setError));
+    };
+
+    window.addEventListener("keydown", handleMultiSelectionTab);
+    return () => window.removeEventListener("keydown", handleMultiSelectionTab);
+  }, []);
 
   const outdent = async (current: FlatNodeData) => {
     if (!flatState || !current.parentId || current.parentId === flatState.rootId) return;
@@ -1027,6 +1237,7 @@ export function App() {
     if (
       target.closest(".nodeTitle") ||
       target.closest(".nodeTitleLink") ||
+      target.closest(".nodeMenuButton") ||
       target.closest(".disclosureButton") ||
       target.closest(".dragHandle") ||
       target.closest(".iconButton.danger") ||
@@ -1230,6 +1441,7 @@ export function App() {
         position,
         expandParent: placement === "inside" && currentTarget.collapsed
       });
+      loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
       restoreScroll();
     } catch (error) {
       setFlatState(before);
@@ -1657,6 +1869,11 @@ export function App() {
     <div
       className={`appShell${sidebarCollapsed ? " sidebarCollapsed" : ""}`}
       style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      onPointerDownCapture={event => {
+        if (!(event.target as HTMLElement).closest(".outlineList")) {
+          multiSelectionKeyboardActiveRef.current = false;
+        }
+      }}
     >
       <aside className="sidebar">
         <div className="sidebarHeader">
@@ -1816,6 +2033,24 @@ export function App() {
             <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search" />
           </div>
           <div className="toolbar">
+            <button
+              aria-label="Undo outline action"
+              disabled={!workspaceId}
+              title={outlineHistory.undoLabel ? `Undo ${outlineHistory.undoLabel}` : "Undo outline action"}
+              type="button"
+              onClick={() => runOutlineHistory("undo").catch(toError(setError))}
+            >
+              <Undo2 size={17} />
+            </button>
+            <button
+              aria-label="Redo outline action"
+              disabled={!outlineHistory.canRedo}
+              title={outlineHistory.redoLabel ? `Redo ${outlineHistory.redoLabel}` : "Nothing to redo"}
+              type="button"
+              onClick={() => runOutlineHistory("redo").catch(toError(setError))}
+            >
+              <Redo2 size={17} />
+            </button>
             <button className="themeToggle" title={`Theme: ${theme}`} type="button" onClick={cycleTheme}>
               {theme === "light" ? <Sun size={17} /> : theme === "dark" ? <Moon size={17} /> : <Monitor size={17} />}
               <span>{themeLabel(theme)}</span>
@@ -2017,9 +2252,9 @@ export function App() {
           </div>
         )}
 
-        {pendingDelete && pendingDelete.workspaceId === workspaceId && (
+        {pendingDelete && pendingDelete.workspaceId === workspaceId && outlineHistory.undoLabel === "Delete outline" && (
           <div className="undoBar" role="status" aria-live="polite">
-            <span>Deleted node</span>
+            <span>{pendingDelete.nodeCount === 1 ? "Deleted node" : `Deleted ${pendingDelete.nodeCount} nodes`}</span>
             <button type="button" onClick={() => undoPendingDelete().catch(toError(setError))}>
               <Undo2 size={15} />
               <span>Undo</span>
@@ -2153,6 +2388,9 @@ export function App() {
                           onCreateAfter={(title, currentTitle) =>
                             createAfter(node, title, currentTitle).catch(toError(setError))
                           }
+                          onCreateBefore={currentTitle =>
+                            createBefore(node, currentTitle).catch(toError(setError))
+                          }
                           onIndent={() => indent(node).catch(toError(setError))}
                           onOutdent={() => outdent(node).catch(toError(setError))}
                           onFocusPrevious={() => focusRelative(node, -1)}
@@ -2222,6 +2460,7 @@ export function App() {
                     <div className="notesAlertContent">
                       <div className="notesAlertTitle">Notes</div>
                       <textarea
+                        className="nodeNotes"
                         value={selectedNode.body}
                         onChange={event =>
                           setFlatState(s => {
@@ -2375,6 +2614,7 @@ function NodeRow({
   onCommit,
   onToggle,
   onCreateAfter,
+  onCreateBefore,
   onIndent,
   onOutdent,
   onFocusPrevious,
@@ -2403,6 +2643,7 @@ function NodeRow({
   onCommit: (patch: Partial<FlatNodeData>) => void;
   onToggle: (patch: Partial<FlatNodeData>) => void;
   onCreateAfter: (title?: string, currentTitle?: string) => void;
+  onCreateBefore: (currentTitle?: string) => void;
   onIndent: () => void;
   onOutdent: () => void;
   onFocusPrevious: () => void;
@@ -2414,14 +2655,20 @@ function NodeRow({
   onDelete: () => Promise<void>;
 }) {
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const titleMeasureRef = useRef<HTMLDivElement | null>(null);
   const dateInputRef = useRef<HTMLInputElement | null>(null);
   const markdownMenuRef = useRef<HTMLDivElement | null>(null);
   const nodeContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [localTitle, setLocalTitle] = useState(node.title);
   const [markdownMenu, setMarkdownMenu] = useState<MarkdownContextMenuState | null>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
-  const [linkHref, setLinkHref] = useState("");
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textSelectionPointerRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startOffset: number;
+  } | null>(null);
 
   // Sync external title changes (drag, undo, etc.) into local state
   useEffect(() => {
@@ -2523,27 +2770,22 @@ function NodeRow({
     commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
   };
 
-  const applyMarkdownLinkFromMenu = () => {
-    if (!markdownMenu || !linkHref.trim()) return;
-    const result = applyMarkdownLink(
-      localTitle,
-      markdownMenu.selectionStart,
-      markdownMenu.selectionEnd,
-      linkHref.trim()
-    );
-    commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd, false);
-  };
-
-  const openMarkdownContextMenu = (input: HTMLTextAreaElement, clientX: number, clientY: number) => {
+  const openMarkdownContextMenu = (
+    input: HTMLTextAreaElement,
+    clientX: number,
+    clientY: number,
+    placement: "pointer" | "selection" = "pointer"
+  ) => {
     const selectionStart = input.selectionStart ?? 0;
     const selectionEnd = input.selectionEnd ?? selectionStart;
     if (selectionStart === selectionEnd) return false;
-    const menuWidth = 328;
-    const menuHeight = 176;
-    setLinkHref("");
+    const menuWidth = 292;
+    const menuHeight = 56;
+    const requestedX = placement === "selection" ? clientX - menuWidth / 2 : clientX;
+    const requestedY = placement === "selection" ? clientY - menuHeight - 10 : clientY;
     setMarkdownMenu({
-      x: Math.max(12, Math.min(clientX, window.innerWidth - menuWidth - 12)),
-      y: Math.max(12, Math.min(clientY, window.innerHeight - menuHeight - 12)),
+      x: Math.max(12, Math.min(requestedX, window.innerWidth - menuWidth - 12)),
+      y: Math.max(12, Math.min(requestedY, window.innerHeight - menuHeight - 12)),
       selectionStart,
       selectionEnd
     });
@@ -2610,6 +2852,8 @@ function NodeRow({
       onClick={event => {
         const target = event.target as HTMLElement;
         if (
+          target.closest(".nodeTitle") ||
+          target.closest(".nodeMenuButton") ||
           target.closest(".disclosureButton") ||
           target.closest(".dragHandle") ||
           target.closest(".iconButton.danger") ||
@@ -2622,6 +2866,25 @@ function NodeRow({
         }
       }}
     >
+      <button
+        className="iconButton nodeMenuButton"
+        type="button"
+        title="More outline actions"
+        aria-label={`More actions for ${node.title || "Untitled"}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(nodeContextMenu)}
+        disabled={node.id.startsWith("temp-")}
+        onPointerDown={event => event.stopPropagation()}
+        onClick={event => {
+          event.preventDefault();
+          event.stopPropagation();
+          onFocusSelect();
+          const bounds = event.currentTarget.getBoundingClientRect();
+          openNodeContextMenu(bounds.left, bounds.bottom + 4);
+        }}
+      >
+        <Ellipsis size={16} />
+      </button>
       <button
         className="iconButton disclosureButton"
         type="button"
@@ -2654,11 +2917,39 @@ function NodeRow({
           onFocus={() => {
             onFocusSelect();
           }}
+          onClick={event => {
+            const input = event.currentTarget;
+            if (input.selectionStart !== input.selectionEnd) return;
+            const measure = titleMeasureRef.current;
+            if (!measure) return;
+            const selectionStart = getPreviewSelectionStart(
+              measure,
+              event.clientX,
+              event.clientY,
+              localTitle
+            );
+            input.setSelectionRange(selectionStart, selectionStart);
+          }}
           onChange={event => {
             const value = event.target.value;
             setLocalTitle(value);
             resizeTitleInput(event.currentTarget);
             syncTitleDebounced(value);
+          }}
+          onPaste={event => {
+            const input = event.currentTarget;
+            const result = applyPastedMarkdownLink(
+              localTitle,
+              input.selectionStart ?? localTitle.length,
+              input.selectionEnd ?? input.selectionStart ?? localTitle.length,
+              event.clipboardData.getData("text/plain")
+            );
+            if (!result) {
+              setMarkdownMenu(null);
+              return;
+            }
+            event.preventDefault();
+            commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
           }}
           onBlur={event => {
             flushTitle(event.target.value);
@@ -2666,14 +2957,55 @@ function NodeRow({
             onBlurFocus();
           }}
           onPointerDown={event => {
-            if (event.button !== 2 || !openMarkdownContextMenu(event.currentTarget, event.clientX, event.clientY)) return;
-            event.preventDefault();
+            if (event.button === 0) {
+              const measure = titleMeasureRef.current;
+              if (!measure) return;
+              textSelectionPointerRef.current = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                startOffset: getPreviewSelectionStart(measure, event.clientX, event.clientY, localTitle)
+              };
+              return;
+            }
+            if (event.button === 2 && openMarkdownContextMenu(event.currentTarget, event.clientX, event.clientY)) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
+          onPointerUp={event => {
+            if (event.button !== 0) return;
+            const input = event.currentTarget;
+            const pointer = textSelectionPointerRef.current;
+            textSelectionPointerRef.current = null;
+            const measure = titleMeasureRef.current;
+            if (
+              pointer?.pointerId === event.pointerId &&
+              measure &&
+              Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 4
+            ) {
+              const endOffset = getPreviewSelectionStart(measure, event.clientX, event.clientY, localTitle);
+              input.setSelectionRange(
+                Math.min(pointer.startOffset, endOffset),
+                Math.max(pointer.startOffset, endOffset)
+              );
+            }
+            if (input.selectionStart === input.selectionEnd) return;
             event.stopPropagation();
+            openMarkdownContextMenu(input, event.clientX, event.clientY, "selection");
           }}
           onContextMenu={event => {
             if (!openMarkdownContextMenu(event.currentTarget, event.clientX, event.clientY)) return;
             event.preventDefault();
             event.stopPropagation();
+          }}
+          onKeyUp={event => {
+            const input = event.currentTarget;
+            if (input.selectionStart === input.selectionEnd) return;
+            const key = event.key.toLowerCase();
+            if (!event.shiftKey && !((event.metaKey || event.ctrlKey) && key === "a")) return;
+            const bounds = input.getBoundingClientRect();
+            openMarkdownContextMenu(input, bounds.left + bounds.width / 2, bounds.top, "selection");
           }}
           onKeyDown={event => {
             if (shouldIgnoreTextInputKeyDown(event)) return;
@@ -2681,7 +3013,13 @@ function NodeRow({
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               const input = event.currentTarget;
-              const { currentTitle, nextTitle } = splitTitleAtSelection(localTitle, input.selectionStart);
+              const action = getNodeEnterAction(localTitle, input.selectionStart, input.selectionEnd);
+              if (action.type === "insert-before") {
+                flushTitle(localTitle);
+                onCreateBefore(localTitle);
+                return;
+              }
+              const { currentTitle, nextTitle } = action;
               // Batch all state updates: flush current title + create new node
               setLocalTitle(currentTitle);
               flushTitle(currentTitle);
@@ -2704,21 +3042,36 @@ function NodeRow({
         />
         <div
           className="nodeTitlePreview"
+          onPointerDown={event => {
+            if (
+              event.button !== 0 ||
+              event.shiftKey ||
+              event.metaKey ||
+              event.ctrlKey ||
+              (event.target as HTMLElement).closest(".nodeTitleLink")
+            ) return;
+            event.preventDefault();
+            const input = titleInputRef.current;
+            if (!input) return;
+            const selectionStart = getPreviewSelectionStart(
+              event.currentTarget,
+              event.clientX,
+              event.clientY,
+              node.title
+            );
+            onFocusSelect();
+            input.focus({ preventScroll: true });
+            input.setSelectionRange(selectionStart, selectionStart);
+            window.requestAnimationFrame(() => {
+              if (document.activeElement !== input) return;
+              input.setSelectionRange(selectionStart, selectionStart);
+            });
+          }}
           onClick={event => {
             event.stopPropagation();
             if ((event.target as HTMLElement).closest(".nodeTitleLink")) return
+            if (!event.shiftKey && !event.metaKey && !event.ctrlKey) return;
             if (!onMouseSelect(event)) return;
-            const input = titleInputRef.current;
-            if (input) {
-              const selectionStart = getPreviewSelectionStart(
-                event.currentTarget,
-                event.clientX,
-                event.clientY,
-                node.title
-              );
-              input.focus({ preventScroll: true });
-              input.setSelectionRange(selectionStart, selectionStart);
-            }
           }}
         >
           {node.title.trim() ? (
@@ -2753,6 +3106,9 @@ function NodeRow({
           ) : (
             <span className="nodeTitlePlaceholder">Untitled</span>
           )}
+        </div>
+        <div ref={titleMeasureRef} className="nodeTitleMeasure" aria-hidden="true">
+          {localTitle}
         </div>
       </div>
       <div className="nodeDateControl">
@@ -2839,44 +3195,27 @@ function NodeRow({
             <small>Markdown</small>
           </div>
           <div className="markdownFormatButtons">
-            <button type="button" title="Bold · **text**" aria-label="Bold" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("bold")}>
+            <button type="button" aria-label="Bold" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("bold")}>
               <Bold size={16} />
               <span>Bold</span>
             </button>
-            <button type="button" title="Italic · *text*" aria-label="Italic" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("italic")}>
+            <button type="button" aria-label="Italic" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("italic")}>
               <Italic size={16} />
               <span>Italic</span>
             </button>
-            <button type="button" title="Strike · ~~text~~" aria-label="Strike" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("strike")}>
+            <button type="button" aria-label="Strike" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("strike")}>
               <Strikethrough size={16} />
               <span>Strike</span>
             </button>
-            <button type="button" title="Inline code · `text`" aria-label="Inline code" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("code")}>
+            <button type="button" aria-label="Inline code" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("code")}>
               <Code2 size={16} />
               <span>Code</span>
             </button>
-            <button type="button" title="Highlight · ==text==" aria-label="Highlight" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("highlight")}>
+            <button type="button" aria-label="Highlight" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("highlight")}>
               <Highlighter size={16} />
               <span>Highlight</span>
             </button>
           </div>
-          <form
-            className="markdownLinkForm"
-            onSubmit={event => {
-              event.preventDefault();
-              applyMarkdownLinkFromMenu();
-            }}
-          >
-            <Link2 size={15} />
-            <input
-              aria-label="Link URL"
-              value={linkHref}
-              placeholder="https://example.com"
-              onChange={event => setLinkHref(event.target.value)}
-              onContextMenu={event => event.stopPropagation()}
-            />
-            <button type="submit" disabled={!linkHref.trim()}>Link</button>
-          </form>
         </div>,
         document.body
       )}
@@ -3202,6 +3541,25 @@ export function normalizeLinkHref(href: string): string {
   return `https://${trimmed.replace(/^\/\//, "")}`;
 }
 
+export function isPastedMarkdownLink(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  if (/^(?:https?:\/\/|mailto:|tel:|\/\/)/i.test(trimmed)) return true;
+  return /^(?:www\.)?[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}(?::\d+)?(?:[/?#].*)?$/i.test(trimmed);
+}
+
+export function applyPastedMarkdownLink(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  clipboardText: string
+) {
+  const start = Math.max(0, Math.min(selectionStart, value.length));
+  const end = Math.max(start, Math.min(selectionEnd, value.length));
+  if (start === end || !isPastedMarkdownLink(clipboardText)) return null;
+  return applyMarkdownLink(value, start, end, normalizeLinkHref(clipboardText));
+}
+
 async function insertMarkdownLinkFromClipboard(
   event: KeyboardEvent<HTMLTextAreaElement>,
   title: string,
@@ -3377,6 +3735,60 @@ export function splitTitleAtSelection(title: string, selectionStart?: number | n
   };
 }
 
+export type NodeEnterAction =
+  | { type: "insert-before" }
+  | { type: "split"; currentTitle: string; nextTitle: string };
+
+export function getNodeEnterAction(
+  title: string,
+  selectionStart?: number | null,
+  selectionEnd?: number | null
+): NodeEnterAction {
+  if (title.length > 0 && selectionStart === 0 && selectionEnd === 0) return { type: "insert-before" };
+  return { type: "split", ...splitTitleAtSelection(title, selectionStart) };
+}
+
+export function shouldHandleMultiSelectionTab(
+  event: { key: string; shiftKey?: boolean; defaultPrevented?: boolean },
+  selectedCount: number,
+  keyboardActive: boolean
+) {
+  return (
+    event.key === "Tab" &&
+    !event.shiftKey &&
+    !event.defaultPrevented &&
+    selectedCount > 1 &&
+    keyboardActive
+  );
+}
+
+export function shouldHandleMultiSelectionDelete(
+  event: {
+    key: string;
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    altKey?: boolean;
+    defaultPrevented?: boolean;
+    isComposing?: boolean;
+  },
+  selectedCount: number,
+  keyboardActive: boolean,
+  editable: boolean,
+  outlineEditable: boolean
+) {
+  return (
+    event.key === "Delete" &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.defaultPrevented &&
+    !event.isComposing &&
+    selectedCount > 1 &&
+    keyboardActive &&
+    (!editable || outlineEditable)
+  );
+}
+
 export function shouldIgnoreTextInputKeyDown(event: {
   isComposing?: boolean;
   nativeEvent?: { isComposing?: boolean; keyCode?: number };
@@ -3546,6 +3958,33 @@ export function nextCollapsedWorkspaceIds(current: Set<string>, workspaceId: str
 
 function workspaceIconName(icon: string): IconName {
   return iconNameSet.has(icon) ? (icon as IconName) : "folder-tree";
+}
+
+function isEditableElement(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (
+    target.matches("input, textarea, select") || target.isContentEditable
+  );
+}
+
+function isOutlineEditableElement(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.matches(".nodeTitle, .nodeDatePicker, .nodeNotes");
+}
+
+export function getOutlineHistoryShortcut(
+  event: Pick<globalThis.KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey">,
+  canUndo: boolean,
+  canRedo: boolean,
+  editable: boolean,
+  outlineEditable: boolean
+): "undo" | "redo" | null {
+  if (editable && !outlineEditable) return null;
+  const key = event.key.toLowerCase();
+  const modifier = event.metaKey || event.ctrlKey;
+  const undo = modifier && key === "z" && !event.shiftKey;
+  const redo = modifier && ((key === "z" && event.shiftKey) || (key === "y" && event.ctrlKey));
+  if (undo && (canUndo || outlineEditable)) return "undo";
+  if (redo && canRedo) return "redo";
+  return null;
 }
 
 function toError(setError: (message: string) => void) {

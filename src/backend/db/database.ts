@@ -65,6 +65,22 @@ function migrate(db: OpenOutlinerDb): void {
     CREATE INDEX IF NOT EXISTS idx_nodes_search
       ON nodes(workspace_id, title, body);
 
+    CREATE TABLE IF NOT EXISTS outline_history (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      before_snapshot TEXT NOT NULL,
+      after_snapshot TEXT NOT NULL,
+      coalesce_key TEXT,
+      undone INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_outline_history_workspace_state
+      ON outline_history(workspace_id, undone, seq);
+
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
