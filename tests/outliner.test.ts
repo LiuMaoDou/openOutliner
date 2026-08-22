@@ -13,6 +13,7 @@ import {
   applyMarkdownLink,
   applyPastedMarkdownLink,
   applyMarkdownStyle,
+  applyMarkdownTextColor,
   clampPanelWidth,
   createWorkspaceRequestBody,
   formatNodeDate,
@@ -33,6 +34,7 @@ import {
   shouldHandleMultiSelectionTab,
   nextCollapsedWorkspaceFolderIds,
   splitMarkdownHighlights,
+  splitMarkdownTextColors,
   splitTitleAtSelection
 } from "../src/web/App.js";
 import {
@@ -658,6 +660,27 @@ describe("tree operations", () => {
     expect(applyMarkdownStyle("`Alpha`", 0, 7, "code").value).toBe("Alpha");
   });
 
+  it("applies, changes, and removes a safe Markdown text color", () => {
+    const colored = applyMarkdownTextColor("Alpha Beta", 6, 10, "red");
+    expect(colored).toEqual({
+      value: "Alpha {{color:red}}Beta{{/color}}",
+      selectionStart: 19,
+      selectionEnd: 23
+    });
+
+    expect(applyMarkdownTextColor(colored.value, 19, 23, "blue")).toEqual({
+      value: "Alpha {{color:blue}}Beta{{/color}}",
+      selectionStart: 20,
+      selectionEnd: 24
+    });
+    expect(applyMarkdownTextColor("{{color:red}}Beta{{/color}}", 13, 17, null)).toEqual({
+      value: "Beta",
+      selectionStart: 0,
+      selectionEnd: 4
+    });
+    expect(applyMarkdownTextColor("Alpha", 0, 5, null).value).toBe("Alpha");
+  });
+
   it("creates Markdown links and normalizes safe link destinations", () => {
     expect(applyMarkdownLink("Open docs", 5, 9, "example.com")).toEqual({
       value: "Open [docs](example.com)",
@@ -716,6 +739,17 @@ describe("tree operations", () => {
       { value: "four", highlighted: true }
     ]);
     expect(splitMarkdownHighlights("plain")).toEqual([{ value: "plain", highlighted: false }]);
+  });
+
+  it("splits only supported Markdown text colors", () => {
+    expect(splitMarkdownTextColors("One {{color:red}}two{{/color}} three")).toEqual([
+      { value: "One ", color: null },
+      { value: "two", color: "red" },
+      { value: " three", color: null }
+    ]);
+    expect(splitMarkdownTextColors("{{color:pink}}unsafe{{/color}}")).toEqual([
+      { value: "{{color:pink}}unsafe{{/color}}", color: null }
+    ]);
   });
 
   it("ignores Enter shortcuts while an IME composition is active", () => {

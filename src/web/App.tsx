@@ -20,6 +20,7 @@ import {
   Ellipsis,
   Monitor,
   Moon,
+  Palette,
   PanelRight,
   Plus,
   Redo2,
@@ -138,11 +139,24 @@ type DropPlacement = "before" | "inside" | "after";
 type WorkspaceDropPlacement = "before" | "inside" | "after";
 export type MarkdownStyle = "bold" | "italic" | "strike" | "code" | "highlight";
 
+export const MARKDOWN_TEXT_COLORS = [
+  { id: "red", label: "Red" },
+  { id: "orange", label: "Orange" },
+  { id: "yellow", label: "Yellow" },
+  { id: "green", label: "Green" },
+  { id: "blue", label: "Blue" },
+  { id: "purple", label: "Purple" },
+  { id: "gray", label: "Gray" }
+] as const;
+
+export type MarkdownTextColor = (typeof MARKDOWN_TEXT_COLORS)[number]["id"];
+
 interface MarkdownContextMenuState {
   x: number;
   y: number;
   selectionStart: number;
   selectionEnd: number;
+  colorPaletteOpen: boolean;
 }
 
 interface NodeContextMenuState {
@@ -222,9 +236,15 @@ const EMPTY_OUTLINE_HISTORY: OutlineHistoryState = {
 };
 
 const iconNameSet = new Set<string>(iconNames);
+const markdownTextColorIds = new Set<string>(MARKDOWN_TEXT_COLORS.map(color => color.id));
+const markdownTextColorClassNames = MARKDOWN_TEXT_COLORS.map(color => `markdownTextColor-${color.id}`);
 const markdownSanitizeSchema = {
   ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), "mark"]
+  tagNames: [...(defaultSchema.tagNames ?? []), "mark", "span"],
+  attributes: {
+    ...defaultSchema.attributes,
+    span: [...(defaultSchema.attributes?.span ?? []), ["className", ...markdownTextColorClassNames]]
+  }
 };
 
 export function App() {
@@ -2129,6 +2149,11 @@ export function App() {
                   <code>Ctrl+Shift+H</code>
                   <small>==text==</small>
                 </div>
+                <div>
+                  <span>Text color</span>
+                  <code>Selection menu</code>
+                  <small>{"{{color:red}}text{{/color}}"}</small>
+                </div>
               </div>
             </div>
           </div>
@@ -2770,6 +2795,31 @@ function NodeRow({
     commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
   };
 
+  const applyMarkdownTextColorFromMenu = (color: MarkdownTextColor | null) => {
+    if (!markdownMenu) return;
+    const result = applyMarkdownTextColor(
+      localTitle,
+      markdownMenu.selectionStart,
+      markdownMenu.selectionEnd,
+      color
+    );
+    commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
+  };
+
+  const toggleMarkdownColorPalette = () => {
+    setMarkdownMenu(current => {
+      if (!current) return current;
+      const colorPaletteOpen = !current.colorPaletteOpen;
+      return {
+        ...current,
+        colorPaletteOpen,
+        y: colorPaletteOpen
+          ? Math.min(current.y, window.innerHeight - 92 - 12)
+          : current.y
+      };
+    });
+  };
+
   const openMarkdownContextMenu = (
     input: HTMLTextAreaElement,
     clientX: number,
@@ -2779,15 +2829,16 @@ function NodeRow({
     const selectionStart = input.selectionStart ?? 0;
     const selectionEnd = input.selectionEnd ?? selectionStart;
     if (selectionStart === selectionEnd) return false;
-    const menuWidth = 292;
-    const menuHeight = 56;
+    const menuWidth = 224;
+    const menuHeight = 46;
     const requestedX = placement === "selection" ? clientX - menuWidth / 2 : clientX;
     const requestedY = placement === "selection" ? clientY - menuHeight - 10 : clientY;
     setMarkdownMenu({
       x: Math.max(12, Math.min(requestedX, window.innerWidth - menuWidth - 12)),
       y: Math.max(12, Math.min(requestedY, window.innerHeight - menuHeight - 12)),
       selectionStart,
-      selectionEnd
+      selectionEnd,
+      colorPaletteOpen: false
     });
     return true;
   };
@@ -3076,8 +3127,8 @@ function NodeRow({
         >
           {node.title.trim() ? (
             <ReactMarkdown
-              allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark"]}
-              rehypePlugins={[rehypeHighlight, [rehypeSanitize, markdownSanitizeSchema]]}
+              allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark", "span"]}
+              rehypePlugins={[rehypeInlineFormatting, [rehypeSanitize, markdownSanitizeSchema]]}
               remarkPlugins={[remarkGfm]}
               unwrapDisallowed
               components={{
@@ -3211,11 +3262,49 @@ function NodeRow({
               <Code2 size={16} />
               <span>Code</span>
             </button>
-            <button type="button" aria-label="Highlight" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("highlight")}>
+            <button className="markdownHighlightButton" type="button" aria-label="Highlight" onPointerDown={event => event.preventDefault()} onClick={() => applyMarkdownStyleFromMenu("highlight")}>
               <Highlighter size={16} />
               <span>Highlight</span>
             </button>
+            <button
+              className="markdownColorButton"
+              type="button"
+              aria-label="Text color"
+              aria-expanded={markdownMenu.colorPaletteOpen}
+              onPointerDown={event => event.preventDefault()}
+              onClick={toggleMarkdownColorPalette}
+            >
+              <Palette size={16} />
+              <span>Text color</span>
+            </button>
           </div>
+          {markdownMenu.colorPaletteOpen && (
+            <div className="markdownColorPalette" role="group" aria-label="Text colors">
+              <button
+                className="markdownColorSwatch markdownColorSwatch-default"
+                type="button"
+                aria-label="Default color"
+                onPointerDown={event => event.preventDefault()}
+                onClick={() => applyMarkdownTextColorFromMenu(null)}
+              >
+                <i>A</i>
+                <span>Default</span>
+              </button>
+              {MARKDOWN_TEXT_COLORS.map(color => (
+                <button
+                  className={`markdownColorSwatch markdownColorSwatch-${color.id}`}
+                  type="button"
+                  aria-label={`${color.label} text`}
+                  key={color.id}
+                  onPointerDown={event => event.preventDefault()}
+                  onClick={() => applyMarkdownTextColorFromMenu(color.id)}
+                >
+                  <i />
+                  <span>{color.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>,
         document.body
       )}
@@ -3477,6 +3566,63 @@ export function applyMarkdownStyle(
   };
 }
 
+function parseWholeMarkdownTextColor(value: string): { color: MarkdownTextColor; text: string } | null {
+  const match = /^\{\{color:([a-z]+)\}\}([\s\S]*)\{\{\/color\}\}$/.exec(value);
+  if (!match || !markdownTextColorIds.has(match[1])) return null;
+  return { color: match[1] as MarkdownTextColor, text: match[2] };
+}
+
+export function applyMarkdownTextColor(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  color: MarkdownTextColor | null
+) {
+  const start = Math.max(0, Math.min(selectionStart, value.length));
+  const end = Math.max(start, Math.min(selectionEnd, value.length));
+  const selected = value.slice(start, end);
+  const endMarker = "{{/color}}";
+  const prefixMatch = /\{\{color:([a-z]+)\}\}$/.exec(value.slice(0, start));
+  const hasSurroundingColor = Boolean(
+    prefixMatch &&
+    markdownTextColorIds.has(prefixMatch[1]) &&
+    value.slice(end, end + endMarker.length) === endMarker
+  );
+
+  if (prefixMatch && hasSurroundingColor) {
+    const wrapperStart = start - prefixMatch[0].length;
+    const replacement = color ? `{{color:${color}}}${selected}${endMarker}` : selected;
+    const contentOffset = color ? `{{color:${color}}}`.length : 0;
+    return {
+      value: `${value.slice(0, wrapperStart)}${replacement}${value.slice(end + endMarker.length)}`,
+      selectionStart: wrapperStart + contentOffset,
+      selectionEnd: wrapperStart + contentOffset + selected.length
+    };
+  }
+
+  const existingColor = parseWholeMarkdownTextColor(selected);
+  if (existingColor) {
+    const replacement = color ? `{{color:${color}}}${existingColor.text}${endMarker}` : existingColor.text;
+    const contentOffset = color ? `{{color:${color}}}`.length : 0;
+    return {
+      value: `${value.slice(0, start)}${replacement}${value.slice(end)}`,
+      selectionStart: start + contentOffset,
+      selectionEnd: start + contentOffset + existingColor.text.length
+    };
+  }
+
+  if (!color || !selected) {
+    return { value, selectionStart: start, selectionEnd: end };
+  }
+
+  const before = `{{color:${color}}}`;
+  return {
+    value: `${value.slice(0, start)}${before}${selected}${endMarker}${value.slice(end)}`,
+    selectionStart: start + before.length,
+    selectionEnd: start + before.length + selected.length
+  };
+}
+
 export function applyMarkdownLink(value: string, selectionStart: number, selectionEnd: number, href: string) {
   const start = Math.max(0, Math.min(selectionStart, value.length));
   const end = Math.max(start, Math.min(selectionEnd, value.length));
@@ -3594,6 +3740,20 @@ export function splitMarkdownHighlights(value: string) {
   return parts.length > 0 ? parts : [{ value, highlighted: false }];
 }
 
+export function splitMarkdownTextColors(value: string) {
+  const parts: Array<{ value: string; color: MarkdownTextColor | null }> = [];
+  const pattern = /\{\{color:(red|orange|yellow|green|blue|purple|gray)\}\}([\s\S]*?)\{\{\/color\}\}/g;
+  let cursor = 0;
+  for (const match of value.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) parts.push({ value: value.slice(cursor, index), color: null });
+    parts.push({ value: match[2], color: match[1] as MarkdownTextColor });
+    cursor = index + match[0].length;
+  }
+  if (cursor < value.length) parts.push({ value: value.slice(cursor), color: null });
+  return parts.length > 0 ? parts : [{ value, color: null }];
+}
+
 interface HastNode {
   type: string;
   value?: string;
@@ -3602,17 +3762,67 @@ interface HastNode {
   children?: HastNode[];
 }
 
-function rehypeHighlight() {
+function toMarkdownInlineNodes(value: string): HastNode[] {
+  const nodes: HastNode[] = [];
+  let cursor = 0;
+
+  while (cursor < value.length) {
+    const colorPattern = /\{\{color:(red|orange|yellow|green|blue|purple|gray)\}\}/g;
+    colorPattern.lastIndex = cursor;
+    let colorMatch = colorPattern.exec(value);
+    while (colorMatch && value.indexOf("{{/color}}", colorMatch.index + colorMatch[0].length) < 0) {
+      colorMatch = colorPattern.exec(value);
+    }
+
+    const highlightStart = value.indexOf("==", cursor);
+    const highlightEnd = highlightStart >= 0 ? value.indexOf("==", highlightStart + 2) : -1;
+    const colorStart = colorMatch?.index ?? -1;
+    const nextColorStart = colorStart >= 0 ? colorStart : Number.POSITIVE_INFINITY;
+    const nextHighlightStart = highlightEnd >= 0 ? highlightStart : Number.POSITIVE_INFINITY;
+    const nextStart = Math.min(nextColorStart, nextHighlightStart);
+
+    if (!Number.isFinite(nextStart)) {
+      nodes.push({ type: "text", value: value.slice(cursor) });
+      break;
+    }
+    if (nextStart > cursor) nodes.push({ type: "text", value: value.slice(cursor, nextStart) });
+
+    if (nextStart === nextColorStart && colorMatch) {
+      const contentStart = colorMatch.index + colorMatch[0].length;
+      const contentEnd = value.indexOf("{{/color}}", contentStart);
+      nodes.push({
+        type: "element",
+        tagName: "span",
+        properties: { className: [`markdownTextColor-${colorMatch[1]}`] },
+        children: toMarkdownInlineNodes(value.slice(contentStart, contentEnd))
+      });
+      cursor = contentEnd + "{{/color}}".length;
+      continue;
+    }
+
+    nodes.push({
+      type: "element",
+      tagName: "mark",
+      properties: {},
+      children: toMarkdownInlineNodes(value.slice(highlightStart + 2, highlightEnd))
+    });
+    cursor = highlightEnd + 2;
+  }
+
+  return nodes;
+}
+
+function rehypeInlineFormatting() {
   return (tree: HastNode) => {
     const visit = (node: HastNode) => {
       if (!node.children || node.tagName === "code" || node.tagName === "pre") return;
       const children: HastNode[] = [];
       for (const child of node.children) {
-        if (child.type === "text" && child.value?.includes("==")) {
-          children.push(...splitMarkdownHighlights(child.value).map(part => part.highlighted
-            ? { type: "element", tagName: "mark", properties: {}, children: [{ type: "text", value: part.value }] }
-            : { type: "text", value: part.value }
-          ));
+        if (
+          child.type === "text" &&
+          (child.value?.includes("==") || child.value?.includes("{{color:"))
+        ) {
+          children.push(...toMarkdownInlineNodes(child.value));
         } else {
           visit(child);
           children.push(child);
