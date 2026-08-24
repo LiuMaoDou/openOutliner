@@ -2866,6 +2866,7 @@ function NodeRow({
     .filter(Boolean)
     .join(" ");
   const childCountLabel = getChildCountLabel(node.childIds.length);
+  const hasComments = node.body.trim().length > 0;
   const openDatePicker = () => {
     const input = dateInputRef.current;
     if (!input) return;
@@ -2946,10 +2947,15 @@ function NodeRow({
         {node.childIds.length > 0 ? node.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} /> : null}
       </button>
       <button
-        className={["dragHandle", node.done && "done", node.collapsed && node.childIds.length > 0 && "collapsed"].filter(Boolean).join(" ")}
+        className={[
+          "dragHandle",
+          node.done && "done",
+          node.collapsed && node.childIds.length > 0 && "collapsed",
+          hasComments && "hasComments"
+        ].filter(Boolean).join(" ")}
         type="button"
         title={canDrag ? "Move node" : "Move disabled while searching"}
-        aria-label="Move node"
+        aria-label={hasComments ? "Move node; has comments" : "Move node"}
         disabled={!canDrag}
         onPointerDown={onMoveStart}
       >

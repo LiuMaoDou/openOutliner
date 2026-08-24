@@ -1406,6 +1406,10 @@ body.isSelectingNodes .nodeTitlePreview {
   box-shadow: 0 0 0 5.5px rgba(161, 161, 170, 0.2);
 }
 
+.dragHandle.hasComments .nodeDot {
+  background: var(--text-color-blue);
+}
+
 .nodeRow:hover .dragHandle,
 .nodeRow.selected .dragHandle,
 .nodeRow.dragging .dragHandle {
