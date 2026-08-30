@@ -193,6 +193,11 @@ interface NodeSelectionDrag {
   moved: boolean;
 }
 
+interface TitleSelection {
+  start: number;
+  end: number;
+}
+
 interface PendingDelete {
   selectedIds: string[];
   primaryId: string;
@@ -683,14 +688,14 @@ export function App() {
     [rowVirtualizer]
   );
 
-  const focusWhenReady = useCallback((nodeId: string, attempts = 0) => {
+  const focusWhenReady = useCallback((nodeId: string, selection?: TitleSelection, attempts = 0) => {
     const input = inputRefs.current.get(nodeId);
     if (input) {
-      input.focus({ preventScroll: true });
+      focusTitleInput(input, selection);
       return;
     }
     if (attempts < 10) {
-      window.requestAnimationFrame(() => focusWhenReady(nodeId, attempts + 1));
+      window.requestAnimationFrame(() => focusWhenReady(nodeId, selection, attempts + 1));
     }
   }, []);
 
@@ -926,6 +931,13 @@ export function App() {
       const tempWasPrimary = selectedIdRef.current === tempId;
       const tempWasAnchor = selectionAnchorIdRef.current === tempId;
       const tempWasEditing = editingNodeIdRef.current === tempId;
+      const tempInput = inputRefs.current.get(tempId);
+      const tempSelection = tempWasEditing && tempInput
+        ? {
+            start: tempInput.selectionStart ?? tempInput.value.length,
+            end: tempInput.selectionEnd ?? tempInput.selectionStart ?? tempInput.value.length
+          }
+        : undefined;
       if (tempWasEditing) editingNodeIdRef.current = created.id;
       setFlatState(withCreated);
       setVisibleIds(computeVisibleIds(withCreated));
@@ -942,7 +954,7 @@ export function App() {
           tempWasPrimary || tempWasEditing ? created.id : selectedIdRef.current,
           tempWasAnchor ? created.id : selectionAnchorIdRef.current
         );
-        if (tempWasPrimary || tempWasEditing) focusWhenReady(created.id);
+        if (tempWasPrimary || tempWasEditing) focusWhenReady(created.id, tempSelection);
       }
       if (
         draft &&
@@ -3135,7 +3147,7 @@ function NodeRow({
             <ReactMarkdown
               allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark", "span"]}
               rehypePlugins={[rehypeInlineFormatting, [rehypeSanitize, markdownSanitizeSchema]]}
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkLiteralHtml]}
               unwrapDisallowed
               components={{
                 a: ({ children, href }) => {
@@ -3768,6 +3780,22 @@ interface HastNode {
   children?: HastNode[];
 }
 
+interface MarkdownNode {
+  type: string;
+  value?: string;
+  children?: MarkdownNode[];
+}
+
+export function remarkLiteralHtml() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (node.type === "html") node.type = "text";
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
 function toMarkdownInlineNodes(value: string): HastNode[] {
   const nodes: HastNode[] = [];
   let cursor = 0;
@@ -3939,8 +3967,18 @@ function resizeTitleInput(input: HTMLTextAreaElement) {
   input.style.height = currentHeight === nextHeight ? currentHeight : nextHeight;
 }
 
-function focusTitleInput(input?: HTMLTextAreaElement | null) {
-  input?.focus({ preventScroll: true });
+function focusTitleInput(input?: HTMLTextAreaElement | null, selection?: TitleSelection) {
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  if (!selection) return;
+  const range = resolveTitleSelection(input.value, selection.start, selection.end);
+  input.setSelectionRange(range.start, range.end);
+}
+
+export function resolveTitleSelection(value: string, selectionStart: number, selectionEnd: number) {
+  const start = Math.max(0, Math.min(selectionStart, value.length));
+  const end = Math.max(start, Math.min(selectionEnd, value.length));
+  return { start, end };
 }
 
 export function splitTitleAtSelection(title: string, selectionStart?: number | null) {

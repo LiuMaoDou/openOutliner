@@ -2,6 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase, type OpenOutlinerDb } from "../src/backend/db/database.js";
 import { exportMarkdown, importMarkdown } from "../src/backend/importExport/markdown.js";
@@ -29,6 +33,8 @@ import {
   resolvePendingNodeTitle,
   resolveStoredBoolean,
   resolveStoredIdSet,
+  resolveTitleSelection,
+  remarkLiteralHtml,
   shouldIgnoreTextInputKeyDown,
   shouldHandleMultiSelectionDelete,
   shouldHandleMultiSelectionTab,
@@ -692,6 +698,17 @@ describe("tree operations", () => {
     expect(normalizeLinkHref("javascript:alert(1)")).toBe("https://javascript:alert(1)");
   });
 
+  it("renders HTML-like node titles as literal text without enabling raw HTML", () => {
+    const renderTitle = (value: string) => renderToStaticMarkup(
+      createElement(ReactMarkdown, { remarkPlugins: [remarkGfm, remarkLiteralHtml] }, value)
+    );
+
+    expect(renderTitle("<xx>")).toBe("&lt;xx&gt;");
+    expect(renderTitle("before <xx> after")).toBe("<p>before &lt;xx&gt; after</p>");
+    expect(renderTitle("<script>alert(1)</script>")).toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(renderTitle("<https://example.com>")).toBe("<p><a href=\"https://example.com\">https://example.com</a></p>");
+  });
+
   it("updates existing Markdown links without nesting or duplicating long URLs", () => {
     const href = "https://help.aliyun.com/zh/cloud-network-well-architected-design/alibaba-cloud-ai-network-white-paper";
     const markdownLink = `[${href}](${href})`;
@@ -1283,6 +1300,12 @@ describe("optimistic node title cache", () => {
 
     expect(next.nodes.a.title).toBe("最新本地标题");
     expect(next.nodes.b.title).toBe("Beta");
+  });
+
+  it("preserves and safely clamps the caret while replacing a temporary node", () => {
+    expect(resolveTitleSelection("快速输入", 4, 4)).toEqual({ start: 4, end: 4 });
+    expect(resolveTitleSelection("short", 12, 12)).toEqual({ start: 5, end: 5 });
+    expect(resolveTitleSelection("selection", 3, 7)).toEqual({ start: 3, end: 7 });
   });
 });
 
