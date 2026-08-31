@@ -98,6 +98,27 @@ function getNodeDepth(state: FlatTreeState, id: string): number {
   return depth;
 }
 
+export function revealNodeInFlatTree(
+  state: FlatTreeState,
+  nodeId: string
+): { state: FlatTreeState; visibleIds: string[]; index: number } {
+  if (!hasNode(state, nodeId)) return { state, visibleIds: computeVisibleIds(state), index: -1 };
+
+  let next = state;
+  let parentId = getParentId(next, nodeId);
+  const visited = new Set<string>();
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = getNode(next, parentId);
+    if (!parent) break;
+    if (parent.collapsed) next = updateNode(next, parentId, { collapsed: false });
+    parentId = parent.parentId;
+  }
+
+  const visibleIds = computeVisibleIds(next);
+  return { state: next, visibleIds, index: visibleIds.indexOf(nodeId) };
+}
+
 export function getChildCountLabel(childCount: number): string | null {
   return childCount > 0 ? String(childCount) : null;
 }
@@ -197,7 +218,7 @@ interface NodeSelectionDrag {
 
 export type SystemTagRow =
   | { kind: "tag"; group: TaggedNodeGroup }
-  | { kind: "node"; groupName: string; result: TaggedNodeResult };
+  | { kind: "node"; groupName: string; color: string; result: TaggedNodeResult };
 
 interface TitleSelection {
   start: number;
@@ -376,6 +397,7 @@ export function App() {
   const nodeCreateQueueRef = useRef<Promise<void>>(Promise.resolve());
   const nodePatchQueuesRef = useRef(new Map<string, Promise<void>>());
   const nodeCompositionTrackerRef = useRef<NodeCompositionTracker | null>(null);
+  const pendingNodeRevealRef = useRef<{ workspaceId: string; nodeId: string } | null>(null);
   if (!nodeCompositionTrackerRef.current) {
     nodeCompositionTrackerRef.current = new NodeCompositionTracker(callback => {
       window.requestAnimationFrame(callback);
@@ -517,17 +539,26 @@ export function App() {
       throw error;
     }
     if (requestId !== treeRequestRef.current || id !== workspaceIdRef.current) return;
-    const { state, visibleIds: vids } = fromNestedTree(next);
+    const loaded = fromNestedTree(next);
+    const pendingReveal = pendingNodeRevealRef.current;
+    const revealed = pendingReveal?.workspaceId === id
+      ? revealNodeInFlatTree(loaded.state, pendingReveal.nodeId)
+      : { state: loaded.state, visibleIds: loaded.visibleIds, index: -1 };
+    const state = revealed.state;
     setFlatState(state);
-    setVisibleIds(vids);
+    setVisibleIds(revealed.visibleIds);
     flatStateRef.current = state;
     const pendingFocusId = pendingWorkspaceFocusIdRef.current;
+    const pendingRevealId = pendingReveal?.workspaceId === id && hasNode(state, pendingReveal.nodeId)
+      ? pendingReveal.nodeId
+      : "";
     const current = selectedIdRef.current;
-    const nextSelectedId = pendingFocusId && hasNode(state, pendingFocusId)
+    const nextSelectedId = pendingRevealId
+      || (pendingFocusId && hasNode(state, pendingFocusId)
       ? pendingFocusId
       : options.preserveSelection && current && hasNode(state, current)
         ? current
-        : state.rootId;
+        : state.rootId);
     if (pendingFocusId === nextSelectedId) pendingWorkspaceFocusIdRef.current = "";
     setSingleSelectedId(nextSelectedId);
   }, [setSingleSelectedId]);
@@ -800,6 +831,29 @@ export function App() {
     }
   }, []);
 
+  const focusLocatedNodeWhenReady = useCallback((nodeId: string, attempts = 0) => {
+    const input = inputRefs.current.get(nodeId);
+    if (input) {
+      focusTitleInput(input);
+      input.scrollIntoView({ block: "center", inline: "nearest" });
+      return;
+    }
+    if (attempts < 20) {
+      window.requestAnimationFrame(() => focusLocatedNodeWhenReady(nodeId, attempts + 1));
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const pending = pendingNodeRevealRef.current;
+    if (!pending || pending.workspaceId !== workspaceId || pending.nodeId !== selectedId) return;
+    const index = filteredNodes.indexOf(pending.nodeId);
+    if (index < 0) return;
+
+    pendingNodeRevealRef.current = null;
+    rowVirtualizer.scrollToIndex(index, { align: "center" });
+    window.requestAnimationFrame(() => focusLocatedNodeWhenReady(pending.nodeId));
+  }, [filteredNodes, focusLocatedNodeWhenReady, rowVirtualizer, selectedId, workspaceId]);
+
   const runOutlineHistory = useCallback(async (
     direction: "undo" | "redo",
     preferredFocusId?: string,
@@ -928,7 +982,10 @@ export function App() {
 
   const openTagResult = async (result: TaggedNodeResult) => {
     clearTagFilter();
+    setSearch("");
     systemTagGroupsRequestRef.current += 1;
+    const isCurrentWorkspace = workspaceIdRef.current === result.workspace.id;
+    pendingNodeRevealRef.current = { workspaceId: result.workspace.id, nodeId: result.node.id };
     workspaceIdRef.current = result.workspace.id;
     treeRequestRef.current += 1;
     tagsRequestRef.current += 1;
@@ -938,10 +995,13 @@ export function App() {
     setTags([]);
     setTagName("");
     setManagedTagName("");
-    await loadTree(result.workspace.id);
-    await loadTags(result.workspace.id);
-    setSingleSelectedId(result.node.id);
-    window.setTimeout(() => focusTitleInput(inputRefs.current.get(result.node.id)), 30);
+    if (!isCurrentWorkspace) return;
+    try {
+      await Promise.all([loadTree(result.workspace.id), loadTags(result.workspace.id)]);
+    } catch (error) {
+      pendingNodeRevealRef.current = null;
+      throw error;
+    }
   };
 
   const createOptimisticNode = async (
@@ -1599,6 +1659,7 @@ export function App() {
 
   const selectWorkspace = useCallback((id: string) => {
     if (id === workspaceIdRef.current) return;
+    pendingNodeRevealRef.current = null;
     workspaceIdRef.current = id;
     treeRequestRef.current += 1;
     tagsRequestRef.current += 1;
@@ -2541,6 +2602,7 @@ export function App() {
                             />
                           ) : (
                             <SystemTaggedNodeRow
+                              color={row.color}
                               result={row.result}
                               onOpen={() => openTagResult(row.result).catch(toError(setError))}
                             />
@@ -3653,30 +3715,56 @@ function SystemTagGroupRow({
       type="button"
       aria-expanded={!collapsed}
       onClick={onToggle}
+      style={{ "--system-tag-color": group.color } as CSSProperties}
     >
       <span className="systemTagDisclosure" aria-hidden="true">
         {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
       </span>
-      <span className="systemTagColor" style={{ backgroundColor: group.color }} aria-hidden="true" />
+      <span className="systemTagColor" aria-hidden="true" />
       <strong>#{group.name}</strong>
       <span className="systemTagCount">{group.results.length}</span>
     </button>
   );
 }
 
-function SystemTaggedNodeRow({ result, onOpen }: { result: TaggedNodeResult; onOpen: () => void }) {
+function SystemTaggedNodeRow({
+  color,
+  result,
+  onOpen
+}: {
+  color: string;
+  result: TaggedNodeResult;
+  onOpen: () => void;
+}) {
+  const path = result.path.length > 0
+    ? result.path
+    : [{ id: result.node.id, title: result.node.title, position: result.node.position }];
+  const target = path[path.length - 1];
+  const ancestorTitles = path.slice(0, -1).map(segment => segment.title || "Untitled");
+  const targetTitle = target.title || "Untitled";
+  const breadcrumbTitle = `${result.workspace.name} · ${[...ancestorTitles, targetTitle].join(" / ")}`;
+
   return (
     <button
       className={result.node.done ? "systemTaggedNodeRow completed" : "systemTaggedNodeRow"}
       type="button"
       onClick={onOpen}
-      title={`Open in ${result.workspace.name}`}
+      style={{ "--system-tag-color": color } as CSSProperties}
+      title={breadcrumbTitle}
     >
       <span className="systemTagBranch" aria-hidden="true">
         <span />
       </span>
       <span className="systemTaggedNodeCopy">
-        <strong>{result.node.title || "Untitled"}</strong>
+        <span className="systemTaggedNodeBreadcrumb" aria-label={breadcrumbTitle}>
+          {ancestorTitles.length > 0 && (
+            <>
+              <span className="systemTaggedNodeAncestors">{ancestorTitles.join(" / ")}</span>
+              <span className="systemTaggedNodeSeparator" aria-hidden="true">/</span>
+            </>
+          )}
+          <strong>{targetTitle}</strong>
+        </span>
         {result.node.body && <small>{result.node.body}</small>}
       </span>
       <span className="systemTaggedNodeWorkspace">
@@ -3700,7 +3788,7 @@ export function buildSystemTagRows(
     const matchingResults = !normalizedQuery || groupMatches
       ? group.results
       : group.results.filter(result =>
-          `${result.node.title}\n${result.node.body}\n${result.workspace.name}`
+          `${result.node.title}\n${result.node.body}\n${result.workspace.name}\n${result.path.map(segment => segment.title).join("\n")}`
             .toLowerCase()
             .includes(normalizedQuery)
         );
@@ -3708,7 +3796,9 @@ export function buildSystemTagRows(
 
     rows.push({ kind: "tag", group });
     if (!normalizedQuery && collapsedNames.has(group.name)) continue;
-    for (const result of matchingResults) rows.push({ kind: "node", groupName: group.name, result });
+    for (const result of matchingResults) {
+      rows.push({ kind: "node", groupName: group.name, color: group.color, result });
+    }
   }
 
   return rows;

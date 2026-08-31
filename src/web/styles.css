@@ -2187,6 +2187,8 @@ body.isSelectingNodes .nodeTitlePreview {
 .systemTagColor {
   width: 9px;
   height: 9px;
+  color: var(--system-tag-color);
+  background: var(--system-tag-color);
   border-radius: 999px;
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 10%, transparent);
 }
@@ -2253,7 +2255,7 @@ body.isSelectingNodes .nodeTitlePreview {
   right: 0;
   width: 6px;
   height: 6px;
-  background: var(--muted-foreground);
+  background: var(--system-tag-color);
   border-radius: 999px;
 }
 
@@ -2263,16 +2265,49 @@ body.isSelectingNodes .nodeTitlePreview {
   min-width: 0;
 }
 
-.systemTaggedNodeCopy strong,
 .systemTaggedNodeCopy small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.systemTaggedNodeCopy strong {
+.systemTaggedNodeBreadcrumb {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
   font-size: 0.9rem;
-  font-weight: 560;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.systemTaggedNodeAncestors {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.systemTaggedNodeSeparator {
+  flex: 0 0 auto;
+  margin: 0 5px;
+  color: var(--muted-foreground);
+}
+
+.systemTaggedNodeBreadcrumb strong {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--system-tag-color) 75%, black);
+  font-size: inherit;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dark .systemTaggedNodeBreadcrumb strong {
+  color: color-mix(in srgb, var(--system-tag-color) 68%, white);
 }
 
 .systemTaggedNodeCopy small {
@@ -2280,7 +2315,7 @@ body.isSelectingNodes .nodeTitlePreview {
   font-size: 0.75rem;
 }
 
-.systemTaggedNodeRow.completed .systemTaggedNodeCopy strong {
+.systemTaggedNodeRow.completed .systemTaggedNodeBreadcrumb strong {
   color: var(--muted-foreground);
   text-decoration: line-through;
 }

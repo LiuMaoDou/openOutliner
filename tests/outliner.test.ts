@@ -10,7 +10,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase, type OpenOutlinerDb } from "../src/backend/db/database.js";
 import { exportMarkdown, importMarkdown } from "../src/backend/importExport/markdown.js";
 import { exportOpml, importOpml } from "../src/backend/importExport/opml.js";
-import { OutlinerService } from "../src/backend/services/outliner.js";
+import {
+  morandiTagColors,
+  OutlinerService,
+  tagColorForName
+} from "../src/backend/services/outliner.js";
 import type { OutlineTreeNode, Tag, TaggedNodeGroup, TaggedNodeResult } from "../src/web/api.js";
 import {
   addOptimisticNodeTag,
@@ -37,6 +41,7 @@ import {
   resolveStoredIdSet,
   resolveTitleSelection,
   reconcileOptimisticNodeTag,
+  revealNodeInFlatTree,
   removeOptimisticNodeTag,
   NodeCompositionTracker,
   isMarkdownThematicBreak,
@@ -635,6 +640,43 @@ describe("OutlinerService", () => {
     expect(refreshed.map(group => group.name)).toEqual(["active", "initiative", "project"]);
     expect(refreshed.find(group => group.name === "initiative")?.results[0].node.id).toBe(firstNode.id);
     expect(refreshed.find(group => group.name === "project")?.results[0].node.id).toBe(secondNode.id);
+  });
+
+  it("assigns stable Morandi colors while preserving custom colors", () => {
+    expect(morandiTagColors).toHaveLength(12);
+    expect(new Set(morandiTagColors)).toHaveLength(12);
+    expect(tagColorForName("#project")).toBe(tagColorForName("project"));
+
+    const workspace = service.createWorkspace("Colors");
+    const legacyNode = service.createNode({ parentId: workspace.rootNodeId, title: "Legacy" });
+    const customNode = service.createNode({ parentId: workspace.rootNodeId, title: "Custom" });
+    service.createTag(workspace.id, "legacy", "#266dd3");
+    service.createTag(workspace.id, "custom", "#123456");
+    service.setNodeTag(legacyNode.id, "legacy");
+    service.setNodeTag(customNode.id, "custom");
+
+    const groups = service.listTaggedNodeGroups();
+    expect(groups.find(group => group.name === "legacy")?.color).toBe(tagColorForName("legacy"));
+    expect(groups.find(group => group.name === "custom")?.color).toBe("#123456");
+  });
+
+  it("returns live breadcrumb paths in original outline order", () => {
+    const workspace = service.createWorkspace("Paths");
+    const a = service.createNode({ parentId: workspace.rootNodeId, title: "A" });
+    const a1 = service.createNode({ parentId: a.id, title: "A1" });
+    const a2 = service.createNode({ parentId: a1.id, title: "A2" });
+    const b = service.createNode({ parentId: workspace.rootNodeId, title: "B" });
+
+    service.setNodeTag(b.id, "project");
+    service.setNodeTag(a2.id, "project");
+
+    const project = service.listTaggedNodeGroups().find(group => group.name === "project");
+    expect(project?.results.map(result => result.node.title)).toEqual(["A2", "B"]);
+    expect(project?.results[0].path.map(segment => segment.title)).toEqual(["A", "A1", "A2"]);
+
+    service.updateNode(a1.id, { title: "Renamed A1" });
+    const refreshed = service.listTaggedNodeGroups().find(group => group.name === "project");
+    expect(refreshed?.results[0].path.map(segment => segment.title)).toEqual(["A", "Renamed A1", "A2"]);
   });
 
   it("migrates older workspaces with default icons", () => {
@@ -1415,6 +1457,7 @@ describe("system Tags workspace", () => {
     return {
       node: { ...node, body },
       tags: [],
+      path: [{ id, title, position: node.position }],
       workspace: {
         id: `workspace-${workspaceName}`,
         name: workspaceName,
@@ -1457,6 +1500,37 @@ describe("system Tags workspace", () => {
     expect(buildSystemTagRows(groups, new Set(["project"]), "Second").map(row =>
       row.kind === "tag" ? row.group.name : row.result.node.title
     )).toEqual(["project", "Beta"]);
+  });
+
+  it("matches ancestor titles in a tag breadcrumb", () => {
+    const nested = taggedResult("leaf", "A2", "", "First");
+    nested.path = [
+      { id: "a", title: "A", position: 0 },
+      { id: "a1", title: "A1", position: 0 },
+      { id: "leaf", title: "A2", position: 0 }
+    ];
+    const nestedGroups = [{ name: "project", color: "#123456", results: [nested] }];
+
+    expect(buildSystemTagRows(nestedGroups, new Set(), "A1").map(row => row.kind))
+      .toEqual(["tag", "node"]);
+  });
+
+  it("expands every collapsed ancestor so a linked outline becomes visible", () => {
+    const { state } = fromNestedTree(testTree());
+    const collapsed = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        a: { ...state.nodes.a, collapsed: true }
+      }
+    };
+
+    expect(computeVisibleIds(collapsed)).not.toContain("a-child");
+
+    const revealed = revealNodeInFlatTree(collapsed, "a-child");
+    expect(revealed.state.nodes.a.collapsed).toBe(false);
+    expect(revealed.visibleIds).toContain("a-child");
+    expect(revealed.index).toBe(revealed.visibleIds.indexOf("a-child"));
   });
 });
 

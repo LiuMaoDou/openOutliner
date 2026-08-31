@@ -47,7 +47,21 @@ export interface OutlineHistoryResult {
 const outlineHistoryLimit = 100;
 const outlineHistoryCoalesceWindowMs = 1500;
 
-const tagColors = ["#266dd3", "#2a9d8f", "#c2410c", "#7c3aed", "#0f766e", "#be123c"];
+export const morandiTagColors = [
+  "#A66F6F",
+  "#A97B65",
+  "#A68D63",
+  "#8C8A68",
+  "#788B72",
+  "#6F8C7C",
+  "#678B89",
+  "#6E8797",
+  "#71809A",
+  "#797A9A",
+  "#927892",
+  "#A67885"
+] as const;
+const legacyTagColors = new Set(["#266dd3", "#2a9d8f", "#c2410c", "#7c3aed", "#0f766e", "#be123c"]);
 const workspaceIcons = [
   "album",
   "archive",
@@ -1085,16 +1099,31 @@ export class OutlinerService {
       }
       groupsByName.set(matchedTag.name, {
         name: matchedTag.name,
-        color: matchedTag.color,
+        color: resolveSystemTagColor(matchedTag),
         results: [results[index]]
       });
     });
 
-    return [...groupsByName.values()];
+    const groups = [...groupsByName.values()];
+    for (const group of groups) group.results.sort(compareTaggedNodeResults);
+    return groups;
   }
 
   private mapTaggedNodeRows(rows: Row[], matchedName?: string): TaggedNodeResult[] {
     if (rows.length === 0) return [];
+
+    const workspaceIds = [...new Set(rows.map(row => text(row.workspace_id)))];
+    const placeholders = workspaceIds.map(() => "?").join(", ");
+    const nodesById = new Map<string, OutlineNode>();
+    for (const nodeRow of this.db
+      .prepare(
+        `SELECT * FROM nodes
+         WHERE deleted_at IS NULL AND workspace_id IN (${placeholders})`
+      )
+      .all(...workspaceIds) as Row[]) {
+      const node = rowToNode(nodeRow);
+      nodesById.set(node.id, node);
+    }
 
     const tagsByNode = new Map<string, Tag[]>();
     for (const row of this.db
@@ -1122,10 +1151,12 @@ export class OutlinerService {
 
     return rows.map(row => {
       const node = rowToNode(row);
+      const workspace = rowToResultWorkspace(row);
       return {
         node,
         tags: tagsByNode.get(node.id) ?? [rowToMatchedTag(row)],
-        workspace: rowToResultWorkspace(row)
+        workspace,
+        path: buildTaggedNodePath(node, workspace.rootNodeId, nodesById)
       };
     });
   }
@@ -1141,7 +1172,7 @@ export class OutlinerService {
 
     const id = randomUUID();
     const now = timestamp();
-    const tagColor = color ?? tagColors[Math.abs(hash(normalized)) % tagColors.length];
+    const tagColor = color ?? tagColorForName(normalized);
     this.db
       .prepare("INSERT INTO tags (id, workspace_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(id, workspaceId, normalized, tagColor, now);
@@ -1612,6 +1643,44 @@ function rowToWorkspaceFolder(row: Row): WorkspaceFolder {
   };
 }
 
+function buildTaggedNodePath(
+  node: OutlineNode,
+  rootNodeId: string,
+  nodesById: ReadonlyMap<string, OutlineNode>
+): TaggedNodeResult["path"] {
+  const reversed: TaggedNodeResult["path"] = [];
+  const visited = new Set<string>();
+  let current: OutlineNode | undefined = node;
+
+  while (current && current.id !== rootNodeId && !visited.has(current.id)) {
+    visited.add(current.id);
+    reversed.push({ id: current.id, title: current.title, position: current.position });
+    current = current.parentId ? nodesById.get(current.parentId) : undefined;
+  }
+
+  return reversed.reverse();
+}
+
+function compareTaggedNodeResults(left: TaggedNodeResult, right: TaggedNodeResult): number {
+  if (left.workspace.id !== right.workspace.id) {
+    if (left.workspace.position !== right.workspace.position) {
+      return left.workspace.position - right.workspace.position;
+    }
+    const workspaceNameCompare = left.workspace.name.localeCompare(right.workspace.name);
+    if (workspaceNameCompare !== 0) return workspaceNameCompare;
+    return left.workspace.createdAt.localeCompare(right.workspace.createdAt);
+  }
+
+  const sharedLength = Math.min(left.path.length, right.path.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const positionCompare = left.path[index].position - right.path[index].position;
+    if (positionCompare !== 0) return positionCompare;
+    const idCompare = left.path[index].id.localeCompare(right.path[index].id);
+    if (idCompare !== 0) return idCompare;
+  }
+  return left.path.length - right.path.length;
+}
+
 function rowToNode(row: Row): OutlineNode {
   return {
     id: text(row.id),
@@ -1721,12 +1790,23 @@ function number(value: unknown): number {
   return typeof value === "number" ? value : Number(value ?? 0);
 }
 
+export function tagColorForName(value: string): string {
+  const normalized = value.trim().replace(/^#/, "");
+  return morandiTagColors[(hash(normalized) >>> 0) % morandiTagColors.length];
+}
+
+function resolveSystemTagColor(tag: Tag): string {
+  return legacyTagColors.has(tag.color.toLowerCase()) ? tagColorForName(tag.name) : tag.color;
+}
+
 function hash(value: string): number {
-  let result = 0;
+  let result = 5381;
   for (let index = 0; index < value.length; index += 1) {
-    result = (result << 5) - result + value.charCodeAt(index);
-    result |= 0;
+    result = Math.imul(result, 33) ^ value.charCodeAt(index);
   }
+  result ^= result >>> 16;
+  result = Math.imul(result, 0x85ebca6b);
+  result ^= result >>> 13;
   return result;
 }
 

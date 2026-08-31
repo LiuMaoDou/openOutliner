@@ -62,10 +62,17 @@ export interface OutlineHistoryResult {
   history: OutlineHistoryState;
 }
 
+export interface TaggedNodePathSegment {
+  id: string;
+  title: string;
+  position: number;
+}
+
 export interface TaggedNodeResult {
   node: Omit<OutlineTreeNode, "tags" | "fieldValues" | "children">;
   tags: Tag[];
   workspace: Workspace;
+  path: TaggedNodePathSegment[];
 }
 
 export interface TaggedNodeGroup {

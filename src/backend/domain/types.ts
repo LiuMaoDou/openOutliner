@@ -65,10 +65,17 @@ export interface OutlineTreeNode extends OutlineNode {
   children: OutlineTreeNode[];
 }
 
+export interface TaggedNodePathSegment {
+  id: string;
+  title: string;
+  position: number;
+}
+
 export interface TaggedNodeResult {
   node: OutlineNode;
   tags: Tag[];
   workspace: Workspace;
+  path: TaggedNodePathSegment[];
 }
 
 export interface TaggedNodeGroup {
