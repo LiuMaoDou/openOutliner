@@ -472,6 +472,59 @@ body.isResizingPanel .appShell {
   gap: 1px;
 }
 
+.systemWorkspaceItem {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  margin-bottom: 7px;
+  padding: 3px 8px;
+  color: var(--soft-foreground);
+  text-align: left;
+  background: color-mix(in srgb, var(--sidebar-accent) 54%, transparent);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.systemWorkspaceItem:hover {
+  color: var(--foreground);
+  background: var(--sidebar-accent);
+  border-color: var(--border);
+}
+
+.systemWorkspaceItem.active {
+  color: var(--foreground);
+  background: var(--background);
+  border-color: var(--selected-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.systemWorkspaceLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: 0.87rem;
+  font-weight: 650;
+}
+
+.systemWorkspaceLabel small {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.appShell.sidebarCollapsed .systemWorkspaceItem {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 3px 0;
+}
+
 .sidebarLabel {
   height: 28px;
   padding: 8px 8px 4px;
@@ -1148,6 +1201,27 @@ body.isResizingPanel .appShell {
   font-weight: 700;
   letter-spacing: 0;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.systemWorkspaceTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.systemWorkspaceTitle > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.systemWorkspaceTitle > span {
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -2077,6 +2151,153 @@ body.isSelectingNodes .nodeTitlePreview {
   font-size: 0.78rem;
 }
 
+.systemTagGroupRow,
+.systemTaggedNodeRow {
+  width: 100%;
+  color: var(--foreground);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.systemTagGroupRow {
+  display: grid;
+  grid-template-columns: 22px 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 3px 10px 3px 6px;
+}
+
+.systemTagGroupRow:hover,
+.systemTagGroupRow:focus-visible {
+  background: var(--accent);
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.systemTagDisclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+}
+
+.systemTagColor {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.systemTagGroupRow strong {
+  overflow: hidden;
+  font-size: 0.92rem;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.systemTagCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 7px;
+  color: var(--muted-foreground);
+  background: var(--selected);
+  border: 1px solid var(--selected-border);
+  border-radius: 999px;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+}
+
+.systemTaggedNodeRow {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 3px 10px 3px 7px;
+}
+
+.systemTaggedNodeRow:hover,
+.systemTaggedNodeRow:focus-visible {
+  background: color-mix(in srgb, var(--accent) 62%, transparent);
+  border-color: var(--selected-border);
+  box-shadow: none;
+}
+
+.systemTagBranch {
+  position: relative;
+  align-self: stretch;
+}
+
+.systemTagBranch::before {
+  position: absolute;
+  top: -4px;
+  bottom: 50%;
+  left: 10px;
+  width: 15px;
+  content: "";
+  border-bottom: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-radius: 0 0 0 7px;
+}
+
+.systemTagBranch span {
+  position: absolute;
+  top: calc(50% - 3px);
+  right: 0;
+  width: 6px;
+  height: 6px;
+  background: var(--muted-foreground);
+  border-radius: 999px;
+}
+
+.systemTaggedNodeCopy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.systemTaggedNodeCopy strong,
+.systemTaggedNodeCopy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.systemTaggedNodeCopy strong {
+  font-size: 0.9rem;
+  font-weight: 560;
+}
+
+.systemTaggedNodeCopy small {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.systemTaggedNodeRow.completed .systemTaggedNodeCopy strong {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+.systemTaggedNodeWorkspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .inspector {
   --inspector-font-size: 0.84rem;
   position: sticky;
@@ -2512,6 +2733,12 @@ body.isSelectingNodes .nodeTitlePreview {
     font-size: 1.22rem;
   }
 
+  .systemWorkspaceTitle {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
   .outlineList {
     padding-bottom: 28px;
   }
@@ -2558,6 +2785,16 @@ body.isSelectingNodes .nodeTitlePreview {
 
   .nodeTags {
     display: none;
+  }
+
+  .systemTaggedNodeRow {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .systemTaggedNodeWorkspace {
+    grid-column: 2;
+    justify-self: start;
+    max-width: 100%;
   }
 
   .iconButton.danger {

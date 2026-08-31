@@ -11,13 +11,15 @@ import { openDatabase, type OpenOutlinerDb } from "../src/backend/db/database.js
 import { exportMarkdown, importMarkdown } from "../src/backend/importExport/markdown.js";
 import { exportOpml, importOpml } from "../src/backend/importExport/opml.js";
 import { OutlinerService } from "../src/backend/services/outliner.js";
-import type { OutlineTreeNode } from "../src/web/api.js";
+import type { OutlineTreeNode, Tag, TaggedNodeGroup, TaggedNodeResult } from "../src/web/api.js";
 import {
+  addOptimisticNodeTag,
   applyCachedNodeTitles,
   applyMarkdownLink,
   applyPastedMarkdownLink,
   applyMarkdownStyle,
   applyMarkdownTextColor,
+  buildSystemTagRows,
   clampPanelWidth,
   createWorkspaceRequestBody,
   formatNodeDate,
@@ -34,6 +36,10 @@ import {
   resolveStoredBoolean,
   resolveStoredIdSet,
   resolveTitleSelection,
+  reconcileOptimisticNodeTag,
+  removeOptimisticNodeTag,
+  NodeCompositionTracker,
+  isMarkdownThematicBreak,
   remarkLiteralHtml,
   shouldIgnoreTextInputKeyDown,
   shouldHandleMultiSelectionDelete,
@@ -41,7 +47,8 @@ import {
   nextCollapsedWorkspaceFolderIds,
   splitMarkdownHighlights,
   splitMarkdownTextColors,
-  splitTitleAtSelection
+  splitTitleAtSelection,
+  upsertWorkspaceTag
 } from "../src/web/App.js";
 import {
   fromNestedTree,
@@ -599,6 +606,37 @@ describe("OutlinerService", () => {
     ]);
   });
 
+  it("builds live tag groups across workspaces without empty or deleted results", () => {
+    const firstWorkspace = service.createWorkspace("First");
+    const secondWorkspace = service.createWorkspace("Second");
+    const firstNode = service.createNode({ parentId: firstWorkspace.rootNodeId, title: "Alpha" });
+    const secondNode = service.createNode({ parentId: secondWorkspace.rootNodeId, title: "Beta" });
+    const deletedNode = service.createNode({ parentId: firstWorkspace.rootNodeId, title: "Deleted" });
+
+    const firstProject = service.setNodeTag(firstNode.id, "project");
+    service.setNodeTag(firstNode.id, "active");
+    service.setNodeTag(secondNode.id, "project");
+    service.setNodeTag(deletedNode.id, "project");
+    service.createTag(secondWorkspace.id, "unused");
+    service.deleteNode(deletedNode.id);
+
+    const groups = service.listTaggedNodeGroups();
+
+    expect(groups.map(group => group.name)).toEqual(["active", "project"]);
+    expect(groups.find(group => group.name === "project")?.results.map(result => result.node.title).sort())
+      .toEqual(["Alpha", "Beta"]);
+    expect(groups.find(group => group.name === "project")?.results.find(result => result.node.id === firstNode.id)?.tags
+      .map(tag => tag.name))
+      .toEqual(["active", "project"]);
+
+    service.updateTag(firstProject.id, { name: "initiative" });
+
+    const refreshed = service.listTaggedNodeGroups();
+    expect(refreshed.map(group => group.name)).toEqual(["active", "initiative", "project"]);
+    expect(refreshed.find(group => group.name === "initiative")?.results[0].node.id).toBe(firstNode.id);
+    expect(refreshed.find(group => group.name === "project")?.results[0].node.id).toBe(secondNode.id);
+  });
+
   it("migrates older workspaces with default icons", () => {
     const dbPath = join(tempDir, "old.sqlite");
     const oldDb = new DatabaseSync(dbPath);
@@ -707,6 +745,16 @@ describe("tree operations", () => {
     expect(renderTitle("before <xx> after")).toBe("<p>before &lt;xx&gt; after</p>");
     expect(renderTitle("<script>alert(1)</script>")).toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(renderTitle("<https://example.com>")).toBe("<p><a href=\"https://example.com\">https://example.com</a></p>");
+  });
+
+  it("keeps Markdown thematic-break-only titles visible as literal text", () => {
+    expect(isMarkdownThematicBreak("---")).toBe(true);
+    expect(isMarkdownThematicBreak("***")).toBe(true);
+    expect(isMarkdownThematicBreak("_ _ _")).toBe(true);
+    expect(isMarkdownThematicBreak("  - - -  ")).toBe(true);
+    expect(isMarkdownThematicBreak("--")).toBe(false);
+    expect(isMarkdownThematicBreak("--- title")).toBe(false);
+    expect(isMarkdownThematicBreak("\\---")).toBe(false);
   });
 
   it("updates existing Markdown links without nesting or duplicating long URLs", () => {
@@ -1306,6 +1354,109 @@ describe("optimistic node title cache", () => {
     expect(resolveTitleSelection("快速输入", 4, 4)).toEqual({ start: 4, end: 4 });
     expect(resolveTitleSelection("short", 12, 12)).toEqual({ start: 5, end: 5 });
     expect(resolveTitleSelection("selection", 3, 7)).toEqual({ start: 3, end: 7 });
+  });
+
+  it("waits to replace a temporary node until IME composition finishes", async () => {
+    const scheduled: Array<() => void> = [];
+    const tracker = new NodeCompositionTracker(callback => scheduled.push(callback));
+    tracker.start("temp-node");
+
+    let replacementReady = false;
+    const waiting = tracker.wait("temp-node").then(() => {
+      replacementReady = true;
+    });
+    await Promise.resolve();
+    expect(replacementReady).toBe(false);
+
+    tracker.finish("temp-node");
+    await Promise.resolve();
+    expect(replacementReady).toBe(false);
+    expect(scheduled).toHaveLength(1);
+
+    scheduled[0]();
+    await waiting;
+    expect(replacementReady).toBe(true);
+  });
+});
+
+describe("optimistic node tags", () => {
+  const tag = (id: string, name: string): Tag => ({
+    id,
+    workspaceId: "workspace",
+    name,
+    color: "#123456",
+    createdAt: "2026-08-31T00:00:00.000Z"
+  });
+
+  it("shows a tag immediately and reconciles its temporary id", () => {
+    const { state } = fromNestedTree(testTree());
+    const optimistic = addOptimisticNodeTag(state, "a", tag("temp-tag-1", "slow"));
+    expect(optimistic.nodes.a.tags).toEqual([tag("temp-tag-1", "slow")]);
+
+    const saved = reconcileOptimisticNodeTag(optimistic, "a", "temp-tag-1", tag("tag-1", "slow"));
+    expect(saved.nodes.a.tags).toEqual([tag("tag-1", "slow")]);
+    expect(upsertWorkspaceTag([tag("tag-2", "zeta")], tag("tag-1", "alpha")))
+      .toEqual([tag("tag-1", "alpha"), tag("tag-2", "zeta")]);
+  });
+
+  it("rolls back only the optimistic tag when saving fails", () => {
+    const { state } = fromNestedTree(testTree());
+    const withExisting = addOptimisticNodeTag(state, "a", tag("tag-1", "existing"));
+    const optimistic = addOptimisticNodeTag(withExisting, "a", tag("temp-tag-1", "pending"));
+    const rolledBack = removeOptimisticNodeTag(optimistic, "a", "temp-tag-1");
+
+    expect(rolledBack.nodes.a.tags).toEqual([tag("tag-1", "existing")]);
+  });
+});
+
+describe("system Tags workspace", () => {
+  const taggedResult = (id: string, title: string, body: string, workspaceName: string): TaggedNodeResult => {
+    const { tags: _tags, fieldValues: _fieldValues, children: _children, ...node } = testNode(id, title, "root");
+    return {
+      node: { ...node, body },
+      tags: [],
+      workspace: {
+        id: `workspace-${workspaceName}`,
+        name: workspaceName,
+        icon: "folder-tree",
+        folderId: null,
+        parentWorkspaceId: null,
+        position: 0,
+        rootNodeId: `root-${workspaceName}`,
+        createdAt: "2026-08-31T00:00:00.000Z",
+        updatedAt: "2026-08-31T00:00:00.000Z"
+      }
+    };
+  };
+
+  const groups: TaggedNodeGroup[] = [
+    {
+      name: "project",
+      color: "#123456",
+      results: [
+        taggedResult("alpha", "Alpha", "Roadmap", "First"),
+        taggedResult("beta", "Beta", "Release", "Second")
+      ]
+    },
+    {
+      name: "reading",
+      color: "#654321",
+      results: [taggedResult("book", "React book", "Chapter one", "Library")]
+    }
+  ];
+
+  it("creates a tag row followed by linked outline rows", () => {
+    expect(buildSystemTagRows(groups, new Set(), "").map(row =>
+      row.kind === "tag" ? `tag:${row.group.name}` : `node:${row.result.node.title}`
+    )).toEqual(["tag:project", "node:Alpha", "node:Beta", "tag:reading", "node:React book"]);
+  });
+
+  it("respects collapsed tags and expands matching search results", () => {
+    expect(buildSystemTagRows(groups, new Set(["project"]), "").map(row => row.kind))
+      .toEqual(["tag", "tag", "node"]);
+    expect(buildSystemTagRows(groups, new Set(["project"]), "Second").map(row =>
+      row.kind === "tag" ? row.group.name : row.result.node.title
+    )).toEqual(["project", "Beta"]);
   });
 });
 

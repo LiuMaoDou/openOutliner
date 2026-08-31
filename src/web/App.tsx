@@ -28,6 +28,7 @@ import {
   Strikethrough,
   Sun,
   Tag as TagIcon,
+  Tags as TagsIcon,
   Trash2,
   Undo2,
   Upload,
@@ -61,6 +62,7 @@ import {
   type OutlineHistoryState,
   type OutlineTreeNode,
   type Tag,
+  type TaggedNodeGroup,
   type TaggedNodeResult,
   type Workspace,
   type WorkspaceFolder
@@ -193,9 +195,44 @@ interface NodeSelectionDrag {
   moved: boolean;
 }
 
+export type SystemTagRow =
+  | { kind: "tag"; group: TaggedNodeGroup }
+  | { kind: "node"; groupName: string; result: TaggedNodeResult };
+
 interface TitleSelection {
   start: number;
   end: number;
+}
+
+type AfterCompositionEnd = (callback: () => void) => void;
+
+export class NodeCompositionTracker {
+  private readonly composingNodeIds = new Set<string>();
+  private readonly waiters = new Map<string, Set<() => void>>();
+
+  constructor(private readonly afterCompositionEnd: AfterCompositionEnd) {}
+
+  start(nodeId: string) {
+    this.composingNodeIds.add(nodeId);
+  }
+
+  finish(nodeId: string) {
+    if (!this.composingNodeIds.delete(nodeId)) return;
+    const pending = this.waiters.get(nodeId);
+    this.waiters.delete(nodeId);
+    for (const resolve of pending ?? []) resolve();
+  }
+
+  async wait(nodeId: string): Promise<void> {
+    if (!this.composingNodeIds.has(nodeId)) return;
+    await new Promise<void>(resolve => {
+      const pending = this.waiters.get(nodeId) ?? new Set<() => void>();
+      pending.add(resolve);
+      this.waiters.set(nodeId, pending);
+    });
+    await new Promise<void>(resolve => this.afterCompositionEnd(resolve));
+    await this.wait(nodeId);
+  }
 }
 
 interface PendingDelete {
@@ -231,8 +268,10 @@ const PANEL_RESIZE_STEP = 16;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "openoutliner.sidebar-collapsed:v1";
 const COLLAPSED_WORKSPACE_FOLDERS_STORAGE_KEY = "openoutliner.collapsed-workspace-folders:v1";
 const COLLAPSED_WORKSPACES_STORAGE_KEY = "openoutliner.collapsed-workspaces:v1";
+const COLLAPSED_SYSTEM_TAGS_STORAGE_KEY = "openoutliner.collapsed-system-tags:v1";
 const SIDEBAR_WIDTH_STORAGE_KEY = "openoutliner.sidebar-width";
 const INSPECTOR_WIDTH_STORAGE_KEY = "openoutliner.inspector-width";
+export const SYSTEM_TAGS_WORKSPACE_ID = "system:tags";
 const EMPTY_OUTLINE_HISTORY: OutlineHistoryState = {
   canUndo: false,
   canRedo: false,
@@ -268,6 +307,10 @@ export function App() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [activeTagFilter, setActiveTagFilter] = useState("");
   const [tagResults, setTagResults] = useState<TaggedNodeResult[]>([]);
+  const [systemTagGroups, setSystemTagGroups] = useState<TaggedNodeGroup[]>([]);
+  const [collapsedSystemTags, setCollapsedSystemTags] = useState<Set<string>>(() =>
+    readStoredIdSet(COLLAPSED_SYSTEM_TAGS_STORAGE_KEY)
+  );
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readStoredBoolean(SIDEBAR_COLLAPSED_STORAGE_KEY, false)
@@ -305,6 +348,7 @@ export function App() {
   const treeRequestRef = useRef(0);
   const tagsRequestRef = useRef(0);
   const tagResultsRequestRef = useRef(0);
+  const systemTagGroupsRequestRef = useRef(0);
   const outlineHistoryRequestRef = useRef(0);
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
   const workspaceDragTargetRef = useRef<WorkspaceDragTarget | null>(null);
@@ -331,6 +375,13 @@ export function App() {
   const pendingNodeCreateCountRef = useRef(0);
   const nodeCreateQueueRef = useRef<Promise<void>>(Promise.resolve());
   const nodePatchQueuesRef = useRef(new Map<string, Promise<void>>());
+  const nodeCompositionTrackerRef = useRef<NodeCompositionTracker | null>(null);
+  if (!nodeCompositionTrackerRef.current) {
+    nodeCompositionTrackerRef.current = new NodeCompositionTracker(callback => {
+      window.requestAnimationFrame(callback);
+    });
+  }
+  const nodeCompositionTracker = nodeCompositionTrackerRef.current;
 
   useEffect(() => {
     storeBoolean(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed);
@@ -343,6 +394,10 @@ export function App() {
   useEffect(() => {
     storeIdSet(COLLAPSED_WORKSPACES_STORAGE_KEY, collapsedWorkspaceIds);
   }, [collapsedWorkspaceIds]);
+
+  useEffect(() => {
+    storeIdSet(COLLAPSED_SYSTEM_TAGS_STORAGE_KEY, collapsedSystemTags);
+  }, [collapsedSystemTags]);
 
   useEffect(() => {
     storePanelWidth(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth);
@@ -431,7 +486,9 @@ export function App() {
   const loadWorkspaces = useCallback(async () => {
     const next = await apiGet<Workspace[]>("/api/workspaces");
     const currentId = workspaceIdRef.current;
-    const nextId = currentId && next.some(workspace => workspace.id === currentId) ? currentId : next[0]?.id || "";
+    const nextId = currentId === SYSTEM_TAGS_WORKSPACE_ID || next.some(workspace => workspace.id === currentId)
+      ? currentId
+      : next[0]?.id || "";
     workspaceIdRef.current = nextId;
     setWorkspaces(next);
     setWorkspaceId(nextId);
@@ -446,7 +503,7 @@ export function App() {
 
   const loadTree = useCallback(async (id: string, options: LoadTreeOptions = {}) => {
     const requestId = ++treeRequestRef.current;
-    if (!id) {
+    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID) {
       setFlatState(null);
       setVisibleIds([]);
       setSingleSelectedId("");
@@ -477,7 +534,7 @@ export function App() {
 
   const loadOutlineHistory = useCallback(async (id: string) => {
     const requestId = ++outlineHistoryRequestRef.current;
-    if (!id) {
+    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID) {
       setOutlineHistory(EMPTY_OUTLINE_HISTORY);
       return;
     }
@@ -489,7 +546,7 @@ export function App() {
 
   const loadTags = useCallback(async (id: string) => {
     const requestId = ++tagsRequestRef.current;
-    if (!id) {
+    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID) {
       setTags([]);
       return;
     }
@@ -518,6 +575,21 @@ export function App() {
     setTagResults(next);
   }, []);
 
+  const loadSystemTagGroups = useCallback(async () => {
+    const requestId = ++systemTagGroupsRequestRef.current;
+    let next: TaggedNodeGroup[];
+    try {
+      next = await apiGet<TaggedNodeGroup[]>("/api/system/tag-tree");
+    } catch (error) {
+      if (requestId !== systemTagGroupsRequestRef.current || workspaceIdRef.current !== SYSTEM_TAGS_WORKSPACE_ID) {
+        return;
+      }
+      throw error;
+    }
+    if (requestId !== systemTagGroupsRequestRef.current || workspaceIdRef.current !== SYSTEM_TAGS_WORKSPACE_ID) return;
+    setSystemTagGroups(next);
+  }, []);
+
   useEffect(() => {
     loadWorkspaces().catch(toError(setError));
   }, [loadWorkspaces]);
@@ -537,6 +609,22 @@ export function App() {
   useEffect(() => {
     loadOutlineHistory(workspaceId).catch(toError(setError));
   }, [loadOutlineHistory, workspaceId]);
+
+  useEffect(() => {
+    if (workspaceId !== SYSTEM_TAGS_WORKSPACE_ID) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") loadSystemTagGroups().catch(toError(setError));
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 5000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [loadSystemTagGroups, workspaceId]);
 
   useEffect(() => {
     setIsTagManagerOpen(false);
@@ -585,6 +673,7 @@ export function App() {
 
   const selectedNode = selectedId && flatState ? getNode(flatState, selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
+  const isSystemTagsWorkspace = workspaceId === SYSTEM_TAGS_WORKSPACE_ID;
   const draggingNodeIds = useMemo(() => new Set(dragState?.draggingIds ?? []), [dragState?.draggingIds]);
   const rootWorkspaces = useMemo(
     () => workspaces.filter(workspace => !workspace.folderId && !workspace.parentWorkspaceId),
@@ -632,9 +721,19 @@ export function App() {
         `${result.node.title}\n${result.node.body}\n${result.workspace.name}`.toLowerCase().includes(search.toLowerCase())
       )
     : tagResults;
-  const visibleItemCount = isTagFiltering ? filteredTagResults.length : filteredNodes.length;
+  const systemTagRows = useMemo(
+    () => buildSystemTagRows(systemTagGroups, collapsedSystemTags, search),
+    [collapsedSystemTags, search, systemTagGroups]
+  );
+  const visibleItemCount = isSystemTagsWorkspace
+    ? systemTagRows.length
+    : isTagFiltering
+      ? filteredTagResults.length
+      : filteredNodes.length;
   const selectedIndex = selectedId
-    ? isTagFiltering
+    ? isSystemTagsWorkspace
+      ? -1
+      : isTagFiltering
       ? filteredTagResults.findIndex(result => result.node.id === selectedId)
       : filteredNodes.findIndex(id => id === selectedId)
     : -1;
@@ -643,11 +742,13 @@ export function App() {
     count: visibleItemCount,
     getScrollElement: () => outlineSurfaceRef.current,
     getItemKey: index =>
-      isTagFiltering
+      isSystemTagsWorkspace
+        ? systemTagRowKey(systemTagRows[index], index)
+        : isTagFiltering
         ? filteredTagResults[index]?.node.id ?? `tag-result-${index}`
         : filteredNodes[index] ?? index,
     measureElement: element => Math.ceil(element.getBoundingClientRect().height),
-    estimateSize: () => 38,
+    estimateSize: index => isSystemTagsWorkspace && systemTagRows[index]?.kind === "node" ? 46 : 38,
     overscan: 16,
     useAnimationFrameWithResizeObserver: true
   });
@@ -827,6 +928,7 @@ export function App() {
 
   const openTagResult = async (result: TaggedNodeResult) => {
     clearTagFilter();
+    systemTagGroupsRequestRef.current += 1;
     workspaceIdRef.current = result.workspace.id;
     treeRequestRef.current += 1;
     tagsRequestRef.current += 1;
@@ -893,6 +995,15 @@ export function App() {
       nodeCreateQueueRef.current = createRequest.then(() => undefined, () => undefined);
       const created = await createRequest;
       loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
+      if (cancelledTempIdsRef.current.has(tempId)) {
+        cancelledTempIdsRef.current.delete(tempId);
+        localNodeTitlesRef.current.delete(tempId);
+        apiDelete(`/api/nodes/${created.id}`)
+          .then(() => loadOutlineHistory(workspaceIdRef.current))
+          .catch(toError(setError));
+        return;
+      }
+      await nodeCompositionTracker.wait(tempId);
       if (cancelledTempIdsRef.current.has(tempId)) {
         cancelledTempIdsRef.current.delete(tempId);
         localNodeTitlesRef.current.delete(tempId);
@@ -1492,6 +1603,7 @@ export function App() {
     treeRequestRef.current += 1;
     tagsRequestRef.current += 1;
     tagResultsRequestRef.current += 1;
+    systemTagGroupsRequestRef.current += 1;
     setWorkspaceId(id);
     setFlatState(null);
     setVisibleIds([]);
@@ -1734,11 +1846,52 @@ export function App() {
   };
 
   const addTag = async () => {
-    if (!selectedNode || !tagName.trim()) return;
-    await apiPost(`/api/nodes/${selectedNode.id}/tags`, { name: tagName.trim() });
+    const name = tagName.trim().replace(/^#/, "");
+    if (!selectedNode || !name) return;
+    if (selectedNode.tags.some(tag => tag.name === name)) {
+      setTagName("");
+      return;
+    }
+    const nodeId = selectedNode.id;
+    const startedWorkspaceId = workspaceId;
+    const existingTag = tags.find(tag => tag.name === name);
+    const optimisticTag: Tag = existingTag ?? {
+      id: `temp-tag-${crypto.randomUUID()}`,
+      workspaceId: startedWorkspaceId,
+      name,
+      color: "#9ca3af",
+      createdAt: new Date().toISOString()
+    };
     setTagName("");
-    await loadTags(workspaceId);
-    await refresh(selectedNode.id);
+    setFlatState(current => {
+      if (!current) return current;
+      const next = addOptimisticNodeTag(current, nodeId, optimisticTag);
+      flatStateRef.current = next;
+      return next;
+    });
+
+    try {
+      const savedTag = await apiPost<Tag>(`/api/nodes/${nodeId}/tags`, { name });
+      if (workspaceIdRef.current !== startedWorkspaceId) return;
+      setTags(current => upsertWorkspaceTag(current, savedTag));
+      setFlatState(current => {
+        if (!current) return current;
+        const next = reconcileOptimisticNodeTag(current, nodeId, optimisticTag.id, savedTag);
+        flatStateRef.current = next;
+        return next;
+      });
+    } catch (error) {
+      if (workspaceIdRef.current === startedWorkspaceId) {
+        setFlatState(current => {
+          if (!current) return current;
+          const next = removeOptimisticNodeTag(current, nodeId, optimisticTag.id);
+          flatStateRef.current = next;
+          return next;
+        });
+        setTagName(current => current || name);
+      }
+      throw error;
+    }
   };
 
   const createManagedTag = async () => {
@@ -1941,6 +2094,22 @@ export function App() {
         </div>
 
         <div className="workspaceGroup">
+          <button
+            className={isSystemTagsWorkspace ? "systemWorkspaceItem active" : "systemWorkspaceItem"}
+            type="button"
+            title={sidebarCollapsed ? "Tags" : "System workspace"}
+            onClick={() => selectWorkspace(SYSTEM_TAGS_WORKSPACE_ID)}
+          >
+            <span className="workspaceIcon" aria-hidden="true">
+              <TagsIcon size={15} strokeWidth={2.2} />
+            </span>
+            {!sidebarCollapsed && (
+              <span className="systemWorkspaceLabel">
+                <span>Tags</span>
+                <small>System</small>
+              </span>
+            )}
+          </button>
           {!sidebarCollapsed ? (
             <>
               <div className="sidebarLabel workspaceLabel">
@@ -2037,18 +2206,23 @@ export function App() {
       <main className="mainPane">
         <div className="mobileWorkspaceBar">
           <span className="mobileWorkspaceIcon">
-            <DynamicIcon
-              name={workspaceIconName(selectedWorkspace?.icon ?? "")}
-              fallback={() => <FolderTree size={16} />}
-              size={16}
-              strokeWidth={2.2}
-            />
+            {isSystemTagsWorkspace ? (
+              <TagsIcon size={16} strokeWidth={2.2} />
+            ) : (
+              <DynamicIcon
+                name={workspaceIconName(selectedWorkspace?.icon ?? "")}
+                fallback={() => <FolderTree size={16} />}
+                size={16}
+                strokeWidth={2.2}
+              />
+            )}
           </span>
           <select
             aria-label="Workspace"
             value={workspaceId}
             onChange={event => selectWorkspace(event.target.value)}
           >
+            <option value={SYSTEM_TAGS_WORKSPACE_ID}>Tags · System</option>
             {workspaces.map(workspace => (
               <option key={workspace.id} value={workspace.id}>
                 {workspace.name}
@@ -2067,7 +2241,7 @@ export function App() {
           <div className="toolbar">
             <button
               aria-label="Undo outline action"
-              disabled={!workspaceId}
+              disabled={isSystemTagsWorkspace || !outlineHistory.canUndo}
               title={outlineHistory.undoLabel ? `Undo ${outlineHistory.undoLabel}` : "Undo outline action"}
               type="button"
               onClick={() => runOutlineHistory("undo").catch(toError(setError))}
@@ -2076,7 +2250,7 @@ export function App() {
             </button>
             <button
               aria-label="Redo outline action"
-              disabled={!outlineHistory.canRedo}
+              disabled={isSystemTagsWorkspace || !outlineHistory.canRedo}
               title={outlineHistory.redoLabel ? `Redo ${outlineHistory.redoLabel}` : "Nothing to redo"}
               type="button"
               onClick={() => runOutlineHistory("redo").catch(toError(setError))}
@@ -2300,13 +2474,21 @@ export function App() {
         )}
 
         <section
-          className={isInspectorOpen ? "contentGrid" : "contentGrid commentsClosed"}
+          className={isInspectorOpen && !isSystemTagsWorkspace ? "contentGrid" : "contentGrid commentsClosed"}
           ref={contentGridRef}
           style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
         >
           <div className="outlineSurface" ref={outlineSurfaceRef}>
             <div className="outlineHeader">
-              {isTagFiltering ? (
+              {isSystemTagsWorkspace ? (
+                <div className="systemWorkspaceTitle">
+                  <div>
+                    <TagsIcon size={21} strokeWidth={2.2} />
+                    <h1>Tags</h1>
+                  </div>
+                  <span>System workspace · Auto-generated</span>
+                </div>
+              ) : isTagFiltering ? (
                 <h1>{`#${activeTagFilter}`}</h1>
               ) : selectedWorkspace ? (
                 <input
@@ -2338,6 +2520,34 @@ export function App() {
                   style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
                 >
                   {virtualItems.map(virtualItem => {
+                    if (isSystemTagsWorkspace) {
+                      const row = systemTagRows[virtualItem.index];
+                      if (!row) return null;
+                      return (
+                        <div
+                          className="virtualOutlineRow"
+                          data-index={virtualItem.index}
+                          key={systemTagRowKey(row, virtualItem.index)}
+                          ref={element => registerVirtualRow(systemTagRowKey(row, virtualItem.index), element)}
+                          style={{ transform: `translateY(${virtualItem.start}px)` }}
+                        >
+                          {row.kind === "tag" ? (
+                            <SystemTagGroupRow
+                              group={row.group}
+                              collapsed={collapsedSystemTags.has(row.group.name)}
+                              onToggle={() => setCollapsedSystemTags(current =>
+                                nextCollapsedWorkspaceIds(current, row.group.name)
+                              )}
+                            />
+                          ) : (
+                            <SystemTaggedNodeRow
+                              result={row.result}
+                              onOpen={() => openTagResult(row.result).catch(toError(setError))}
+                            />
+                          )}
+                        </div>
+                      );
+                    }
                     if (isTagFiltering) {
                       const result = filteredTagResults[virtualItem.index];
                       if (!result) return null;
@@ -2398,6 +2608,10 @@ export function App() {
                           onBlurFocus={() => {
                             if (editingNodeIdRef.current === node.id) editingNodeIdRef.current = "";
                           }}
+                          onCompositionChange={isComposing => {
+                            if (isComposing) nodeCompositionTracker.start(node.id);
+                            else nodeCompositionTracker.finish(node.id);
+                          }}
                           onSelectionStart={event => startNodeSelection(node, event)}
                           onPatchLocal={patch => {
                             const current = flatStateRef.current;
@@ -2446,6 +2660,10 @@ export function App() {
                     );
                   })}
                 </div>
+              ) : isSystemTagsWorkspace ? (
+                <div className="outlineEmptyState">
+                  {isSearching ? "No matching tags or nodes" : "No tagged nodes yet"}
+                </div>
               ) : visibleIds.length === 0 && flatState ? (
                 <button
                   className="emptyNodeButton"
@@ -2461,7 +2679,7 @@ export function App() {
             </div>
           </div>
 
-          {isInspectorOpen && (
+          {isInspectorOpen && !isSystemTagsWorkspace && (
             <aside className="inspector">
               <div
                 className="panelResizeHandle inspectorResizeHandle"
@@ -2606,7 +2824,7 @@ export function App() {
               </div>
             </aside>
           )}
-          {!isInspectorOpen && (
+          {!isInspectorOpen && !isSystemTagsWorkspace && (
             <button
               className="commentsRestoreButton"
               type="button"
@@ -2645,6 +2863,7 @@ function NodeRow({
   onMouseSelect,
   onFocusSelect,
   onBlurFocus,
+  onCompositionChange,
   onSelectionStart,
   onPatchLocal,
   onCacheTitle,
@@ -2674,6 +2893,7 @@ function NodeRow({
   onMouseSelect: (event: MouseEvent<HTMLElement>) => boolean;
   onFocusSelect: () => void;
   onBlurFocus: () => void;
+  onCompositionChange: (isComposing: boolean) => void;
   onSelectionStart: (event: PointerEvent<HTMLDivElement>) => void;
   onPatchLocal: (patch: Partial<FlatNodeData>) => void;
   onCacheTitle: (title: string) => void;
@@ -2696,6 +2916,8 @@ function NodeRow({
   const dateInputRef = useRef<HTMLInputElement | null>(null);
   const markdownMenuRef = useRef<HTMLDivElement | null>(null);
   const nodeContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const onCompositionChangeRef = useRef(onCompositionChange);
+  onCompositionChangeRef.current = onCompositionChange;
   const [localTitle, setLocalTitle] = useState(node.title);
   const [markdownMenu, setMarkdownMenu] = useState<MarkdownContextMenuState | null>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
@@ -2737,6 +2959,7 @@ function NodeRow({
   useEffect(() => {
     return () => {
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      onCompositionChangeRef.current(false);
     };
   }, []);
 
@@ -2879,6 +3102,7 @@ function NodeRow({
     .join(" ");
   const childCountLabel = getChildCountLabel(node.childIds.length);
   const hasComments = node.body.trim().length > 0;
+  const renderTitleLiterally = isMarkdownThematicBreak(node.title);
   const openDatePicker = () => {
     const input = dateInputRef.current;
     if (!input) return;
@@ -3005,6 +3229,13 @@ function NodeRow({
             resizeTitleInput(event.currentTarget);
             syncTitleDebounced(value);
           }}
+          onCompositionStart={() => onCompositionChange(true)}
+          onCompositionEnd={event => {
+            const value = event.currentTarget.value;
+            setLocalTitle(value);
+            syncTitleDebounced(value);
+            onCompositionChange(false);
+          }}
           onPaste={event => {
             const input = event.currentTarget;
             const result = applyPastedMarkdownLink(
@@ -3021,6 +3252,7 @@ function NodeRow({
             commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
           }}
           onBlur={event => {
+            onCompositionChange(false);
             flushTitle(event.target.value);
             onCommit({ title: event.target.value });
             onBlurFocus();
@@ -3144,34 +3376,38 @@ function NodeRow({
           }}
         >
           {node.title.trim() ? (
-            <ReactMarkdown
-              allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark", "span"]}
-              rehypePlugins={[rehypeInlineFormatting, [rehypeSanitize, markdownSanitizeSchema]]}
-              remarkPlugins={[remarkGfm, remarkLiteralHtml]}
-              unwrapDisallowed
-              components={{
-                a: ({ children, href }) => {
-                  const normalizedHref = href ? normalizeLinkHref(href) : undefined
-                  return (
-                    <a
-                      className="nodeTitleLink"
-                      href={normalizedHref}
-                      onPointerDown={event => event.stopPropagation()}
-                      onClick={event => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        if (normalizedHref) window.open(normalizedHref, "_blank", "noopener,noreferrer")
-                      }}
-                    >
-                      {children}
-                    </a>
-                  )
-                },
-                p: ({ children }) => <span>{children}</span>
-              }}
-            >
-              {node.title}
-            </ReactMarkdown>
+            renderTitleLiterally ? (
+              <span>{node.title}</span>
+            ) : (
+              <ReactMarkdown
+                allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark", "span"]}
+                rehypePlugins={[rehypeInlineFormatting, [rehypeSanitize, markdownSanitizeSchema]]}
+                remarkPlugins={[remarkGfm, remarkLiteralHtml]}
+                unwrapDisallowed
+                components={{
+                  a: ({ children, href }) => {
+                    const normalizedHref = href ? normalizeLinkHref(href) : undefined
+                    return (
+                      <a
+                        className="nodeTitleLink"
+                        href={normalizedHref}
+                        onPointerDown={event => event.stopPropagation()}
+                        onClick={event => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          if (normalizedHref) window.open(normalizedHref, "_blank", "noopener,noreferrer")
+                        }}
+                      >
+                        {children}
+                      </a>
+                    )
+                  },
+                  p: ({ children }) => <span>{children}</span>
+                }}
+              >
+                {node.title}
+              </ReactMarkdown>
+            )
           ) : (
             <span className="nodeTitlePlaceholder">Untitled</span>
           )}
@@ -3400,6 +3636,87 @@ function TagResultRow({
       </div>
     </div>
   );
+}
+
+function SystemTagGroupRow({
+  group,
+  collapsed,
+  onToggle
+}: {
+  group: TaggedNodeGroup;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      className="systemTagGroupRow"
+      type="button"
+      aria-expanded={!collapsed}
+      onClick={onToggle}
+    >
+      <span className="systemTagDisclosure" aria-hidden="true">
+        {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+      </span>
+      <span className="systemTagColor" style={{ backgroundColor: group.color }} aria-hidden="true" />
+      <strong>#{group.name}</strong>
+      <span className="systemTagCount">{group.results.length}</span>
+    </button>
+  );
+}
+
+function SystemTaggedNodeRow({ result, onOpen }: { result: TaggedNodeResult; onOpen: () => void }) {
+  return (
+    <button
+      className={result.node.done ? "systemTaggedNodeRow completed" : "systemTaggedNodeRow"}
+      type="button"
+      onClick={onOpen}
+      title={`Open in ${result.workspace.name}`}
+    >
+      <span className="systemTagBranch" aria-hidden="true">
+        <span />
+      </span>
+      <span className="systemTaggedNodeCopy">
+        <strong>{result.node.title || "Untitled"}</strong>
+        {result.node.body && <small>{result.node.body}</small>}
+      </span>
+      <span className="systemTaggedNodeWorkspace">
+        {result.workspace.name}
+        <ChevronRight size={14} aria-hidden="true" />
+      </span>
+    </button>
+  );
+}
+
+export function buildSystemTagRows(
+  groups: TaggedNodeGroup[],
+  collapsedNames: ReadonlySet<string>,
+  query: string
+): SystemTagRow[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  const rows: SystemTagRow[] = [];
+
+  for (const group of groups) {
+    const groupMatches = group.name.toLowerCase().includes(normalizedQuery);
+    const matchingResults = !normalizedQuery || groupMatches
+      ? group.results
+      : group.results.filter(result =>
+          `${result.node.title}\n${result.node.body}\n${result.workspace.name}`
+            .toLowerCase()
+            .includes(normalizedQuery)
+        );
+    if (normalizedQuery && !groupMatches && matchingResults.length === 0) continue;
+
+    rows.push({ kind: "tag", group });
+    if (!normalizedQuery && collapsedNames.has(group.name)) continue;
+    for (const result of matchingResults) rows.push({ kind: "node", groupName: group.name, result });
+  }
+
+  return rows;
+}
+
+function systemTagRowKey(row: SystemTagRow | undefined, index: number): string {
+  if (!row) return `system-tag-row-${index}`;
+  return row.kind === "tag" ? `system-tag:${row.group.name}` : `system-node:${row.groupName}:${row.result.node.id}`;
 }
 
 function getDropPlacement(element: HTMLElement, clientY: number): DropPlacement {
@@ -3796,6 +4113,10 @@ export function remarkLiteralHtml() {
   };
 }
 
+export function isMarkdownThematicBreak(value: string) {
+  return /^[ ]{0,3}(?:(?:\*[\t ]*){3,}|(?:-[\t ]*){3,}|(?:_[\t ]*){3,})$/.test(value);
+}
+
 function toMarkdownInlineNodes(value: string): HastNode[] {
   const nodes: HastNode[] = [];
   let cursor = 0;
@@ -3924,6 +4245,39 @@ export function applyCachedNodeTitles(
     if (next.nodes[id]?.title !== title) next = updateNode(next, id, { title });
   }
   return next;
+}
+
+export function addOptimisticNodeTag(state: FlatTreeState, nodeId: string, tag: Tag): FlatTreeState {
+  const node = state.nodes[nodeId];
+  if (!node || node.tags.some(current => current.id === tag.id || current.name === tag.name)) return state;
+  return updateNode(state, nodeId, {
+    tags: [...node.tags, tag].sort((left, right) => left.name.localeCompare(right.name))
+  });
+}
+
+export function reconcileOptimisticNodeTag(
+  state: FlatTreeState,
+  nodeId: string,
+  optimisticTagId: string,
+  savedTag: Tag
+): FlatTreeState {
+  const node = state.nodes[nodeId];
+  if (!node) return state;
+  const tags = node.tags.filter(tag => tag.id !== optimisticTagId && tag.id !== savedTag.id && tag.name !== savedTag.name);
+  return updateNode(state, nodeId, {
+    tags: [...tags, savedTag].sort((left, right) => left.name.localeCompare(right.name))
+  });
+}
+
+export function removeOptimisticNodeTag(state: FlatTreeState, nodeId: string, tagId: string): FlatTreeState {
+  const node = state.nodes[nodeId];
+  if (!node || !node.tags.some(tag => tag.id === tagId)) return state;
+  return updateNode(state, nodeId, { tags: node.tags.filter(tag => tag.id !== tagId) });
+}
+
+export function upsertWorkspaceTag(tags: Tag[], savedTag: Tag): Tag[] {
+  const next = tags.filter(tag => tag.id !== savedTag.id && tag.name !== savedTag.name);
+  return [...next, savedTag].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function readStoredBoolean(key: string, fallback: boolean): boolean {

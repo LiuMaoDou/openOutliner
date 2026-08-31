@@ -8,6 +8,7 @@ import type {
   OutlineNode,
   OutlineTreeNode,
   Tag,
+  TaggedNodeGroup,
   TaggedNodeResult,
   UpdateNodeInput,
   Workspace,
@@ -1041,23 +1042,82 @@ export class OutlinerService {
       )
       .all(normalized) as Row[];
 
-    const tagsByNode = new Map<string, Tag[]>();
-    const nodeIds = rows.map(row => text(row.id));
-    if (nodeIds.length > 0) {
-      const placeholders = nodeIds.map(() => "?").join(", ");
-      for (const row of this.db
-        .prepare(
-          `SELECT node_tags.node_id, tags.* FROM node_tags
-           JOIN tags ON node_tags.tag_id = tags.id
-           WHERE node_tags.node_id IN (${placeholders})
-           ORDER BY tags.name ASC`
-        )
-        .all(...nodeIds) as Row[]) {
-        const nodeId = text(row.node_id);
-        const tags = tagsByNode.get(nodeId) ?? [];
-        tags.push(rowToTag(row));
-        tagsByNode.set(nodeId, tags);
+    return this.mapTaggedNodeRows(rows, normalized);
+  }
+
+  listTaggedNodeGroups(): TaggedNodeGroup[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           nodes.*,
+           tags.id AS matched_tag_id,
+           tags.workspace_id AS matched_tag_workspace_id,
+           tags.name AS matched_tag_name,
+           tags.color AS matched_tag_color,
+           tags.created_at AS matched_tag_created_at,
+           workspaces.id AS result_workspace_id,
+           workspaces.name AS result_workspace_name,
+           workspaces.icon AS result_workspace_icon,
+           workspaces.folder_id AS result_workspace_folder_id,
+           workspaces.parent_workspace_id AS result_workspace_parent_workspace_id,
+           workspaces.position AS result_workspace_position,
+           workspaces.root_node_id AS result_workspace_root_node_id,
+           workspaces.created_at AS result_workspace_created_at,
+           workspaces.updated_at AS result_workspace_updated_at
+         FROM tags
+         JOIN node_tags ON node_tags.tag_id = tags.id
+         JOIN nodes ON nodes.id = node_tags.node_id
+         JOIN workspaces ON workspaces.id = nodes.workspace_id
+         WHERE nodes.deleted_at IS NULL
+           AND nodes.parent_id IS NOT NULL
+         ORDER BY tags.name COLLATE NOCASE ASC, tags.name ASC, nodes.updated_at DESC, nodes.created_at ASC`
+      )
+      .all() as Row[];
+    const results = this.mapTaggedNodeRows(rows);
+    const groupsByName = new Map<string, TaggedNodeGroup>();
+
+    rows.forEach((row, index) => {
+      const matchedTag = rowToMatchedTag(row);
+      const existing = groupsByName.get(matchedTag.name);
+      if (existing) {
+        existing.results.push(results[index]);
+        return;
       }
+      groupsByName.set(matchedTag.name, {
+        name: matchedTag.name,
+        color: matchedTag.color,
+        results: [results[index]]
+      });
+    });
+
+    return [...groupsByName.values()];
+  }
+
+  private mapTaggedNodeRows(rows: Row[], matchedName?: string): TaggedNodeResult[] {
+    if (rows.length === 0) return [];
+
+    const tagsByNode = new Map<string, Tag[]>();
+    for (const row of this.db
+      .prepare(
+        `SELECT node_tags.node_id, tags.* FROM node_tags
+         JOIN tags ON node_tags.tag_id = tags.id
+         JOIN nodes ON nodes.id = node_tags.node_id
+         WHERE nodes.deleted_at IS NULL
+           AND nodes.parent_id IS NOT NULL
+           AND (
+             ? IS NULL OR EXISTS (
+               SELECT 1 FROM node_tags AS matching_node_tags
+               JOIN tags AS matching_tags ON matching_tags.id = matching_node_tags.tag_id
+               WHERE matching_node_tags.node_id = nodes.id AND matching_tags.name = ?
+             )
+           )
+         ORDER BY tags.name ASC`
+      )
+      .all(matchedName ?? null, matchedName ?? null) as Row[]) {
+      const nodeId = text(row.node_id);
+      const tags = tagsByNode.get(nodeId) ?? [];
+      tags.push(rowToTag(row));
+      tagsByNode.set(nodeId, tags);
     }
 
     return rows.map(row => {

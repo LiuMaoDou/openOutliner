@@ -68,6 +68,12 @@ export interface TaggedNodeResult {
   workspace: Workspace;
 }
 
+export interface TaggedNodeGroup {
+  name: string;
+  color: string;
+  results: TaggedNodeResult[];
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   return request<T>(path);
 }

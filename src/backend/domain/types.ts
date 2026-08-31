@@ -71,6 +71,12 @@ export interface TaggedNodeResult {
   workspace: Workspace;
 }
 
+export interface TaggedNodeGroup {
+  name: string;
+  color: string;
+  results: TaggedNodeResult[];
+}
+
 export interface CreateNodeInput {
   parentId: string;
   title: string;
