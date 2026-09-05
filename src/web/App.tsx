@@ -626,6 +626,27 @@ export function App() {
   }, [loadWorkspaces]);
 
   useEffect(() => {
+    let pending = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = () => {
+      if (!pending) return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && (active.isContentEditable || active.matches("input, textarea"))) return;
+      pending = false;
+      void loadWorkspaces().then(() => Promise.all([
+        loadWorkspaceFolders(), loadTree(workspaceIdRef.current, { preserveSelection: true }),
+        loadTags(workspaceIdRef.current), loadOutlineHistory(workspaceIdRef.current)
+      ])).catch(toError(setError));
+    };
+    const onSync = () => { pending = true; refresh(); };
+    const onBlur = () => { clearTimeout(timer); timer = setTimeout(refresh, 100); };
+    window.addEventListener("outliner-sync", onSync);
+    window.addEventListener("focusout", onBlur);
+    return () => { clearTimeout(timer); window.removeEventListener("outliner-sync", onSync); window.removeEventListener("focusout", onBlur); };
+  }, [loadWorkspaces, loadWorkspaceFolders, loadTree, loadTags, loadOutlineHistory]);
+
+
+  useEffect(() => {
     loadWorkspaceFolders().catch(toError(setError));
   }, [loadWorkspaceFolders]);
 

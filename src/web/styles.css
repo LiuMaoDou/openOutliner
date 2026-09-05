@@ -2925,3 +2925,15 @@ body.isSelectingNodes .nodeTitlePreview {
     width: 24px;
   }
 }
+
+.syncPanel { position: fixed; bottom: 12px; left: 12px; z-index: 2000; font-size: 12px; max-width: calc(100vw - 24px); }
+.syncIndicator { padding: 5px 10px; border: 1px solid var(--border, #8886); border-radius: 20px; background: var(--panel, #24272c); color: #eee; font-size: 11px; box-shadow: 0 2px 10px #0002; }
+.syncDetails { position: absolute; bottom: 36px; left: 0; width: 350px; max-width: calc(100vw - 24px); max-height: 75vh; overflow: auto; padding: 18px; border: 1px solid #8886; border-radius: 12px; background: #252830; color: #f1f1f1; box-shadow: 0 8px 30px #0004; }
+.syncDetails p { line-height: 1.6; }
+.syncDetails button { border: 1px solid #8886; border-radius: 6px; background: #393f48; color: #fff; padding: 7px 10px; margin: 4px 4px 4px 0; cursor: pointer; }
+.syncDetails input { display: block; width: 100%; margin: 8px 0; padding: 8px; }
+.syncDetails small { display: block; color: #bdc3cc; line-height: 1.6; margin-top: 12px; }
+.syncDetails [role="alert"] { color: #ffbcab; }
+
+.recoveryImport { display: block; margin: 8px 0; }
+.recoveryImport input { font-size: 11px; }

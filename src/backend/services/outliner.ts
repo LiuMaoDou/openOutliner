@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { OpenOutlinerDb } from "../db/database.js";
+const randomUUID = () => globalThis.crypto.randomUUID();
+import type { SqlDatabase, SqlValue } from "../shared/sql.js";
 import type {
   CreateNodeInput,
   FieldDefinition,
@@ -16,7 +16,7 @@ import type {
 } from "../domain/types.js";
 
 type Row = Record<string, unknown>;
-type SqlValue = string | number | bigint | Buffer | null;
+
 
 interface OutlineNodeSnapshot {
   id: string;
@@ -104,7 +104,7 @@ export class OutlinerService {
   private transactionDepth = 0;
   private outlineHistorySuppressionDepth = 0;
 
-  constructor(private readonly db: OpenOutlinerDb) {}
+  constructor(private readonly db: SqlDatabase) {}
 
   ensureSeedData(): Workspace {
     const existing = this.listWorkspaces()[0];

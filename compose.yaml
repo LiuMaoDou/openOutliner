@@ -1,0 +1,26 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      OPENOUTLINER_PASSWORD: ${OPENOUTLINER_PASSWORD:?Set a long private access password}
+    volumes:
+      - outliner-data:/app/data
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      OUTLINER_DOMAIN: ${OUTLINER_DOMAIN:?Set your domain name}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+volumes:
+  outliner-data:
+  caddy-data:
+  caddy-config:

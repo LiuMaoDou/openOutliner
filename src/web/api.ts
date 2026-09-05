@@ -1,3 +1,4 @@
+import { localRequest } from "./offline";
 export interface Workspace {
   id: string;
   name: string;
@@ -104,28 +105,8 @@ export async function apiDelete<T>(path: string): Promise<T> {
 }
 
 export async function apiText(path: string): Promise<string> {
-  const response = await fetch(path);
-  if (!response.ok) throw new Error(await errorMessage(response));
-  return response.text();
+  return localRequest<string>(path);
 }
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...init?.headers
-    }
-  });
-  if (!response.ok) throw new Error(await errorMessage(response));
-  return (await response.json()) as T;
-}
-
-async function errorMessage(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? response.statusText;
-  } catch {
-    return response.statusText;
-  }
+  return localRequest<T>(path, init?.method ?? "GET", typeof init?.body === "string" ? JSON.parse(init.body) : undefined);
 }

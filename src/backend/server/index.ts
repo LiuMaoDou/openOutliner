@@ -1,14 +1,19 @@
+import { dispatch } from "../shared/dispatch.js";
+import { SyncService } from "../services/sync.js";
+import { SyncConflict } from "../shared/sync.js";
+import { authorized, login } from "./auth.js";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, join, resolve, sep } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { openDatabase } from "../db/database.js";
-import { exportMarkdown, importMarkdown } from "../importExport/markdown.js";
-import { exportOpml, importOpml } from "../importExport/opml.js";
 import { NotFoundError, OutlinerService, ValidationError } from "../services/outliner.js";
 
 const port = Number(process.env.OPENOUTLINER_PORT ?? 4317);
 const db = openDatabase();
 const service = new OutlinerService(db);
+const sync = new SyncService(db);
+const host = process.env.OPENOUTLINER_HOST ?? "127.0.0.1";
+if (!["127.0.0.1", "localhost", "::1"].includes(host) && !process.env.OPENOUTLINER_PASSWORD) throw new Error("Set OPENOUTLINER_PASSWORD before enabling remote access.");
 service.ensureSeedData();
 
 const server = createServer(async (req, res) => {
@@ -21,6 +26,13 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.url?.startsWith("/api/")) {
+      if (req.method !== "GET" && req.headers.origin && req.headers.origin !== `http://${req.headers.host}` && req.headers.origin !== `https://${req.headers.host}`) {
+        sendJson(res, { error: "Origin not allowed" }, 403); return;
+      }
+      if (req.url === "/api/login" && req.method === "POST") {
+        login(req, res, await readJson(req)); return;
+      }
+      if (!authorized(req)) { sendJson(res, { error: "请登录后同步" }, 401); return; }
       await routeApi(req, res);
       return;
     }
@@ -33,8 +45,9 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`OpenOutliner API listening on http://127.0.0.1:${port}`);
+server.listen(port, host, () => {
+  const address = server.address();
+  console.log(`OpenOutliner API listening on http://${host}:${typeof address === "object" && address ? address.port : port}`);
 });
 
 async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -42,247 +55,22 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   const path = url.pathname;
   const method = req.method ?? "GET";
 
-  if (method === "GET" && path === "/api/health") {
-    sendJson(res, { ok: true });
-    return;
+  if (path === "/api/sync" && method === "GET") { sendJson(res, sync.pull()); return; }
+  if (path === "/api/sync" && method === "POST") { sendJson(res, sync.push(await readJson(req))); return; }
+  const result = dispatch(service, method, req.url ?? "/", method === "GET" ? {} : await readJson(req));
+  if (path.startsWith("/api/export/")) sendText(res, result, path.endsWith("opml") ? "application/xml; charset=utf-8" : "text/markdown; charset=utf-8");
+  else {
+    const created = method === "POST" && (/^\/api\/(nodes|workspaces|workspace-folders|tags|fields|field-values)$/.test(path) || /^\/api\/nodes\/[^/]+\/(tags|convert-to-workspace)$/.test(path));
+    sendJson(res, result, created ? 201 : 200);
   }
-
-  if (method === "GET" && path === "/api/workspaces") {
-    sendJson(res, service.listWorkspaces());
-    return;
-  }
-
-  if (method === "GET" && path === "/api/workspace-folders") {
-    sendJson(res, service.listWorkspaceFolders());
-    return;
-  }
-
-  if (method === "POST" && path === "/api/workspace-folders") {
-    const body = await readJson<{ name?: string }>(req);
-    sendJson(res, service.createWorkspaceFolder(body.name ?? "New Folder"), 201);
-    return;
-  }
-
-  const workspaceFolderMatch = path.match(/^\/api\/workspace-folders\/([^/]+)$/);
-  if (method === "PATCH" && workspaceFolderMatch) {
-    sendJson(res, service.updateWorkspaceFolder(workspaceFolderMatch[1], await readJson(req)));
-    return;
-  }
-  if (method === "DELETE" && workspaceFolderMatch) {
-    sendJson(res, service.deleteWorkspaceFolder(workspaceFolderMatch[1]));
-    return;
-  }
-
-  if (method === "POST" && path === "/api/workspaces") {
-    const body = await readJson<{ name?: string; icon?: string; folderId?: string | null; parentWorkspaceId?: string | null }>(req);
-    sendJson(
-      res,
-      service.createWorkspace(body.name?.trim() || "Untitled Workspace", body.icon, body.folderId, body.parentWorkspaceId),
-      201
-    );
-    return;
-  }
-
-  const workspaceTreeMatch = path.match(/^\/api\/workspaces\/([^/]+)\/tree$/);
-  if (method === "GET" && workspaceTreeMatch) {
-    const workspace = service.getWorkspace(workspaceTreeMatch[1]);
-    sendJson(res, service.getTree(workspace.rootNodeId));
-    return;
-  }
-
-  const workspaceHistoryMatch = path.match(/^\/api\/workspaces\/([^/]+)\/history$/);
-  if (method === "GET" && workspaceHistoryMatch) {
-    sendJson(res, service.getOutlineHistoryState(workspaceHistoryMatch[1]));
-    return;
-  }
-
-  const workspaceHistoryActionMatch = path.match(/^\/api\/workspaces\/([^/]+)\/(undo|redo)$/);
-  if (method === "POST" && workspaceHistoryActionMatch) {
-    sendJson(
-      res,
-      workspaceHistoryActionMatch[2] === "undo"
-        ? service.undoOutline(workspaceHistoryActionMatch[1])
-        : service.redoOutline(workspaceHistoryActionMatch[1])
-    );
-    return;
-  }
-
-  const workspaceMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
-  if (method === "PATCH" && workspaceMatch) {
-    const body = await readJson<{ name?: string; folderId?: string | null; parentWorkspaceId?: string | null; position?: number }>(req);
-    if (body.folderId !== undefined || body.parentWorkspaceId !== undefined || body.position !== undefined) {
-      const current = service.getWorkspace(workspaceMatch[1]);
-      const moved = service.moveWorkspace(
-        workspaceMatch[1],
-        body.folderId !== undefined ? body.folderId : current.folderId,
-        body.position ?? Number.MAX_SAFE_INTEGER,
-        body.parentWorkspaceId !== undefined ? body.parentWorkspaceId : current.parentWorkspaceId
-      );
-      sendJson(res, body.name !== undefined ? service.updateWorkspace(moved.id, { name: body.name }) : moved);
-      return;
-    }
-    sendJson(res, service.updateWorkspace(workspaceMatch[1], body));
-    return;
-  }
-  if (method === "DELETE" && workspaceMatch) {
-    sendJson(res, service.deleteWorkspace(workspaceMatch[1]));
-    return;
-  }
-
-  const nodeChildrenMatch = path.match(/^\/api\/nodes\/([^/]+)\/children$/);
-  if (method === "GET" && nodeChildrenMatch) {
-    sendJson(res, service.listChildren(nodeChildrenMatch[1]));
-    return;
-  }
-
-  const nodeMatch = path.match(/^\/api\/nodes\/([^/]+)$/);
-  if (method === "GET" && nodeMatch) {
-    sendJson(res, service.getNode(nodeMatch[1]));
-    return;
-  }
-  if (method === "PATCH" && nodeMatch) {
-    sendJson(res, service.updateNode(nodeMatch[1], await readJson(req)));
-    return;
-  }
-  if (method === "DELETE" && nodeMatch) {
-    sendJson(res, service.deleteNode(nodeMatch[1]));
-    return;
-  }
-
-  if (method === "POST" && path === "/api/nodes") {
-    sendJson(res, service.createNode(await readJson(req)), 201);
-    return;
-  }
-
-  if (method === "POST" && path === "/api/nodes/delete-batch") {
-    const body = await readJson<{ ids?: string[] }>(req);
-    sendJson(res, service.deleteNodes(body.ids ?? []));
-    return;
-  }
-
-  const convertNodeToWorkspaceMatch = path.match(/^\/api\/nodes\/([^/]+)\/convert-to-workspace$/);
-  if (method === "POST" && convertNodeToWorkspaceMatch) {
-    const body = await readJson<{ name?: string }>(req);
-    sendJson(res, service.convertNodeToWorkspace(convertNodeToWorkspaceMatch[1], body.name), 201);
-    return;
-  }
-
-  const restoreMatch = path.match(/^\/api\/nodes\/([^/]+)\/restore$/);
-  if (method === "POST" && restoreMatch) {
-    sendJson(res, service.restoreNode(restoreMatch[1]));
-    return;
-  }
-
-  if (method === "POST" && path === "/api/nodes/move-batch") {
-    const body = await readJson<{ ids?: string[]; parentId: string; position?: number; expandParent?: boolean }>(req);
-    sendJson(res, service.moveNodes(body.ids ?? [], body.parentId, body.position, body.expandParent));
-    return;
-  }
-
-  if (method === "POST" && path === "/api/nodes/move-to-workspace") {
-    const body = await readJson<{ ids?: string[]; workspaceId: string }>(req);
-    sendJson(res, service.moveNodesToWorkspace(body.ids ?? [], body.workspaceId));
-    return;
-  }
-
-  const moveMatch = path.match(/^\/api\/nodes\/([^/]+)\/move$/);
-  if (method === "POST" && moveMatch) {
-    const body = await readJson<{ parentId: string; position?: number }>(req);
-    sendJson(res, service.moveNode(moveMatch[1], body.parentId, body.position));
-    return;
-  }
-
-  if (method === "GET" && path === "/api/search") {
-    sendJson(
-      res,
-      service.searchNodes(url.searchParams.get("q") ?? "", url.searchParams.get("workspaceId") ?? undefined)
-    );
-    return;
-  }
-
-  if (method === "GET" && path === "/api/tags") {
-    const workspaceId = requiredParam(url, "workspaceId");
-    sendJson(res, service.listTags(workspaceId));
-    return;
-  }
-
-  if (method === "GET" && path === "/api/tag-results") {
-    sendJson(res, service.listNodesByTagName(requiredParam(url, "name")));
-    return;
-  }
-
-  if (method === "GET" && path === "/api/system/tag-tree") {
-    sendJson(res, service.listTaggedNodeGroups());
-    return;
-  }
-
-  if (method === "POST" && path === "/api/tags") {
-    const body = await readJson<{ workspaceId: string; name: string; color?: string }>(req);
-    sendJson(res, service.createTag(body.workspaceId, body.name, body.color), 201);
-    return;
-  }
-
-  const tagMatch = path.match(/^\/api\/tags\/([^/]+)$/);
-  if (method === "PATCH" && tagMatch) {
-    sendJson(res, service.updateTag(tagMatch[1], await readJson(req)));
-    return;
-  }
-  if (method === "DELETE" && tagMatch) {
-    sendJson(res, service.deleteTag(tagMatch[1]));
-    return;
-  }
-
-  const nodeTagsMatch = path.match(/^\/api\/nodes\/([^/]+)\/tags$/);
-  if (method === "POST" && nodeTagsMatch) {
-    const body = await readJson<{ name: string }>(req);
-    sendJson(res, service.setNodeTag(nodeTagsMatch[1], body.name), 201);
-    return;
-  }
-
-  if (method === "GET" && path === "/api/fields") {
-    sendJson(res, service.listFieldDefinitions(requiredParam(url, "workspaceId")));
-    return;
-  }
-
-  if (method === "POST" && path === "/api/fields") {
-    sendJson(res, service.createFieldDefinition(await readJson(req)), 201);
-    return;
-  }
-
-  if (method === "POST" && path === "/api/field-values") {
-    const body = await readJson<{ nodeId: string; fieldId: string; value: string }>(req);
-    sendJson(res, service.setFieldValue(body.nodeId, body.fieldId, body.value), 201);
-    return;
-  }
-
-  if (method === "POST" && path === "/api/import/markdown") {
-    const body = await readJson<{ workspaceId?: string; parentId?: string; content: string }>(req);
-    sendJson(res, importMarkdown(service, body));
-    return;
-  }
-
-  if (method === "GET" && path === "/api/export/markdown") {
-    sendText(res, exportMarkdown(service, url.searchParams.get("workspaceId") ?? undefined), "text/markdown; charset=utf-8");
-    return;
-  }
-
-  if (method === "POST" && path === "/api/import/opml") {
-    const body = await readJson<{ workspaceId?: string; parentId?: string; content: string }>(req);
-    sendJson(res, importOpml(service, body));
-    return;
-  }
-
-  if (method === "GET" && path === "/api/export/opml") {
-    sendText(res, exportOpml(service, url.searchParams.get("workspaceId") ?? undefined), "application/xml; charset=utf-8");
-    return;
-  }
-
-  throw new NotFoundError(`Route not found: ${method} ${path}`);
 }
 
 async function readJson<T>(req: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 32 * 1024 * 1024) throw new ValidationError("Request exceeds 32 MB");
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   const raw = Buffer.concat(chunks).toString("utf8");
@@ -300,6 +88,7 @@ function sendText(res: ServerResponse, payload: string, contentType: string, sta
 }
 
 function sendError(res: ServerResponse, error: unknown): void {
+  if (error instanceof SyncConflict) { sendJson(res, { error: error.message, current: error.current, conflicts: error.conflicts }, 409); return; }
   const status =
     error instanceof NotFoundError || error instanceof ValidationError ? error.statusCode : 500;
   sendJson(
@@ -312,15 +101,10 @@ function sendError(res: ServerResponse, error: unknown): void {
 }
 
 function setBaseHeaders(res: ServerResponse): void {
-  res.setHeader("access-control-allow-origin", "http://127.0.0.1:5173");
+  res.setHeader("cache-control", "no-store");
+  res.setHeader("x-content-type-options", "nosniff");
   res.setHeader("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
   res.setHeader("access-control-allow-headers", "content-type");
-}
-
-function requiredParam(url: URL, name: string): string {
-  const value = url.searchParams.get(name);
-  if (!value) throw new ValidationError(`Missing required query param: ${name}`);
-  return value;
 }
 
 function serveStatic(req: IncomingMessage, res: ServerResponse): void {
@@ -362,6 +146,10 @@ function servePersonAsset(req: IncomingMessage, res: ServerResponse): boolean {
 
 function contentType(filePath: string): string {
   switch (extname(filePath)) {
+    case ".wasm":
+      return "application/wasm";
+    case ".webmanifest":
+      return "application/manifest+json";
     case ".html":
       return "text/html; charset=utf-8";
     case ".js":

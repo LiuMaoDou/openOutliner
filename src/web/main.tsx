@@ -1,3 +1,5 @@
+import { initializeOffline, getSyncStatus, subscribeSync } from "./offline";
+import { SyncPanel } from "./SyncPanel";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
@@ -40,8 +42,17 @@ createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ErrorBoundary>
       <ThemeProvider>
-        <App />
+        <OfflineApp />
       </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );
+
+function OfflineApp() {
+  const status = React.useSyncExternalStore(subscribeSync, getSyncStatus);
+  return <><SyncPanel />{status.ready && <App />}</>;
+}
+void initializeOffline().catch(error => console.error("Offline initialization failed", error));
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => { void navigator.serviceWorker.register("/sw.js").catch(error => console.error("Offline page cache failed", error)); });
+}
