@@ -1,3 +1,4 @@
+import { appRecoveryHtml, webBuildInfo } from "./appRecovery.js";
 import { dispatch } from "../shared/dispatch.js";
 import { SyncService } from "../services/sync.js";
 import { SyncConflict } from "../shared/sync.js";
@@ -26,6 +27,15 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.url?.startsWith("/api/")) {
+      const path = new URL(req.url, "http://localhost").pathname;
+      // Public diagnostics contain only build information, never outline data.
+      if (req.method === "GET" && path === "/api/app-version") {
+        sendJson(res, webBuildInfo(resolve(process.cwd(), "dist", "web"))); return;
+      }
+      if (req.method === "GET" && path === "/api/app-recovery") {
+        res.setHeader("x-frame-options", "DENY");
+        sendText(res, appRecoveryHtml, "text/html; charset=utf-8"); return;
+      }
       if (req.method !== "GET" && req.headers.origin && req.headers.origin !== `http://${req.headers.host}` && req.headers.origin !== `https://${req.headers.host}`) {
         sendJson(res, { error: "Origin not allowed" }, 403); return;
       }

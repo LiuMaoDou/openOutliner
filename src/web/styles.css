@@ -311,6 +311,7 @@ select:focus-visible {
   min-width: 0;
   height: 100vh;
   padding: 14px;
+  overflow-x: hidden;
   overflow-y: auto;
   color: var(--sidebar-foreground);
   background: var(--sidebar);
@@ -417,7 +418,7 @@ body.isResizingPanel .appShell {
 .toolbar button,
 .dragHandle,
 .iconButton,
-.tagInput button,
+.tagInput > button,
 .errorBar button,
 .undoBar button {
   display: inline-flex;
@@ -1419,9 +1420,12 @@ body.isSelectingNodes .nodeTitlePreview {
   opacity: 0.72;
 }
 
+/* Match the title's first line: 2px row inset + 4px padding/border
+   + half the 1.35em line height, minus half the 26px control. */
 .disclosureButton,
 .dragHandle {
-  align-self: unset;
+  align-self: start;
+  margin-top: calc(0.675em - 7px);
 }
 
 .dragHandle {
@@ -1431,24 +1435,17 @@ body.isSelectingNodes .nodeTitlePreview {
   color: var(--muted-foreground);
   background: transparent;
   cursor: grab;
-  opacity: 0.52;
+  opacity: 0.76;
   touch-action: none;
 }
 
 .nodeDot {
   display: block;
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   background: currentColor;
   border-radius: 999px;
   box-shadow: 0 0 0 4px transparent;
-}
-
-.dragHandle:hover:not(:disabled),
-.dragHandle:focus-visible {
-  color: var(--foreground);
-  background: transparent;
-  opacity: 0.9;
 }
 
 .dragHandle:active {
@@ -1461,37 +1458,30 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .dragHandle.done .nodeDot {
-  background: var(--success);
+  color: var(--success);
 }
 
 .dragHandle.collapsed .nodeDot {
-  background: currentColor;
-}
-
-.light .dragHandle.collapsed .nodeDot {
-  box-shadow: 0 0 0 5.5px #e0e0e0;
-}
-
-.dark .dragHandle.collapsed .nodeDot {
-  background: currentColor;
-}
-
-.dark .dragHandle.collapsed .nodeDot {
-  box-shadow: 0 0 0 5.5px rgba(161, 161, 170, 0.2);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, currentColor 8%, transparent),
+    0 0 0 3px color-mix(in srgb, currentColor 20%, transparent);
 }
 
 .dragHandle.hasComments .nodeDot {
-  background: var(--text-color-blue);
+  color: var(--text-color-blue);
 }
 
-.nodeRow:hover .dragHandle,
-.nodeRow.selected .dragHandle,
-.nodeRow.dragging .dragHandle {
-  opacity: 0.84;
+.nodeRow:hover .dragHandle:not(:disabled),
+.nodeRow.selected .dragHandle:not(:disabled),
+.nodeRow.dragging .dragHandle:not(:disabled) {
+  opacity: 0.86;
 }
 
-.nodeRow.dragging .dragHandle {
-  opacity: 0.84;
+.nodeRow .dragHandle:hover:not(:disabled),
+.nodeRow .dragHandle:focus-visible:not(:disabled) {
+  color: var(--foreground);
+  background: radial-gradient(circle at center, var(--accent) 10px, transparent 10px);
+  opacity: 1;
 }
 
 .dragPreview {
@@ -1569,6 +1559,8 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .nodeTitleCell {
+  align-self: start;
+  margin-block: 2px;
   position: relative;
   display: grid;
   align-items: center;
@@ -2088,6 +2080,54 @@ body.isSelectingNodes .nodeTitlePreview {
   border-color: var(--ring);
 }
 
+.nodeTagChip {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  color: var(--tag-foreground);
+  background: var(--tag-background);
+  border: 1px solid var(--tag-border);
+  border-radius: 999px;
+}
+
+.nodeTags .nodeTagChip button {
+  min-height: 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.nodeTags .nodeTagChip button:hover {
+  background: var(--accent);
+}
+
+.nodeTags .nodeTagRemove {
+  justify-content: center;
+  flex-shrink: 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  color: var(--muted-foreground);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nodeTagChip:hover .nodeTagRemove,
+.nodeTagChip:focus-within .nodeTagRemove {
+  width: 22px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nodeTags .nodeTagRemove:hover {
+  color: var(--foreground);
+}
+
+.nodeTags .nodeTagChip button:focus-visible {
+  outline-offset: -2px;
+}
+
 .tagResultRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2468,6 +2508,80 @@ body.isSelectingNodes .nodeTitlePreview {
   box-shadow: var(--shadow-sm);
 }
 
+.tagInputWithSuggestions {
+  position: relative;
+  min-width: 0;
+}
+
+.tagSuggestionList {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 6px;
+  color: var(--foreground);
+  background: var(--floating-background);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(9, 9, 11, 0.16), var(--shadow-sm);
+}
+
+.dark .tagSuggestionList {
+  background: #18181b;
+}
+
+.tagSuggestionItem {
+  display: flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  text-align: left;
+  color: var(--tag-foreground);
+  font-size: var(--inspector-font-size, 0.84rem);
+  font-weight: 400;
+  line-height: 1.4;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  cursor: pointer;
+  appearance: none;
+}
+
+.tagSuggestionItem:hover,
+.tagSuggestionItem:focus-visible {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.tagSuggestionItem:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.tagSuggestionDot,
+.tagManagerDot {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.tagSuggestionName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tagInput input {
   min-width: 0;
   height: 30px;
@@ -2478,7 +2592,7 @@ body.isSelectingNodes .nodeTitlePreview {
   outline: 0;
 }
 
-.tagInput button {
+.tagInput > button {
   min-width: 58px;
   height: 28px;
   padding: 0 8px;
@@ -2486,11 +2600,24 @@ body.isSelectingNodes .nodeTitlePreview {
   background: var(--primary);
 }
 
-.tagInput button:hover {
+.tagInput > button:hover {
   background: var(--primary-hover);
 }
 
-.tagInput button span {
+.dark .tagInput > button {
+  color: var(--tag-foreground);
+  background: var(--secondary);
+  border-color: var(--input);
+  box-shadow: none;
+}
+
+.dark .tagInput > button:hover {
+  color: var(--foreground);
+  background: var(--input);
+  border-color: var(--ring);
+}
+
+.tagInput > button span {
   font-size: var(--inspector-font-size);
   font-weight: 600;
 }
@@ -2513,8 +2640,9 @@ body.isSelectingNodes .nodeTitlePreview {
   border: 0;
 }
 
-.tagManagerToggle:hover {
-  color: var(--foreground);
+.tagManagerToggle:hover,
+.tagManagerToggle[aria-expanded="true"] {
+  color: var(--tag-foreground);
 }
 
 .tagManagerToggle:focus-visible {
@@ -2548,27 +2676,46 @@ body.isSelectingNodes .nodeTitlePreview {
 .tagManagerList {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  max-height: 248px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  background: var(--floating-background);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.dark .tagManagerList {
+  background: #18181b;
 }
 
 .tagManagerRow {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  grid-template-columns: 7px minmax(0, 1fr) 28px;
   align-items: center;
-  gap: 7px;
+  flex: 0 0 34px;
+  gap: 8px;
   min-height: 34px;
   padding: 0 4px 0 10px;
-  color: var(--muted-foreground);
-  background: var(--background);
-  border: 1px solid var(--input);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  color: var(--tag-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.tagManagerRow:hover,
+.tagManagerRow:focus-within {
+  background: var(--accent);
+}
+
+.tagManagerRow:focus-within {
+  border-color: var(--ring);
 }
 
 .tagManagerRow input {
   min-width: 0;
   height: 28px;
-  color: var(--foreground);
+  color: var(--tag-foreground);
   background: transparent;
   border: 0;
   font-size: var(--inspector-font-size);
@@ -2810,6 +2957,16 @@ body.isSelectingNodes .nodeTitlePreview {
     height: 32px;
   }
 
+  .nodeTitleCell {
+    margin-block: 3px;
+  }
+
+  .disclosureButton,
+  .dragHandle {
+    font-size: 0.95rem;
+    margin-top: calc(0.675em - 8px);
+  }
+
   .nodeTitle,
   .nodeTitlePreview,
   .nodeTitleMeasure {
@@ -2858,17 +3015,23 @@ body.isSelectingNodes .nodeTitlePreview {
     padding-right: 4px;
   }
 
-  .tagInput button {
+  .tagInput > button {
     min-width: 36px;
     padding: 0;
   }
 
-  .tagInput button span {
+  .tagInput > button span {
     display: none;
   }
 }
 
 @media (hover: none) {
+  .nodeTags .nodeTagRemove {
+    width: 22px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .nodeMenuButton {
     opacity: 0.72;
     pointer-events: auto;
@@ -2927,7 +3090,35 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .syncPanel { position: fixed; bottom: 12px; left: 12px; z-index: 2000; font-size: 12px; max-width: calc(100vw - 24px); }
-.syncIndicator { padding: 5px 10px; border: 1px solid var(--border, #8886); border-radius: 20px; background: var(--panel, #24272c); color: #eee; font-size: 11px; box-shadow: 0 2px 10px #0002; }
+.syncIndicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--sidebar);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  box-shadow: none;
+}
+.syncIndicator:hover,
+.syncIndicator[aria-expanded="true"] {
+  color: var(--foreground);
+  background: var(--accent);
+}
+.syncIndicatorAttention {
+  color: var(--danger-foreground);
+  background: var(--danger-surface);
+  border-color: var(--danger-border);
+}
+.syncIndicatorAttention:hover {
+  color: var(--danger-foreground);
+  background: var(--danger-surface);
+}
 .syncDetails { position: absolute; bottom: 36px; left: 0; width: 350px; max-width: calc(100vw - 24px); max-height: 75vh; overflow: auto; padding: 18px; border: 1px solid #8886; border-radius: 12px; background: #252830; color: #f1f1f1; box-shadow: 0 8px 30px #0004; }
 .syncDetails p { line-height: 1.6; }
 .syncDetails button { border: 1px solid #8886; border-radius: 6px; background: #393f48; color: #fff; padding: 7px 10px; margin: 4px 4px 4px 0; cursor: pointer; }

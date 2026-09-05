@@ -1,3 +1,4 @@
+import { Database, CircleAlert } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { downloadRecovery, downloadBackup, recoveryVersions, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync, synchronize } from "./offline";
 export function SyncPanel() {
@@ -10,12 +11,23 @@ export function SyncPanel() {
   const [version, setVersion] = useState("0");
   useEffect(() => { if (open) void recoveryVersions().then(setVersions).catch(() => {}); }, [open, status.conflict]);
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); setError(""); try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : "操作失败"); } finally { setBusy(false); } };
+  const attention = status.localSaveError ? "保存失败" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : "";
+  const detailsVisible = open || status.needsLogin || !status.ready;
   return <div className="syncPanel">
-    <button className="syncIndicator" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="同步状态">{status.text}</button>
-    {(open || status.needsLogin || !status.ready) && <section className="syncDetails" aria-label="离线与同步">
+    <button
+      className={`syncIndicator${attention ? " syncIndicatorAttention" : ""}`}
+      onClick={() => setOpen(!open)}
+      aria-expanded={Boolean(detailsVisible)}
+      aria-label={attention ? `同步状态：${attention}` : "同步状态"}
+      title={attention || "保存与同步 · 点击查看详情"}
+    >
+      {attention ? <CircleAlert size={15} aria-hidden="true" /> : <Database size={15} aria-hidden="true" />}
+      {attention && <span>{attention}</span>}
+    </button>
+    {detailsVisible && <section className="syncDetails" aria-label="离线与同步">
       <strong>离线与同步</strong>
       <p role="status">{status.text}</p>
-      {(error || status.error) && <p role="alert">{error || status.error}</p>}
+      {(error || status.localSaveError || status.error) && <p role="alert">{error || status.localSaveError || status.error}</p>}
       {status.needsLogin && <form onSubmit={event => { event.preventDefault(); void act(async () => { await signIn(password); setPassword(""); }); }}>
         <label>访问密码<input aria-label="访问密码" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} /></label>
         <button disabled={busy || !password}>登录并同步</button>
@@ -36,6 +48,7 @@ export function SyncPanel() {
         }} /></label>}
         {status.ready && <button onClick={() => setOpen(false)}>收起</button>}
       </div>
+      <p><a href="/api/app-recovery" style={{ color: "#a9caff" }}>检查应用版本 / 修复缓存</a></p>
       <small>修改先保存到此浏览器，再同步至云端。清除网站数据会移除未同步内容。离线仅包含笔记数据及应用资源，外部链接和远程图片需要网络。</small>
     </section>}
   </div>;

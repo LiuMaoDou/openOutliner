@@ -58,3 +58,13 @@ OPENOUTLINER_PORT=4318 OPENOUTLINER_DB=/tmp/openoutliner-test.sqlite npm start
 浏览器可能仍在运行旧版离线缓存：部署后先联网打开页面，等待新资源下载完成，再关闭该站点的所有标签页（包括安装的独立应用窗口），重新打开。若仍显示旧错误，可再完成一次上述关闭、打开流程。无需删除服务端数据库，也不要为了更新代码清空 IndexedDB 中的未同步数据。
 
 若新版仍提示父级冲突，错误会包含具体节点名称，以及“父级属于其他工作区”或“父级已删除”。这表示有效节点关系需要进一步检查，不能仅凭旧截图断定原因。
+
+## 已部署新代码但浏览器仍显示旧错误
+
+可以先用无痕窗口访问同一网址；无痕窗口不沿用原窗口的离线缓存。如果无痕窗口正常，请保留原窗口的 IndexedDB 数据，不要使用“清除所有网站数据”。
+
+已部署应用更新入口后，可访问 `https://你的域名/api/app-recovery`。这个地址绕过旧 Service Worker 的页面缓存，不需要登录，只展示构建信息。关闭该站点其他窗口，再点击“更新应用缓存并重新打开”。该操作只注销本应用的 Service Worker、清理 `openoutliner-` 开头的应用缓存，不删除 IndexedDB 或登录 Cookie。API 数据仍要求正常的登录权限。
+
+在尚未部署更新入口的版本中，Chrome 可打开开发者工具 → Application（应用）→ Service Workers（服务工作线程），对该域名点击 Unregister（注销），再关闭该站点全部窗口并重新打开。不必删除数据库或重建服务器。
+
+Node 部署请确认重启的是项目中运行 `dist/backend/server/index.js` 的进程；如果 Nginx 直接提供静态文件，其 root 应指向同一项目的新 `dist/web`。设置 `OPENOUTLINER_PASSWORD` 后须重启 Node，使密码保护生效。

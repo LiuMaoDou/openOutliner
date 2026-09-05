@@ -33,3 +33,17 @@ it("requires login, sets an HttpOnly session, and rejects cross-origin writes", 
   expect((await fetch(`${url}/api/sync`, { method: "POST", headers: { ...headers, origin: "https://other.example" }, body: '{"changes":[]}' })).status).toBe(403);
   expect((await fetch(`${url}/api/sync`, { method: "POST", headers: { ...headers, origin: url }, body: '{"changes":[]}' })).status).toBe(200);
 });
+
+it("serves cache recovery outside the offline shell without exposing private data", async () => {
+  const response = await fetch(`${url}/api/app-recovery?t=1`);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toContain("text/html");
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  const html = await response.text();
+  expect(html).toContain("更新应用缓存并重新打开");
+  expect(html).not.toContain("indexedDB.deleteDatabase");
+  const info = await fetch(`${url}/api/app-version?t=1`);
+  expect(info.status).toBe(200);
+  expect(Object.keys(await info.json()).sort()).toEqual(["build", "parentValidationFixed", "ready"]);
+  expect((await fetch(`${url}/api/sync`)).status).toBe(401);
+});

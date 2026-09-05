@@ -200,6 +200,13 @@ export function dispatch(service: OutlinerService, method: string, address: stri
     return;
   }
 
+  const nodeTagMatch = path.match(/^\/api\/nodes\/([^/]+)\/tags\/([^/]+)$/);
+  if (method === "DELETE" && nodeTagMatch) {
+    service.getNode(nodeTagMatch[1]);
+    service.removeNodeTag(nodeTagMatch[1], nodeTagMatch[2]);
+    return json({ removed: nodeTagMatch[2] });
+  }
+
   if (method === "GET" && path === "/api/fields") {
     return json( service.listFieldDefinitions(requiredParam(url, "workspaceId")));
     return;

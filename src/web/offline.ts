@@ -8,7 +8,7 @@ interface Conflict { current: Snapshot; conflicts: string[] }
 interface Backup { date: string; data: Snapshot }
 interface Saved { bytes: Uint8Array; base: Snapshot; revision: string; conflict?: Conflict; backups: Backup[] }
 interface Envelope { version: number; revision: string; data: Snapshot }
-export interface SyncStatus { text: string; pending: number; needsLogin?: boolean; conflict?: string[]; error?: string; ready: boolean }
+export interface SyncStatus { text: string; pending: number; needsLogin?: boolean; conflict?: string[]; error?: string; localSaveError?: string; ready: boolean }
 let status: SyncStatus = { text: "正在读取本机数据…", pending: 0, ready: false };
 const listeners = new Set<() => void>();
 export const subscribeSync = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
@@ -31,13 +31,19 @@ async function read(): Promise<Saved | undefined> {
   });
 }
 async function save(value: Saved): Promise<void> {
-  const db = await store();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction("state", "readwrite");
-    tx.objectStore("state").put(value, "current");
-    tx.oncomplete = () => resolve();
-    tx.onerror = tx.onabort = () => reject(new Error("保存到本机失败，请检查剩余空间；本次修改尚未保存。"));
-  });
+  try {
+    const db = await store();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("state", "readwrite");
+      tx.objectStore("state").put(value, "current");
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(new Error("保存到本机失败，请检查剩余空间；本次修改尚未保存。"));
+    });
+    if (status.localSaveError) report({ localSaveError: undefined });
+  } catch (error) {
+    report({ localSaveError: error instanceof Error ? error.message : "保存到本机失败，本次修改尚未保存。" });
+    throw error;
+  }
 }
 const locked = <T>(fn: () => Promise<T>) => {
   if (!navigator.locks) return Promise.reject(new Error("此浏览器不支持安全的离线存储，请使用新版浏览器并通过 HTTPS 访问。"));

@@ -1,3 +1,4 @@
+import { dispatch } from "../src/backend/shared/dispatch.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -640,6 +641,24 @@ describe("OutlinerService", () => {
     expect(refreshed.map(group => group.name)).toEqual(["active", "initiative", "project"]);
     expect(refreshed.find(group => group.name === "initiative")?.results[0].node.id).toBe(firstNode.id);
     expect(refreshed.find(group => group.name === "project")?.results[0].node.id).toBe(secondNode.id);
+  });
+
+  it("unlinks a tag through the API without deleting the tag or other node associations", () => {
+    const workspace = service.createWorkspace("Unlink tags");
+    const first = service.createNode({ parentId: workspace.rootNodeId, title: "First" });
+    const second = service.createNode({ parentId: workspace.rootNodeId, title: "Second" });
+    const tag = service.setNodeTag(first.id, "shared");
+    service.setNodeTag(second.id, "shared");
+    service.setNodeTag(first.id, "keep");
+
+    dispatch(service, "DELETE", `/api/nodes/${first.id}/tags/${tag.id}`);
+
+    expect(service.listNodeTags(first.id).map(item => item.name)).toEqual(["keep"]);
+    expect(service.listNodeTags(second.id).map(item => item.id)).toEqual([tag.id]);
+    expect(service.listTags(workspace.id).map(item => item.name)).toContain("shared");
+    expect(service.listNodesByTagName("shared").map(item => item.node.id)).toEqual([second.id]);
+    service.setNodeTag(first.id, "shared");
+    expect(service.listNodeTags(first.id).map(item => item.id)).toContain(tag.id);
   });
 
   it("assigns stable Morandi colors while preserving custom colors", () => {

@@ -68,6 +68,7 @@ import {
   type WorkspaceFolder
 } from "./api";
 import { useTheme, type Theme } from "./theme";
+import { resolveTagColor } from "../backend/shared/tagColors";
 import {
   type FlatTreeState,
   type FlatNodeData,
@@ -324,8 +325,11 @@ export function App() {
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [tagName, setTagName] = useState("");
-  const [managedTagName, setManagedTagName] = useState("");
+  const [isTagSuggestionOpen, setIsTagSuggestionOpen] = useState(false);
   const [tags, setTags] = useState<Tag[]>([]);
+  const tagSuggestionRef = useRef<HTMLDivElement | null>(null);
+  const tagSuggestionListRef = useRef<HTMLDivElement | null>(null);
+  const [tagSuggestionPosition, setTagSuggestionPosition] = useState<CSSProperties>({});
   const [activeTagFilter, setActiveTagFilter] = useState("");
   const [tagResults, setTagResults] = useState<TaggedNodeResult[]>([]);
   const [systemTagGroups, setSystemTagGroups] = useState<TaggedNodeGroup[]>([]);
@@ -1015,7 +1019,6 @@ export function App() {
     setSingleSelectedId("");
     setTags([]);
     setTagName("");
-    setManagedTagName("");
     if (!isCurrentWorkspace) return;
     try {
       await Promise.all([loadTree(result.workspace.id), loadTags(result.workspace.id)]);
@@ -1694,7 +1697,6 @@ export function App() {
     setActiveTagFilter("");
     setTagResults([]);
     setTagName("");
-    setManagedTagName("");
   }, [setSingleSelectedId]);
 
   const createWorkspace = async (folderId?: string | null, parentWorkspaceId?: string | null) => {
@@ -1927,8 +1929,8 @@ export function App() {
     await loadWorkspaces();
   };
 
-  const addTag = async () => {
-    const name = tagName.trim().replace(/^#/, "");
+  const addTag = async (nextName?: string) => {
+    const name = (nextName ?? tagName).trim().replace(/^#/, "");
     if (!selectedNode || !name) return;
     if (selectedNode.tags.some(tag => tag.name === name)) {
       setTagName("");
@@ -1976,12 +1978,85 @@ export function App() {
     }
   };
 
-  const createManagedTag = async () => {
-    if (!workspaceId || !managedTagName.trim()) return;
-    await apiPost<Tag>("/api/tags", { workspaceId, name: managedTagName.trim() });
-    setManagedTagName("");
-    await loadTags(workspaceId);
+  const unlinkNodeTag = async (nodeId: string, tag: Tag) => {
+    const startedWorkspaceId = workspaceId;
+    await apiDelete(`/api/nodes/${nodeId}/tags/${tag.id}`);
+    if (workspaceIdRef.current !== startedWorkspaceId) return;
+    setFlatState(current => {
+      if (!current) return current;
+      const next = removeOptimisticNodeTag(current, nodeId, tag.id);
+      flatStateRef.current = next;
+      return next;
+    });
   };
+
+  const tagSuggestions = useMemo(() => {
+    const normalized = tagName.trim().replace(/^#/, "").toLowerCase();
+    const existingNodeTags = new Set(selectedNode?.tags.map(tag => tag.name) ?? []);
+    return tags
+      .filter(tag => !existingNodeTags.has(tag.name))
+      .filter(tag => !normalized || tag.name.toLowerCase().includes(normalized))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [selectedNode?.id, selectedNode?.tags.length, tagName, tags]);
+
+  useLayoutEffect(() => {
+    if (!isTagSuggestionOpen || !tagSuggestions.length) return;
+    const anchor = tagSuggestionRef.current;
+    if (!anchor) return;
+    const updatePosition = () => {
+      const rect = anchor.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const viewportTop = viewport?.offsetTop ?? 0;
+      const viewportLeft = viewport?.offsetLeft ?? 0;
+      const viewportHeight = viewport?.height ?? window.innerHeight;
+      const viewportWidth = viewport?.width ?? window.innerWidth;
+      const gap = 6;
+      const margin = 8;
+      const below = viewportTop + viewportHeight - rect.bottom - gap - margin;
+      const above = rect.top - viewportTop - gap - margin;
+      const desiredHeight = Math.min(248, tagSuggestions.length * 34 + 14);
+      const opensAbove = below < desiredHeight && above > below;
+      const maxHeight = Math.max(0, Math.min(desiredHeight, opensAbove ? above : below));
+      const width = Math.min(rect.width, viewportWidth - margin * 2);
+      setTagSuggestionPosition({
+        left: Math.max(viewportLeft + margin, Math.min(rect.left, viewportLeft + viewportWidth - width - margin)),
+        top: opensAbove ? rect.top - gap : rect.bottom + gap,
+        width,
+        maxHeight,
+        transform: opensAbove ? "translateY(-100%)" : undefined
+      });
+    };
+    updatePosition();
+    const observer = new ResizeObserver(updatePosition);
+    observer.observe(anchor);
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && tagSuggestionListRef.current?.contains(event.target)) return;
+      updatePosition();
+    };
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", onScroll, true);
+    window.visualViewport?.addEventListener("resize", updatePosition);
+    window.visualViewport?.addEventListener("scroll", updatePosition);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", onScroll, true);
+      window.visualViewport?.removeEventListener("resize", updatePosition);
+      window.visualViewport?.removeEventListener("scroll", updatePosition);
+    };
+  }, [isTagSuggestionOpen, tagSuggestions.length]);
+
+  useEffect(() => {
+    if (!isTagSuggestionOpen) return;
+    const closeSuggestion = (event: globalThis.MouseEvent) => {
+      const root = tagSuggestionRef.current;
+      const target = event.target;
+      if (target instanceof Node && (root?.contains(target) || tagSuggestionListRef.current?.contains(target))) return;
+      setIsTagSuggestionOpen(false);
+    };
+    window.addEventListener("pointerdown", closeSuggestion);
+    return () => window.removeEventListener("pointerdown", closeSuggestion);
+  }, [isTagSuggestionOpen]);
 
   const updateTagDraft = (id: string, name: string) => {
     setTags(current => current.map(tag => (tag.id === id ? { ...tag, name } : tag)));
@@ -2731,6 +2806,7 @@ export function App() {
                           onFocusNext={() => focusRelative(node, 1)}
                           onMoveStart={event => startNodeDrag(node, event)}
                           onTagClick={tag => loadTagResults(tag.name).catch(toError(setError))}
+                          onTagRemove={tag => unlinkNodeTag(node.id, tag).catch(toError(setError))}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
                           onMoveToWorkspace={title => {
                             const firstTargetId = moveWorkspaceOptions[0]?.workspace.id ?? "";
@@ -2817,30 +2893,62 @@ export function App() {
                   </div>
                   <div className="inspectorSection">
                     <label>Tags</label>
-                    <div className="tagList">
-                      {selectedNode.tags.map(tag => (
-                        <button
-                          className="tagPill"
-                          type="button"
-                          key={tag.id}
-                          onClick={() => loadTagResults(tag.name).catch(toError(setError))}
-                        >
-                          #{tag.name}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="tagInput">
+                    <div className="tagInput" ref={tagSuggestionRef}>
                       <TagIcon size={15} />
-                      <input
-                        value={tagName}
-                        onChange={event => setTagName(event.target.value)}
-                        onKeyDown={event => {
-                          if (shouldIgnoreTextInputKeyDown(event)) return;
-                          if (event.key === "Enter") addTag().catch(toError(setError));
+                      <div className="tagInputWithSuggestions">
+                        <input
+                          name="openoutliner-tag-input"
+                          type="text"
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          spellCheck={false}
+                          value={tagName}
+                          onFocus={() => setIsTagSuggestionOpen(tagSuggestions.length > 0)}
+                          onChange={event => {
+                            setTagName(event.target.value);
+                            setIsTagSuggestionOpen(true);
+                          }}
+                          onKeyDown={event => {
+                            if (shouldIgnoreTextInputKeyDown(event)) return;
+                            if (event.key === "Enter") {
+                              setIsTagSuggestionOpen(false);
+                              addTag().catch(toError(setError));
+                            }
+                            if (event.key === "Escape") setIsTagSuggestionOpen(false);
+                          }}
+                          placeholder="Tag"
+                        />
+                        {isTagSuggestionOpen && tagSuggestions.length > 0 && createPortal(
+                          <div className="tagSuggestionList" ref={tagSuggestionListRef} style={tagSuggestionPosition} role="listbox" aria-label="标签建议">
+                            {tagSuggestions.map(tag => (
+                              <button
+                                key={tag.id}
+                                type="button"
+                                className="tagSuggestionItem"
+                                role="option"
+                                onMouseDown={event => event.preventDefault()}
+                                onClick={() => {
+                                  void addTag(tag.name).catch(toError(setError));
+                                  setIsTagSuggestionOpen(false);
+                                }}
+                              >
+                                <span className="tagSuggestionDot" style={{ backgroundColor: resolveTagColor(tag) }} aria-hidden="true" />
+                                <span className="tagSuggestionName" title={tag.name}>{tag.name}</span>
+                              </button>
+                            ))}
+                          </div>,
+                          document.body
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Add tag to node"
+                        onClick={() => {
+                          setIsTagSuggestionOpen(false);
+                          void addTag().catch(toError(setError));
                         }}
-                        placeholder="Tag"
-                      />
-                      <button type="button" onClick={() => addTag().catch(toError(setError))}>
+                      >
                         <Plus size={15} />
                         <span>Add</span>
                       </button>
@@ -2866,8 +2974,9 @@ export function App() {
                     <div className="tagManagerList">
                       {tags.map(tag => (
                         <div className="tagManagerRow" key={tag.id}>
-                          <span>#</span>
+                          <span className="tagManagerDot" style={{ backgroundColor: resolveTagColor(tag) }} aria-hidden="true" />
                           <input
+                            aria-label={`Rename tag ${tag.name}`}
                             value={tag.name}
                             onChange={event => updateTagDraft(tag.id, event.target.value)}
                             onBlur={() => saveTag(tag).catch(toError(setError))}
@@ -2885,22 +2994,6 @@ export function App() {
                           </button>
                         </div>
                       ))}
-                    </div>
-                    <div className="tagInput">
-                      <TagIcon size={15} />
-                      <input
-                        value={managedTagName}
-                        onChange={event => setManagedTagName(event.target.value)}
-                        onKeyDown={event => {
-                          if (shouldIgnoreTextInputKeyDown(event)) return;
-                          if (event.key === "Enter") createManagedTag().catch(toError(setError));
-                        }}
-                        placeholder="New tag"
-                      />
-                      <button type="button" onClick={() => createManagedTag().catch(toError(setError))}>
-                        <Plus size={15} />
-                        <span>Add</span>
-                      </button>
                     </div>
                   </>
                 )}
@@ -2960,6 +3053,7 @@ function NodeRow({
   onFocusNext,
   onMoveStart,
   onTagClick,
+  onTagRemove,
   onConvertToWorkspace,
   onMoveToWorkspace,
   onDelete
@@ -2990,6 +3084,7 @@ function NodeRow({
   onFocusNext: () => void;
   onMoveStart: (event: PointerEvent<HTMLButtonElement>) => void;
   onTagClick: (tag: Tag) => void;
+  onTagRemove: (tag: Tag) => void;
   onConvertToWorkspace: (title: string) => void;
   onMoveToWorkspace: (title: string) => void;
   onDelete: () => Promise<void>;
@@ -3556,9 +3651,22 @@ function NodeRow({
       )}
       <div className="nodeTags">
         {(node.tags || []).map(tag => (
-          <button type="button" key={tag.id} onClick={() => onTagClick(tag)}>
-            {tag.name}
-          </button>
+          <span className="nodeTagChip" key={tag.id}>
+            <button type="button" onClick={() => onTagClick(tag)}>{tag.name}</button>
+            <button
+              className="nodeTagRemove"
+              type="button"
+              aria-label={`移除当前节点的标签 ${tag.name}`}
+              title="解除当前节点关联，保留标签"
+              disabled={tag.id.startsWith("temp-")}
+              onClick={event => {
+                event.stopPropagation();
+                onTagRemove(tag);
+              }}
+            >
+              <X size={12} />
+            </button>
+          </span>
         ))}
       </div>
       <button className="iconButton danger" type="button" title="Delete" onClick={() => onDelete()}>
