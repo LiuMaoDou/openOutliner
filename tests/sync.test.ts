@@ -15,6 +15,47 @@ function fixture() {
   return { db, service, workspace, node, sync: new SyncService(db) };
 }
 describe("offline sync", () => {
+  it("imports deleted descendants after their live ancestor moved to another workspace", () => {
+    const { db, service, node, sync } = fixture();
+    const replica = openDatabase(":memory:");
+    try {
+      const removed = service.createNode({ parentId: node.id, title: "Deleted before move" });
+      const nested = service.createNode({ parentId: removed.id, title: "Deleted nested child" });
+      service.deleteNode(removed.id);
+      const destination = service.createWorkspace("Destination");
+      service.moveNodesToWorkspace([node.id], destination.id);
+      const remote = sync.pull().data;
+      // Historical tombstones retain their source workspace; no records may be lost.
+      expect(() => replaceSnapshot(replica, remote)).not.toThrow();
+      expect(snapshot(replica)).toEqual(remote);
+      expect(remote.nodes.find(row => row.id === removed.id)!.deleted_at).not.toBeNull();
+      expect(remote.nodes.find(row => row.id === nested.id)!.deleted_at).not.toBeNull();
+      const local = new OutlinerService(replica);
+      local.updateNode(node.id, { title: "Edited offline after first sync" });
+      sync.push({ changes: changesBetween(remote, snapshot(replica)) });
+      expect(service.getNode(node.id).title).toBe("Edited offline after first sync");
+    } finally { replica.close(); db.close(); }
+  });
+  it("still rejects active nodes with cross-workspace parents and rolls back", () => {
+    const { db, service, node } = fixture();
+    try {
+      const other = service.createWorkspace("Other");
+      const before = snapshot(db), invalid = structuredClone(before);
+      invalid.nodes.find(row => row.id === node.id)!.parent_id = other.rootNodeId;
+      expect(() => replaceSnapshot(db, invalid)).toThrow("父级");
+      expect(snapshot(db)).toEqual(before);
+    } finally { db.close(); }
+  });
+  it("still rejects an active child under a deleted parent", () => {
+    const { db, service, node } = fixture();
+    try {
+      service.createNode({ parentId: node.id, title: "Active child" });
+      const before = snapshot(db), invalid = structuredClone(before);
+      invalid.nodes.find(row => row.id === node.id)!.deleted_at = new Date().toISOString();
+      expect(() => replaceSnapshot(db, invalid)).toThrow("父级");
+      expect(snapshot(db)).toEqual(before);
+    } finally { db.close(); }
+  });
   it("merges independent fields and retains remote records", () => {
     const { db, service, node, workspace, sync } = fixture();
     try {
@@ -107,6 +148,16 @@ describe("offline sync", () => {
     } };
     try {
       db.run("PRAGMA foreign_keys=ON"); migrate(sql);
+      const source = fixture();
+      try {
+        const removed = source.service.createNode({ parentId: source.node.id, title: "Historical deleted child" });
+        source.service.deleteNode(removed.id);
+        const destination = source.service.createWorkspace("Moved destination");
+        source.service.moveNodesToWorkspace([source.node.id], destination.id);
+        const incoming = source.sync.pull().data;
+        replaceSnapshot(sql, incoming);
+        expect(snapshot(sql)).toEqual(incoming);
+      } finally { source.db.close(); }
       const service = new OutlinerService(sql);
       const workspace = dispatch(service, "POST", "/api/workspaces", { name: "Browser" });
       const node = dispatch(service, "POST", "/api/nodes", { parentId: workspace.rootNodeId, title: "Offline" });

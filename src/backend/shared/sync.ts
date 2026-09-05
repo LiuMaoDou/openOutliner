@@ -91,7 +91,13 @@ function validateTrees(data: Snapshot): void {
         if (seen.has(cursor.id)) throw new Error("移动冲突：不能形成循环层级");
         seen.add(cursor.id);
         const parent: Row | undefined = map.get(cursor[parentField]);
-        if (parentField === "parent_id" && parent && (parent.workspace_id !== row.workspace_id || (row.deleted_at === null && parent.deleted_at !== null))) throw new Error("节点父级冲突");
+        // Deleted records retain historical parent/workspace links when only the
+        // live subtree moves. Validate each active edge, not the starting row
+        // against every ancestor, and keep tombstones unchanged for recovery.
+        if (parentField === "parent_id" && cursor.deleted_at === null && parent) {
+          if (parent.workspace_id !== cursor.workspace_id) throw new Error(`节点父级冲突：「${cursor.title}」的父级属于其他工作区`);
+          if (parent.deleted_at !== null) throw new Error(`节点父级冲突：「${cursor.title}」的父级已删除`);
+        }
         cursor = parent;
       }
     }
