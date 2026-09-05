@@ -8,7 +8,7 @@
 
 @font-face {
   font-family: "OpenOutlinerCJK";
-  src: url("/person/%E6%96%B9%E6%AD%A3%E5%85%B0%E4%BA%AD%E5%9C%86_GBK_%E5%87%86.ttf") format("truetype");
+  src: url("/person/%E6%96%B9%E6%AD%A3%E5%85%B0%E4%BA%AD%E5%9C%86_GBK_%E5%87%86.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -1378,7 +1378,7 @@ body.isResizingPanel .appShell {
 
 .nodeRow.selected {
   background: color-mix(in srgb, var(--selected) 72%, transparent);
-  border-color: var(--selected-border);
+  border-color: transparent;
 }
 
 .nodeRow.selection-start {
@@ -1399,7 +1399,7 @@ body.isResizingPanel .appShell {
 
 .nodeRow.active {
   background: var(--selected);
-  box-shadow: inset 3px 0 0 var(--selected-border);
+  box-shadow: none;
 }
 
 body.isSelectingNodes .outlineSurface,
@@ -1543,6 +1543,19 @@ body.isSelectingNodes .nodeTitlePreview {
 .nodeMenuButton {
   opacity: 0;
   pointer-events: none;
+}
+
+.nodeMenuButton:hover:not(:disabled),
+.nodeMenuButton:active,
+.nodeMenuButton:focus-visible,
+.nodeMenuButton[aria-expanded="true"] {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.nodeMenuButton:focus-visible {
+  color: var(--foreground);
+  background: var(--accent);
 }
 
 .nodeRow:hover .nodeMenuButton,
@@ -2557,6 +2570,7 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .tagSuggestionItem:hover,
+.tagSuggestionItem[aria-selected="true"],
 .tagSuggestionItem:focus-visible {
   background: var(--accent);
   color: var(--foreground);
@@ -2976,7 +2990,19 @@ body.isSelectingNodes .nodeTitlePreview {
   }
 
   .nodeTags {
+    grid-column: 4 / -2;
+    grid-row: 2;
+    justify-self: start;
+    min-width: 0;
+  }
+
+  .nodeTags:empty {
     display: none;
+  }
+
+  .nodeRow > .iconButton.danger {
+    grid-column: -2;
+    grid-row: 1;
   }
 
   .systemTaggedNodeRow {

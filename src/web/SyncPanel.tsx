@@ -1,6 +1,6 @@
 import { Database, CircleAlert } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { downloadRecovery, downloadBackup, recoveryVersions, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync, synchronize } from "./offline";
+import { downloadRecovery, downloadBackup, downloadEditorDrafts, pendingEditorDrafts, archivedEditorDrafts, recoverArchivedEditorDraft, resolveEditorDraft, recoveryVersions, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync, synchronize } from "./offline";
 export function SyncPanel() {
   const status = useSyncExternalStore(subscribeSync, getSyncStatus);
   const [open, setOpen] = useState(false);
@@ -11,7 +11,7 @@ export function SyncPanel() {
   const [version, setVersion] = useState("0");
   useEffect(() => { if (open) void recoveryVersions().then(setVersions).catch(() => {}); }, [open, status.conflict]);
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); setError(""); try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : "操作失败"); } finally { setBusy(false); } };
-  const attention = status.localSaveError ? "保存失败" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : "";
+  const attention = status.localSaveError ? "保存失败" : status.draftConflicts?.length ? "编辑冲突" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : "";
   const detailsVisible = open || status.needsLogin || !status.ready;
   return <div className="syncPanel">
     <button
@@ -38,6 +38,27 @@ export function SyncPanel() {
         <button disabled={busy} onClick={() => void act(() => resolveConflict("cloud"))}>采用云端，备份本机</button>
         <button disabled={busy} onClick={() => void act(() => resolveConflict("local"))}>采用本机，备份云端</button>
       </div>}
+      {Boolean(status.drafts) && <div>
+        <strong>保留的编辑草稿</strong>
+        <p>原页面的草稿会继续保存；从备份恢复的草稿请在这里选择采用。发生冲突时，请比较后选择；另一份仍保留在恢复备份中。</p>
+        {pendingEditorDrafts().map(draft => <details key={draft.id}>
+          <summary>{draft.field === "title" ? "标题" : "备注"} · {draft.conflict ? "需要选择版本" : "等待保存"} · {new Date(draft.updatedAt).toLocaleTimeString()}</summary>
+          <p>编辑草稿</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 160, overflow: "auto" }}>{draft.value || "（空内容）"}</pre>
+          {draft.conflict && <><p>当前内容</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 160, overflow: "auto" }}>{draft.conflict.current === null ? "节点已删除，可下载草稿后恢复内容" : draft.conflict.current || "（空内容）"}</pre></>}
+          {draft.conflict?.current !== null && <button disabled={busy} onClick={() => void act(() => resolveEditorDraft(draft.id, "draft"))}>采用此草稿</button>}
+          <button disabled={busy} onClick={() => void act(() => resolveEditorDraft(draft.id, "current"))}>保留当前，归档草稿</button>
+        </details>)}
+        <button onClick={downloadEditorDrafts}>下载全部编辑草稿</button>
+      </div>}
+      {Boolean(status.archivedDrafts) && <details>
+        <summary>已归档的编辑草稿（{status.archivedDrafts}）</summary>
+        {archivedEditorDrafts().map(draft => <details key={draft.id}>
+          <summary>{draft.field === "title" ? "标题" : "备注"} · {new Date(draft.updatedAt).toLocaleString()}</summary>
+          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 160, overflow: "auto" }}>{draft.value || "（空内容）"}</pre>
+          <button disabled={busy} onClick={() => void act(async () => recoverArchivedEditorDraft(draft.id))}>恢复为待处理草稿</button>
+        </details>)}
+        <button onClick={downloadEditorDrafts}>下载全部编辑草稿</button>
+      </details>}
       {versions.length > 0 && <div><label>保留的版本<select aria-label="保留的版本" value={version} onChange={event => setVersion(event.target.value)}>{versions.map((date, index) => <option key={index} value={index}>{new Date(date).toLocaleString()}</option>)}</select></label><button onClick={() => void act(() => downloadBackup(Number(version)))}>下载此版本</button></div>}
       <div className="syncActions">
         <button disabled={busy} onClick={() => void act(synchronize)}>立即同步</button>

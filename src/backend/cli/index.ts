@@ -123,7 +123,7 @@ const importCommand = program.command("import").description("Import outlines");
 importCommand
   .command("markdown")
   .argument("<file>")
-  .option("--workspace <id>", "Workspace ID. If omitted, replaces all workspaces from the Markdown file.")
+  .option("--workspace <id>", "Workspace ID. If omitted, imports the Markdown file into new workspaces.")
   .option("--parent <id>", "Parent node ID")
   .action((file, options) =>
     print(
@@ -138,7 +138,7 @@ importCommand
 importCommand
   .command("opml")
   .argument("<file>")
-  .option("--workspace <id>", "Workspace ID. If omitted, replaces all workspaces from the OPML file.")
+  .option("--workspace <id>", "Workspace ID. If omitted, imports the OPML file into new workspaces.")
   .option("--parent <id>", "Parent node ID")
   .action((file, options) =>
     print(

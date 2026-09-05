@@ -119,7 +119,7 @@ The MCP server exposes tools for workspace listing, node search/read/create/edit
 ## Import And Export
 
 - Markdown export supports one workspace or all workspaces.
-- Markdown import can target a workspace/parent node, or replace all workspaces when no target is supplied.
+- Markdown and OPML imports can target a workspace/parent node, or create new workspaces when no target is supplied. Existing workspaces and undo history are preserved; invalid or empty imports make no changes.
 - OPML export supports one workspace or all workspaces.
 - OPML import preserves workspace outlines and OpenOutliner workspace icons when present.
 - Empty wrapper outline nodes are skipped during OPML export/import round trips.

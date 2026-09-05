@@ -1141,15 +1141,16 @@ describe("import/export", () => {
     const tree = service.getTree(importedWorkspace.rootNodeId);
 
     expect(exported).not.toContain("- \n");
-    expect(result.imported).toBe(3);
-    expect(tree.children.map(node => node.title)).toEqual(["Alpha", "Promoted"]);
+    expect(result.imported).toBe(4);
+    expect(tree.children.map(node => node.title)).toEqual(["Alpha", ""]);
+    expect(tree.children[1].children[0].title).toBe("Promoted");
     expect(tree.children[0].done).toBe(true);
     expect(tree.children[0].body).toBe("First line\nSecond line");
     expect(tree.children[0].tags[0].name).toBe("project");
     expect(tree.children[0].children[0].title).toBe("Beta");
   });
 
-  it("exports all workspaces as Markdown and imports by replacing all workspaces", () => {
+  it("exports all workspaces as Markdown and imports into new workspaces", () => {
     const first = service.createWorkspace("First Workspace");
     const firstNode = service.createNode({ parentId: first.rootNodeId, title: "Alpha", done: true });
     service.setNodeTag(firstNode.id, "project");
@@ -1161,13 +1162,13 @@ describe("import/export", () => {
     service.createWorkspace("Stale Workspace");
     const result = importMarkdown(service, { content: exported });
     const workspaces = service.listWorkspaces();
-    const importedFirst = service.getTree(workspaces[0].rootNodeId);
+    const importedFirst = service.getTree(service.getWorkspace(result.workspaceIds![0]).rootNodeId);
 
     expect(exported).toContain("# First Workspace");
     expect(exported).toContain("# Second Workspace");
     expect(result.imported).toBe(3);
     expect(result.workspaces).toBe(2);
-    expect(workspaces.map(workspace => workspace.name)).toEqual(["First Workspace", "Second Workspace"]);
+    expect(workspaces.map(workspace => workspace.name)).toEqual(["First Workspace", "Second Workspace", "Stale Workspace", "First Workspace", "Second Workspace"]);
     expect(importedFirst.children[0].title).toBe("Alpha");
     expect(importedFirst.children[0].done).toBe(true);
     expect(importedFirst.children[0].tags[0].name).toBe("project");
@@ -1191,7 +1192,7 @@ describe("import/export", () => {
     expect(exported).toContain('text="Beta"');
   });
 
-  it("exports OPML without empty outline nodes and preserves notes", () => {
+  it("exports OPML preserving empty outline nodes, hierarchy, and notes", () => {
     const workspace = service.createWorkspace("OPML Export");
     const emptyWrapper = service.createNode({ parentId: workspace.rootNodeId, title: "" });
     service.createNode({
@@ -1209,13 +1210,14 @@ describe("import/export", () => {
     expect(exported).not.toContain('text=""');
     expect(exported).toContain('text="Nested"');
     expect(exported).toContain('_note="Details"');
-    expect(result.imported).toBe(1);
-    expect(imported.children[0].title).toBe("Nested");
-    expect(imported.children[0].done).toBe(true);
-    expect(imported.children[0].body).toBe("Details");
+    expect(result.imported).toBe(3);
+    expect(imported.children.map(node => node.title)).toEqual(["", ""]);
+    expect(imported.children[0].children[0].title).toBe("Nested");
+    expect(imported.children[0].children[0].done).toBe(true);
+    expect(imported.children[0].children[0].body).toBe("Details");
   });
 
-  it("exports all workspaces as OPML and imports by replacing all workspaces", () => {
+  it("exports all workspaces as OPML and imports into new workspaces", () => {
     const first = service.createWorkspace("OPML One", "rocket");
     const firstNode = service.createNode({ parentId: first.rootNodeId, title: "Alpha", body: "Details" });
     service.setNodeTag(firstNode.id, "area");
@@ -1226,13 +1228,13 @@ describe("import/export", () => {
     service.createWorkspace("Stale OPML");
     const result = importOpml(service, { content: exported });
     const workspaces = service.listWorkspaces();
-    const importedFirst = service.getTree(workspaces[0].rootNodeId);
+    const importedFirst = service.getTree(service.getWorkspace(result.workspaceIds![0]).rootNodeId);
 
     expect(exported).toContain('openoutlinerWorkspace="true"');
     expect(result.imported).toBe(2);
     expect(result.workspaces).toBe(2);
-    expect(workspaces.map(workspace => workspace.name)).toEqual(["OPML One", "OPML Two"]);
-    expect(workspaces.map(workspace => workspace.icon)).toEqual(["rocket", "sun"]);
+    expect(workspaces.map(workspace => workspace.name)).toEqual(["OPML One", "OPML Two", "Stale OPML", "OPML One", "OPML Two"]);
+    expect(result.workspaceIds!.map(id => service.getWorkspace(id).icon)).toEqual(["rocket", "sun"]);
     expect(importedFirst.children[0].title).toBe("Alpha");
     expect(importedFirst.children[0].body).toBe("Details");
     expect(importedFirst.children[0].tags[0].name).toBe("area");

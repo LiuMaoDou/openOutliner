@@ -69,11 +69,13 @@ import {
 } from "./api";
 import { useTheme, type Theme } from "./theme";
 import { resolveTagColor } from "../backend/shared/tagColors";
+import { beginNodeEdit, endNodeEdit, flushNodeDraft, readNodeDraft, stageNodeDraft } from "./offline";
 import {
   type FlatTreeState,
   type FlatNodeData,
   fromNestedTree,
   computeVisibleIds,
+  searchNodeIds,
   updateNode,
   insertNode,
   removeNode,
@@ -326,6 +328,7 @@ export function App() {
   const [error, setError] = useState("");
   const [tagName, setTagName] = useState("");
   const [isTagSuggestionOpen, setIsTagSuggestionOpen] = useState(false);
+  const [activeTagSuggestion, setActiveTagSuggestion] = useState(-1);
   const [tags, setTags] = useState<Tag[]>([]);
   const tagSuggestionRef = useRef<HTMLDivElement | null>(null);
   const tagSuggestionListRef = useRef<HTMLDivElement | null>(null);
@@ -389,6 +392,9 @@ export function App() {
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const virtualListRef = useRef<HTMLDivElement | null>(null);
+  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia("(max-width: 760px)").matches);
+  const [listScrollMargin, setListScrollMargin] = useState(0);
   const contentGridRef = useRef<HTMLElement | null>(null);
   const panelResizeCleanupRef = useRef<(() => void) | null>(null);
   const flatStateRef = useRef<FlatTreeState | null>(null);
@@ -434,6 +440,13 @@ export function App() {
   }, [inspectorWidth]);
 
   useEffect(() => () => panelResizeCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 760px)");
+    const update = () => setCompactLayout(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
   const panelWidthBounds = (panel: ResizablePanel) => {
     if (panel === "sidebar") {
@@ -578,6 +591,25 @@ export function App() {
     setOutlineHistory(next);
     if (next.undoLabel !== "Delete outline") setPendingDelete(null);
   }, []);
+
+  useEffect(() => {
+    const saved = (event: Event) => {
+      const { nodeId, field, value } = (event as CustomEvent<{ nodeId: string; field: "title" | "body"; value: string }>).detail;
+      if (value === undefined) return;
+      const current = flatStateRef.current;
+      if (!current || !hasNode(current, nodeId)) return;
+      const next = updateNode(current, nodeId, { [field]: readNodeDraft(nodeId, field) ?? value });
+      flatStateRef.current = next;
+      setFlatState(next);
+      void loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
+    };
+    window.addEventListener("outliner-draft-saved", saved);
+    window.addEventListener("outliner-draft-resolved", saved);
+    return () => {
+      window.removeEventListener("outliner-draft-saved", saved);
+      window.removeEventListener("outliner-draft-resolved", saved);
+    };
+  }, [loadOutlineHistory]);
 
   const loadTags = useCallback(async (id: string) => {
     const requestId = ++tagsRequestRef.current;
@@ -768,10 +800,9 @@ export function App() {
   }, [moveWorkspaceCandidate?.sourceWorkspaceId, workspaceFolders, workspaceId, workspaces]);
   const isSearching = search.trim().length > 0;
   const isTagFiltering = activeTagFilter.length > 0;
-  const filteredNodes = isSearching && flatState
-    ? visibleIds.map(id => getNode(flatState, id)).filter((n): n is FlatNodeData => !!n && `${n.title}\n${n.body}`.toLowerCase().includes(search.toLowerCase())).map(n => n.id)
-    : visibleIds;
-  const visibleNodes = flatState ? filteredNodes.map(id => typeof id === 'string' ? { id, node: getNode(flatState, id) } : id).filter((item): item is { id: string; node: FlatNodeData } => !!item.node) : [];
+  const filteredNodes = useMemo(() => isSearching && flatState
+    ? searchNodeIds(flatState, search)
+    : visibleIds, [isSearching, flatState, search, visibleIds]);
   const filteredTagResults = isSearching
     ? tagResults.filter(result =>
         `${result.node.title}\n${result.node.body}\n${result.workspace.name}`.toLowerCase().includes(search.toLowerCase())
@@ -794,9 +825,11 @@ export function App() {
       : filteredNodes.findIndex(id => id === selectedId)
     : -1;
   selectedIndexRef.current = selectedIndex;
+  const getOutlineScrollElement = () => compactLayout ? contentGridRef.current : outlineSurfaceRef.current;
   const rowVirtualizer = useVirtualizer({
     count: visibleItemCount,
-    getScrollElement: () => outlineSurfaceRef.current,
+    getScrollElement: getOutlineScrollElement,
+    scrollMargin: listScrollMargin,
     getItemKey: index =>
       isSystemTagsWorkspace
         ? systemTagRowKey(systemTagRows[index], index)
@@ -809,6 +842,19 @@ export function App() {
     useAnimationFrameWithResizeObserver: true
   });
   const virtualItems = rowVirtualizer.getVirtualItems();
+
+  useLayoutEffect(() => {
+    const surface = getOutlineScrollElement();
+    const list = virtualListRef.current;
+    if (!surface || !list) return;
+    const measure = () => setListScrollMargin(list.getBoundingClientRect().top - surface.getBoundingClientRect().top + surface.scrollTop);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(surface);
+    const header = outlineSurfaceRef.current?.querySelector(".outlineHeader");
+    if (header) observer.observe(header);
+    return () => observer.disconnect();
+  }, [compactLayout, workspaceId, visibleItemCount > 0]);
 
   useEffect(() => {
     rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, delta, instance) => {
@@ -986,7 +1032,7 @@ export function App() {
   };
 
   const preserveOutlineScroll = () => {
-    const element = outlineSurfaceRef.current;
+    const element = getOutlineScrollElement();
     const scrollTop = element?.scrollTop;
     if (!element || scrollTop === undefined) return () => {};
 
@@ -1058,7 +1104,7 @@ export function App() {
       childIds: []
     };
 
-    if (current && currentTitle !== undefined) patchNode(current.id, { title: currentTitle }).catch(toError(setError));
+    const currentTitleSave = current && !current.id.startsWith("temp-") ? flushNodeDraft(current.id, "title") : Promise.resolve();
     const newState = insertNode(preppedState, parentId, tempNode, position);
     setFlatState(newState);
     setVisibleIds(computeVisibleIds(newState));
@@ -1069,7 +1115,7 @@ export function App() {
     pendingNodeCreateCountRef.current += 1;
 
     try {
-      const createRequest = nodeCreateQueueRef.current.then(() =>
+      const createRequest = nodeCreateQueueRef.current.then(() => currentTitleSave).then(() =>
         apiPost<OutlineTreeNode>("/api/nodes", {
           parentId,
           title,
@@ -1510,7 +1556,7 @@ export function App() {
       const next = current.additive ? new Set([...current.baseSelection, ...range]) : new Set(range);
       setNodeSelection(next, targetId, current.anchorId);
 
-      const surface = outlineSurfaceRef.current;
+      const surface = getOutlineScrollElement();
       if (!surface) return;
       const bounds = surface.getBoundingClientRect();
       if (pointerEvent.clientY < bounds.top + 28) surface.scrollTop -= 18;
@@ -2094,8 +2140,9 @@ export function App() {
   };
 
   const importFile = async (file: File) => {
+    setError("");
     const content = await file.text();
-    const format = file.name.toLowerCase().endsWith(".opml") ? "opml" : "markdown";
+    const format = /\.(opml|xml)$/i.test(file.name) || /^\s*(?:<\?xml[^>]*>\s*)?<opml\b/i.test(content) ? "opml" : "markdown";
     const result = await apiPost<{ workspaceId?: string; workspaceIds?: string[] }>(`/api/import/${format}`, { content });
     const nextWorkspaces = await loadWorkspaces();
     const nextId =
@@ -2674,6 +2721,7 @@ export function App() {
               {visibleItemCount > 0 ? (
                 <div
                   className="virtualOutlineList"
+                  ref={virtualListRef}
                   style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
                 >
                   {virtualItems.map(virtualItem => {
@@ -2686,7 +2734,7 @@ export function App() {
                           data-index={virtualItem.index}
                           key={systemTagRowKey(row, virtualItem.index)}
                           ref={element => registerVirtualRow(systemTagRowKey(row, virtualItem.index), element)}
-                          style={{ transform: `translateY(${virtualItem.start}px)` }}
+                          style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
                         >
                           {row.kind === "tag" ? (
                             <SystemTagGroupRow
@@ -2715,7 +2763,7 @@ export function App() {
                           data-index={virtualItem.index}
                           key={result.node.id}
                           ref={element => registerVirtualRow(result.node.id, element)}
-                          style={{ transform: `translateY(${virtualItem.start}px)` }}
+                          style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
                         >
                           <TagResultRow
                             result={result}
@@ -2743,7 +2791,7 @@ export function App() {
                         data-index={virtualItem.index}
                         key={node.id}
                         ref={element => registerVirtualRow(node.id, element)}
-                        style={{ transform: `translateY(${virtualItem.start}px)` }}
+                        style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
                       >
                         <NodeRow
                           node={node}
@@ -2873,22 +2921,13 @@ export function App() {
                     <CircleCheck className="notesAlertIcon" size={18} strokeWidth={2.2} />
                     <div className="notesAlertContent">
                       <div className="notesAlertTitle">Notes</div>
-                      <textarea
-                        className="nodeNotes"
-                        value={selectedNode.body}
-                        onChange={event =>
-                          setFlatState(s => {
-                            if (!s) return s;
-                            const next = updateNode(s, selectedNode.id, { body: event.target.value });
-                            flatStateRef.current = next;
-                            return next;
-                          })
-                        }
-                        onBlur={event =>
-                          patchNode(selectedNode.id, { body: event.target.value }).catch(toError(setError))
-                        }
-                        placeholder="Add node details"
-                      />
+                      <NodeNotes key={selectedNode.id} node={selectedNode} onError={toError(setError)} onTemporaryChange={body => {
+                        const current = flatStateRef.current;
+                        if (!current) return;
+                        const next = updateNode(current, selectedNode.id, { body });
+                        flatStateRef.current = next;
+                        setFlatState(next);
+                      }} />
                     </div>
                   </div>
                   <div className="inspectorSection">
@@ -2904,29 +2943,51 @@ export function App() {
                           autoCapitalize="off"
                           spellCheck={false}
                           value={tagName}
-                          onFocus={() => setIsTagSuggestionOpen(tagSuggestions.length > 0)}
+                          role="combobox"
+                          aria-label="Tag"
+                          aria-autocomplete="list"
+                          aria-expanded={isTagSuggestionOpen && tagSuggestions.length > 0}
+                          aria-controls={isTagSuggestionOpen && tagSuggestions.length > 0 ? "tag-suggestions" : undefined}
+                          aria-activedescendant={isTagSuggestionOpen && tagSuggestions[activeTagSuggestion] ? `tag-option-${tagSuggestions[activeTagSuggestion].id}` : undefined}
+                          onFocus={() => {
+                            setActiveTagSuggestion(-1);
+                            setIsTagSuggestionOpen(tagSuggestions.length > 0);
+                          }}
                           onChange={event => {
                             setTagName(event.target.value);
+                            setActiveTagSuggestion(-1);
                             setIsTagSuggestionOpen(true);
                           }}
                           onKeyDown={event => {
                             if (shouldIgnoreTextInputKeyDown(event)) return;
+                            if ((event.key === "ArrowDown" || event.key === "ArrowUp") && tagSuggestions.length) {
+                              event.preventDefault();
+                              setIsTagSuggestionOpen(true);
+                              const next = event.key === "ArrowDown"
+                                ? (activeTagSuggestion + 1) % tagSuggestions.length
+                                : (activeTagSuggestion <= 0 ? tagSuggestions.length : activeTagSuggestion) - 1;
+                              setActiveTagSuggestion(next);
+                              document.getElementById(`tag-option-${tagSuggestions[next].id}`)?.scrollIntoView({ block: "nearest" });
+                            }
                             if (event.key === "Enter") {
+                              event.preventDefault();
                               setIsTagSuggestionOpen(false);
-                              addTag().catch(toError(setError));
+                              addTag(isTagSuggestionOpen ? tagSuggestions[activeTagSuggestion]?.name : undefined).catch(toError(setError));
                             }
                             if (event.key === "Escape") setIsTagSuggestionOpen(false);
                           }}
                           placeholder="Tag"
                         />
                         {isTagSuggestionOpen && tagSuggestions.length > 0 && createPortal(
-                          <div className="tagSuggestionList" ref={tagSuggestionListRef} style={tagSuggestionPosition} role="listbox" aria-label="标签建议">
-                            {tagSuggestions.map(tag => (
+                          <div id="tag-suggestions" className="tagSuggestionList" ref={tagSuggestionListRef} style={tagSuggestionPosition} role="listbox" aria-label="标签建议">
+                            {tagSuggestions.map((tag, index) => (
                               <button
                                 key={tag.id}
+                                id={`tag-option-${tag.id}`}
                                 type="button"
                                 className="tagSuggestionItem"
                                 role="option"
+                                aria-selected={index === activeTagSuggestion}
                                 onMouseDown={event => event.preventDefault()}
                                 onClick={() => {
                                   void addTag(tag.name).catch(toError(setError));
@@ -3026,6 +3087,35 @@ export function App() {
   );
 }
 
+function NodeNotes({ node, onError, onTemporaryChange }: { node: FlatNodeData; onError: (error: unknown) => void; onTemporaryChange: (body: string) => void }) {
+  const [value, setValue] = useState(() => readNodeDraft(node.id, "body") ?? node.body);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const resolved = (event: Event) => {
+      const detail = (event as CustomEvent<{ nodeId: string; field: string; value?: string }>).detail;
+      if (detail.nodeId === node.id && detail.field === "body" && detail.value !== undefined) setValue(detail.value);
+    };
+    window.addEventListener("outliner-draft-resolved", resolved);
+    return () => window.removeEventListener("outliner-draft-resolved", resolved);
+  }, [node.id]);
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) setValue(readNodeDraft(node.id, "body") ?? node.body);
+  }, [node.id, node.body]);
+  return <textarea
+    ref={inputRef}
+    className="nodeNotes"
+    value={value}
+    onFocus={() => { if (!node.id.startsWith("temp-")) beginNodeEdit(node.id, "body", node.body); }}
+    onChange={event => {
+      setValue(event.target.value);
+      if (node.id.startsWith("temp-")) onTemporaryChange(event.target.value);
+      else stageNodeDraft(node.id, "body", event.target.value, node.body);
+    }}
+    onBlur={() => { if (!node.id.startsWith("temp-")) void endNodeEdit(node.id, "body").catch(onError); }}
+    placeholder="Add node details"
+  />;
+}
+
 function NodeRow({
   node,
   depth,
@@ -3096,10 +3186,22 @@ function NodeRow({
   const nodeContextMenuRef = useRef<HTMLDivElement | null>(null);
   const onCompositionChangeRef = useRef(onCompositionChange);
   onCompositionChangeRef.current = onCompositionChange;
-  const [localTitle, setLocalTitle] = useState(node.title);
+  const [localTitle, setLocalTitle] = useState(() => readNodeDraft(node.id, "title") ?? node.title);
+  const lastStagedTitleRef = useRef(localTitle);
   const [markdownMenu, setMarkdownMenu] = useState<MarkdownContextMenuState | null>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const resolved = (event: Event) => {
+      const detail = (event as CustomEvent<{ nodeId: string; field: string; value?: string }>).detail;
+      if (detail.nodeId !== node.id || detail.field !== "title" || detail.value === undefined) return;
+      if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
+      lastStagedTitleRef.current = detail.value;
+      setLocalTitle(detail.value);
+    };
+    window.addEventListener("outliner-draft-resolved", resolved);
+    return () => window.removeEventListener("outliner-draft-resolved", resolved);
+  }, [node.id]);
   const textSelectionPointerRef = useRef<{
     pointerId: number;
     startX: number;
@@ -3109,8 +3211,18 @@ function NodeRow({
 
   // Sync external title changes (drag, undo, etc.) into local state
   useEffect(() => {
-    if (node.title !== localTitle) setLocalTitle(node.title);
+    if (document.activeElement === titleInputRef.current) return;
+    const next = readNodeDraft(node.id, "title") ?? node.title;
+    lastStagedTitleRef.current = next;
+    setLocalTitle(next);
   }, [node.title]);
+
+  const stageTitle = useCallback((title: string) => {
+    onCacheTitle(title);
+    if (title === lastStagedTitleRef.current) return;
+    lastStagedTitleRef.current = title;
+    if (!node.id.startsWith("temp-")) stageNodeDraft(node.id, "title", title, node.title);
+  }, [node.id, node.title, onCacheTitle]);
 
   // Flush local title to global state
   const flushTitle = useCallback((title: string) => {
@@ -3118,20 +3230,19 @@ function NodeRow({
       clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
     }
-    onCacheTitle(title);
+    stageTitle(title);
     onPatchLocal({ title });
-  }, [onCacheTitle, onPatchLocal]);
+  }, [stageTitle, onPatchLocal]);
 
   // Debounced sync during typing
   const syncTitleDebounced = useCallback((title: string) => {
-    onCacheTitle(title);
+    stageTitle(title);
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
       onPatchLocal({ title });
-      onCommit({ title });
       syncTimerRef.current = null;
     }, 300);
-  }, [onCacheTitle, onCommit, onPatchLocal]);
+  }, [stageTitle, onPatchLocal]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -3186,7 +3297,7 @@ function NodeRow({
   ) => {
     setLocalTitle(nextTitle);
     flushTitle(nextTitle);
-    onCommit({ title: nextTitle });
+    if (!node.id.startsWith("temp-")) void flushNodeDraft(node.id, "title").catch(() => {});
     setMarkdownMenu(null);
     if (!restoreFocus) return;
     window.setTimeout(() => {
@@ -3386,6 +3497,7 @@ function NodeRow({
           placeholder="Untitled"
           rows={1}
           onFocus={() => {
+            if (!node.id.startsWith("temp-")) beginNodeEdit(node.id, "title", node.title);
             onFocusSelect();
           }}
           onClick={event => {
@@ -3431,8 +3543,10 @@ function NodeRow({
           }}
           onBlur={event => {
             onCompositionChange(false);
-            flushTitle(event.target.value);
-            onCommit({ title: event.target.value });
+            if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
+            // A stale editor that was only focused must never write its old value.
+            if (node.id.startsWith("temp-")) flushTitle(event.target.value);
+            else void endNodeEdit(node.id, "title").catch(() => {});
             onBlurFocus();
           }}
           onPointerDown={event => {
@@ -3488,7 +3602,12 @@ function NodeRow({
           }}
           onKeyDown={event => {
             if (shouldIgnoreTextInputKeyDown(event)) return;
-            if (handleMarkdownShortcut(event, localTitle, onPatchLocal)) return;
+            if (handleMarkdownShortcut(event, localTitle, patch => {
+              if (patch.title !== undefined) {
+                setLocalTitle(patch.title);
+                flushTitle(patch.title);
+              }
+            })) return;
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               const input = event.currentTarget;
@@ -3508,11 +3627,15 @@ function NodeRow({
               if (event.shiftKey) onOutdent();
               else onIndent();
             } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              onFocusPrevious();
+              if (!event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && isTitleCaretAtEdge(event.currentTarget, titleMeasureRef.current, "start")) {
+                event.preventDefault();
+                onFocusPrevious();
+              }
             } else if (event.key === "ArrowDown") {
-              event.preventDefault();
-              onFocusNext();
+              if (!event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && isTitleCaretAtEdge(event.currentTarget, titleMeasureRef.current, "end")) {
+                event.preventDefault();
+                onFocusNext();
+              }
             } else if (event.key === "Backspace" && !localTitle) {
               event.preventDefault();
               onDelete();
@@ -3772,7 +3895,7 @@ function NodeRow({
             role="menuitem"
             onClick={() => {
               flushTitle(localTitle);
-              onCommit({ title: localTitle });
+              if (!node.id.startsWith("temp-")) void flushNodeDraft(node.id, "title").catch(() => {});
               setNodeContextMenu(null);
               onMoveToWorkspace(localTitle);
             }}
@@ -3785,7 +3908,7 @@ function NodeRow({
             role="menuitem"
             onClick={() => {
               flushTitle(localTitle);
-              onCommit({ title: localTitle });
+              if (!node.id.startsWith("temp-")) void flushNodeDraft(node.id, "title").catch(() => {});
               setNodeContextMenu(null);
               onConvertToWorkspace(localTitle);
             }}
@@ -4621,6 +4744,27 @@ export function shouldIgnoreTextInputKeyDown(event: {
   nativeEvent?: { isComposing?: boolean; keyCode?: number };
 }) {
   return Boolean(event.isComposing || event.nativeEvent?.isComposing || event.nativeEvent?.keyCode === 229);
+}
+
+function isTitleCaretAtEdge(input: HTMLTextAreaElement, measure: HTMLElement | null, edge: "start" | "end"): boolean {
+  if (input.selectionStart !== input.selectionEnd) return false;
+  const cursor = input.selectionStart;
+  if (!measure) return edge === "start" ? cursor === 0 : cursor === input.value.length;
+  // Measure the actual visual line, including soft wrapping and trailing newlines.
+  const mirror = measure.cloneNode(false) as HTMLElement;
+  const first = document.createElement("span");
+  const caret = document.createElement("span");
+  const last = document.createElement("span");
+  for (const marker of [first, caret, last]) marker.textContent = "\u200b";
+  mirror.append(first, input.value.slice(0, cursor), caret, input.value.slice(cursor), last);
+  measure.parentElement?.append(mirror);
+  try {
+    const caretTop = caret.getBoundingClientRect().top;
+    const edgeTop = (edge === "start" ? first : last).getBoundingClientRect().top;
+    return Math.abs(caretTop - edgeTop) < 1;
+  } finally {
+    mirror.remove();
+  }
 }
 
 function getPreviewSelectionStart(container: HTMLElement, clientX: number, clientY: number, title: string) {

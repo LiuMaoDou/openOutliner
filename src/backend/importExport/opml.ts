@@ -1,6 +1,7 @@
-import { XMLBuilder, XMLParser } from "fast-xml-parser";
+import { XMLBuilder, XMLParser, XMLValidator } from "fast-xml-parser";
 import type { OutlineTreeNode, Workspace } from "../domain/types.js";
 import { type OutlinerService, ValidationError } from "../services/outliner.js";
+import { nodeExportMetadata, parseNodeExportMetadata } from "./metadata.js";
 
 interface OpmlOutline {
   "@_text"?: string;
@@ -13,6 +14,9 @@ interface OpmlOutline {
   "@__description"?: string;
   "@_openoutlinerWorkspace"?: string;
   "@_openoutlinerIcon"?: string;
+  "@_openoutlinerMetadata"?: string;
+  "@_dueDate"?: string;
+  "@_collapsed"?: string;
   outline?: OpmlOutline | OpmlOutline[];
 }
 
@@ -64,18 +68,27 @@ export function importOpml(
   service: OutlinerService,
   input: { workspaceId?: string; parentId?: string; content: string }
 ): OpmlImportResult {
-  const parser = new XMLParser({ ignoreAttributes: false });
-  const parsed = parser.parse(input.content) as ParsedOpml;
-  if (!input.workspaceId && !input.parentId) {
-    return importAllOpml(service, parsed);
+  if (!input.content.trim() || /<!DOCTYPE\b/i.test(input.content) || XMLValidator.validate(input.content) !== true) {
+    throw new ValidationError("Choose a valid, non-empty OPML file.");
   }
+  const parser = new XMLParser({ ignoreAttributes: false, trimValues: false, parseTagValue: false });
+  const parsed = parser.parse(input.content) as ParsedOpml;
+  if (!parsed.opml || !parsed.opml.body || asArray(parsed.opml.body.outline).length === 0) {
+    throw new ValidationError("No outline nodes found in OPML.");
+  }
+  return service.importTransaction(() => {
+    if (!input.workspaceId && !input.parentId) {
+      return importAllOpml(service, parsed);
+    }
 
-  const workspace = targetWorkspace(service, input, parsed);
-  const parentId = input.parentId ?? workspace.rootNodeId;
-  const outlines = asArray(parsed.opml?.body?.outline);
-  const imported = importOutlines(service, outlines, parentId);
+    const workspace = targetWorkspace(service, input, parsed);
+    const parentId = input.parentId ?? workspace.rootNodeId;
+    const outlines = asArray(parsed.opml?.body?.outline);
+    const imported = service.importOutlineBatch(workspace.id, () => importOutlines(service, outlines, parentId));
+    if (imported === 0) throw new ValidationError("No outline nodes found in OPML.");
 
-  return { imported, workspaceId: workspace.id };
+    return { imported, workspaceId: workspace.id };
+  });
 }
 
 function importAllOpml(service: OutlinerService, parsed: ParsedOpml): OpmlImportResult {
@@ -83,13 +96,14 @@ function importAllOpml(service: OutlinerService, parsed: ParsedOpml): OpmlImport
   const workspaceIds: string[] = [];
   let imported = 0;
 
-  service.replaceAllWorkspaces(() => {
-    for (const parsedWorkspace of parsedWorkspaces) {
-      const workspace = service.createWorkspace(parsedWorkspace.name, parsedWorkspace.icon);
-      workspaceIds.push(workspace.id);
-      imported += importOutlines(service, parsedWorkspace.outlines, workspace.rootNodeId);
-    }
-  });
+  for (const parsedWorkspace of parsedWorkspaces) {
+    const workspace = service.createWorkspace(parsedWorkspace.name, parsedWorkspace.icon);
+    workspaceIds.push(workspace.id);
+    imported += service.importOutlineBatch(workspace.id, () => importOutlines(service, parsedWorkspace.outlines, workspace.rootNodeId));
+  }
+  if (imported === 0 && !asArray(parsed.opml?.body?.outline).some(isWorkspaceOutline)) {
+    throw new ValidationError("No outline nodes found in OPML.");
+  }
 
   return {
     imported,
@@ -117,14 +131,16 @@ function workspaceToOpml(service: OutlinerService, workspace: Workspace): OpmlOu
 function nodeToOpml(node: OutlineTreeNode): OpmlOutline[] {
   const title = node.title.trim();
   const children = nodesToOpml(node.children);
-  if (!title) return children;
 
   const outline: OpmlOutline = {
-    "@_text": title,
-    "@_done": node.done ? "true" : "false"
+    "@_text": title || "(Untitled)",
+    "@_done": node.done ? "true" : "false",
+    "@_openoutlinerMetadata": JSON.stringify(nodeExportMetadata(node))
   };
   if (node.tags.length > 0) outline["@_tags"] = node.tags.map(tag => tag.name).join(" ");
-  if (node.body.trim()) outline["@__note"] = node.body.trim();
+  if (node.body) outline["@__note"] = node.body;
+  if (node.dueDate) outline["@_dueDate"] = node.dueDate;
+  if (node.collapsed) outline["@_collapsed"] = "true";
   if (children.length > 0) outline.outline = children;
   return [outline];
 }
@@ -133,8 +149,20 @@ function importOutlines(service: OutlinerService, outlines: OpmlOutline[], paren
   let imported = 0;
 
   const importOutline = (outline: OpmlOutline, targetParentId: string): void => {
-    const title = outlineTitle(outline);
-    if (!title) {
+    if (!outline || typeof outline !== "object") throw new ValidationError("Invalid OPML outline.");
+    const metadata = outline["@_openoutlinerMetadata"] === undefined ? undefined : parseNodeExportMetadata(outline["@_openoutlinerMetadata"]);
+    if (metadata && (
+      normalizeXmlLineEndings(outline["@_text"] ?? "") !== normalizeXmlLineEndings(metadata.title.trim() || "(Untitled)") ||
+      normalizeXmlLineEndings(outlineBody(outline)) !== normalizeXmlLineEndings(metadata.body) ||
+      (String(outline["@_done"]).toLowerCase() === "true") !== metadata.done ||
+      normalizeXmlLineEndings(String(outline["@_tags"] ?? "")) !== normalizeXmlLineEndings(metadata.tags.join(" ")) ||
+      (outline["@_dueDate"] ?? null) !== metadata.dueDate ||
+      (String(outline["@_collapsed"]).toLowerCase() === "true") !== metadata.collapsed
+    )) {
+      throw new ValidationError("The OPML outline fields differ from their export metadata. Remove the openoutlinerMetadata attribute to import external edits as standard OPML.");
+    }
+    const title = metadata?.title ?? outlineTitle(outline);
+    if (!title && !metadata) {
       for (const child of asArray(outline.outline)) {
         importOutline(child, targetParentId);
       }
@@ -144,11 +172,15 @@ function importOutlines(service: OutlinerService, outlines: OpmlOutline[], paren
     const node = service.createNode({
       parentId: targetParentId,
       title,
-      body: outlineBody(outline),
-      done: String(outline["@_done"]).toLowerCase() === "true"
+      body: metadata?.body ?? outlineBody(outline),
+      done: metadata?.done ?? String(outline["@_done"]).toLowerCase() === "true"
+    });
+    service.updateNode(node.id, {
+      dueDate: metadata?.dueDate ?? outline["@_dueDate"] ?? null,
+      collapsed: metadata?.collapsed ?? String(outline["@_collapsed"]).toLowerCase() === "true"
     });
     imported += 1;
-    for (const tag of outlineTags(outline)) {
+    for (const tag of metadata?.tags ?? outlineTags(outline)) {
       service.setNodeTag(node.id, tag);
     }
     for (const child of asArray(outline.outline)) {
@@ -167,11 +199,14 @@ function parseOpmlWorkspaces(parsed: ParsedOpml): ParsedWorkspace[] {
   const outlines = asArray(parsed.opml?.body?.outline);
   const workspaceOutlines = outlines.filter(isWorkspaceOutline);
   if (workspaceOutlines.length > 0) {
-    return workspaceOutlines.map(outline => ({
+    const workspaces = workspaceOutlines.map(outline => ({
       name: outlineTitle(outline) || "Imported OPML",
       icon: outline["@_openoutlinerIcon"]?.trim() || undefined,
       outlines: asArray(outline.outline)
     }));
+    const remaining = outlines.filter(outline => !isWorkspaceOutline(outline));
+    if (remaining.length > 0) workspaces.push({ name: opmlTitle(parsed), icon: undefined, outlines: remaining });
+    return workspaces;
   }
 
   if (outlines.length === 0) return [];
@@ -219,7 +254,7 @@ function outlineBody(outline: OpmlOutline): string {
     outline["@__description"] ??
     outline["@_description"] ??
     ""
-  ).trim();
+  );
 }
 
 function outlineTags(outline: OpmlOutline): string[] {
@@ -227,4 +262,10 @@ function outlineTags(outline: OpmlOutline): string[] {
     .split(/\s+/)
     .map(tag => tag.trim().replace(/^#/, ""))
     .filter(Boolean);
+}
+
+function normalizeXmlLineEndings(value: string): string {
+  // XML normalizes CR and CRLF before parsing. Compare that representation while
+  // retaining the exact original line endings in the versioned metadata.
+  return value.replace(/\r\n?/g, "\n");
 }

@@ -1,10 +1,11 @@
 import { appRecoveryHtml, webBuildInfo } from "./appRecovery.js";
+import { staticFile } from "./staticFiles.js";
 import { dispatch } from "../shared/dispatch.js";
 import { SyncService } from "../services/sync.js";
 import { SyncConflict } from "../shared/sync.js";
 import { authorized, login } from "./auth.js";
 import { createReadStream, existsSync, statSync } from "node:fs";
-import { extname, join, resolve, sep } from "node:path";
+import { extname, resolve, sep } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { openDatabase } from "../db/database.js";
 import { NotFoundError, OutlinerService, ValidationError } from "../services/outliner.js";
@@ -120,16 +121,18 @@ function setBaseHeaders(res: ServerResponse): void {
 function serveStatic(req: IncomingMessage, res: ServerResponse): void {
   const distDir = resolve(process.cwd(), "dist", "web");
   const requested = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
-  const target = requested === "/" ? join(distDir, "index.html") : join(distDir, requested);
-  const safeTarget = target.startsWith(distDir) && existsSync(target) ? target : join(distDir, "index.html");
+  const asset = staticFile(distDir, requested);
 
-  if (!existsSync(safeTarget) || !statSync(safeTarget).isFile()) {
-    sendJson(res, { error: "Web build not found. Run npm run build:web or npm run web:dev." }, 404);
+  if (!asset) {
+    sendJson(res, { error: "Web resource not found. Run npm run build:web if the app has not been built." }, 404);
     return;
   }
 
-  res.writeHead(200, { "content-type": contentType(safeTarget) });
-  createReadStream(safeTarget).pipe(res);
+  res.writeHead(200, {
+    "content-type": contentType(asset.path),
+    "cache-control": asset.immutable ? "public, max-age=31536000, immutable" : "no-store"
+  });
+  createReadStream(asset.path).pipe(res);
 }
 
 function servePersonAsset(req: IncomingMessage, res: ServerResponse): boolean {
@@ -174,6 +177,8 @@ function contentType(filePath: string): string {
       return "font/otf";
     case ".ttf":
       return "font/ttf";
+    case ".woff2":
+      return "font/woff2";
     default:
       return "application/octet-stream";
   }

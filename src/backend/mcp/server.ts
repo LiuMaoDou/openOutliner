@@ -151,7 +151,7 @@ registerTool(
 
 registerTool(
   "import_markdown",
-  "Import Markdown bullets/headings. If workspaceId and parentId are omitted, replace all workspaces.",
+  "Import Markdown bullets/headings. If workspaceId and parentId are omitted, create new workspaces and preserve existing data.",
   {
     workspaceId: z.string().optional(),
     parentId: z.string().optional(),
@@ -169,7 +169,7 @@ registerTool(
 
 registerTool(
   "import_opml",
-  "Import OPML. If workspaceId and parentId are omitted, replace all workspaces.",
+  "Import OPML. If workspaceId and parentId are omitted, create new workspaces and preserve existing data.",
   {
     workspaceId: z.string().optional(),
     parentId: z.string().optional(),

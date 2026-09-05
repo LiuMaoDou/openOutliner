@@ -104,6 +104,21 @@ export function computeVisibleIds(state: FlatTreeState): string[] {
   return ids;
 }
 
+/** Search the entire outline in document order, including collapsed branches. */
+export function searchNodeIds(state: FlatTreeState, query: string): string[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return computeVisibleIds(state);
+  const ids: string[] = [];
+  const visit = (id: string) => {
+    const node = state.nodes[id];
+    if (!node) return;
+    if (id !== state.rootId && `${node.title}\n${node.body}`.toLowerCase().includes(normalized)) ids.push(id);
+    node.childIds.forEach(visit);
+  };
+  visit(state.rootId);
+  return ids;
+}
+
 // ─── Mutations (all return new state, O(1) per operation) ────────
 
 function cloneState(state: FlatTreeState): FlatTreeState {

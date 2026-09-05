@@ -20,6 +20,35 @@ import type {
 
 type Row = Record<string, unknown>;
 
+function outlineHistoryDelta(before: OutlineNodeSnapshot[], after: OutlineNodeSnapshot[]): [OutlineHistoryDelta, OutlineHistoryDelta] {
+  const beforeById = new Map(before.map(node => [node.id, node]));
+  const afterById = new Map(after.map(node => [node.id, node]));
+  const beforeDelta: OutlineHistoryDelta = { version: 2, nodes: {} };
+  const afterDelta: OutlineHistoryDelta = { version: 2, nodes: {} };
+  for (const id of new Set([...beforeById.keys(), ...afterById.keys()])) {
+    const previous = beforeById.get(id);
+    const next = afterById.get(id);
+    if (!previous || !next) {
+      beforeDelta.nodes[id] = previous ?? null;
+      afterDelta.nodes[id] = next ?? null;
+      continue;
+    }
+    const keys = (Object.keys(next) as (keyof OutlineNodeSnapshot)[]).filter(key => previous[key] !== next[key]);
+    if (keys.length === 0) continue;
+    beforeDelta.nodes[id] = Object.fromEntries(keys.map(key => [key, previous[key]]));
+    afterDelta.nodes[id] = Object.fromEntries(keys.map(key => [key, next[key]]));
+  }
+  return [beforeDelta, afterDelta];
+}
+
+function mergeHistoryDeltas(first: OutlineHistoryDelta, second: OutlineHistoryDelta): OutlineHistoryDelta {
+  const nodes = { ...first.nodes };
+  for (const [id, fields] of Object.entries(second.nodes)) {
+    nodes[id] = fields === null ? null : { ...nodes[id], ...fields };
+  }
+  return { version: 2, nodes };
+}
+
 
 interface OutlineNodeSnapshot {
   id: string;
@@ -35,6 +64,11 @@ interface OutlineNodeSnapshot {
   updatedAt: string;
 }
 
+interface OutlineHistoryDelta {
+  version: 2;
+  nodes: Record<string, Partial<OutlineNodeSnapshot> | null>;
+}
+
 export interface OutlineHistoryState {
   canUndo: boolean;
   canRedo: boolean;
@@ -48,6 +82,7 @@ export interface OutlineHistoryResult {
 }
 
 const outlineHistoryLimit = 100;
+const outlineHistoryByteLimit = 8 * 1024 * 1024;
 const outlineHistoryCoalesceWindowMs = 1500;
 
 const workspaceIcons = [
@@ -93,6 +128,14 @@ export class OutlinerService {
   private outlineHistorySuppressionDepth = 0;
 
   constructor(private readonly db: SqlDatabase) {}
+
+  importTransaction<T>(fn: () => T): T {
+    return this.transaction(fn);
+  }
+
+  importOutlineBatch<T>(workspaceId: string, fn: () => T): T {
+    return this.recordOutlineMutation(workspaceId, "Import outline", null, () => this.withoutOutlineHistory(fn));
+  }
 
   ensureSeedData(): Workspace {
     const existing = this.listWorkspaces()[0];
@@ -806,7 +849,11 @@ export class OutlinerService {
     });
     const deletingIds = deletingNodes.map(node => node.id);
     const placeholders = deletingIds.map(() => "?").join(", ");
-    const now = timestamp();
+    // Deleted timestamps identify one deletion batch, including when two deletions
+    // happen within the same millisecond. Older deleted descendants stay deleted.
+    const latestDeletion = this.db.prepare("SELECT MAX(deleted_at) AS deleted_at FROM nodes").get() as Row;
+    const lastDeletedAt = Date.parse(text(latestDeletion.deleted_at));
+    const now = new Date(Math.max(Date.now(), Number.isFinite(lastDeletedAt) ? lastDeletedAt + 1 : 0)).toISOString();
     const rows = this.db
       .prepare(
         `WITH RECURSIVE subtree(id) AS (
@@ -858,9 +905,12 @@ export class OutlinerService {
       .prepare("SELECT * FROM nodes WHERE id = ? AND deleted_at IS NULL")
       .get(node.parentId) as Row | undefined;
     if (!parent) throw new ValidationError("Deleted node parent is not active.");
+    if (text(parent.workspace_id) !== node.workspaceId) {
+      throw new ValidationError("Deleted node parent has moved to another workspace.");
+    }
 
     const now = timestamp();
-    this.transaction(() => {
+    return this.recordOutlineMutation(node.workspaceId, "Restore outline", null, () => {
       this.db
         .prepare(
           `UPDATE nodes
@@ -873,16 +923,15 @@ export class OutlinerService {
         .prepare(
           `WITH RECURSIVE subtree(id) AS (
             SELECT id FROM nodes WHERE id = ?
-            UNION ALL
+            UNION
             SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
-            WHERE nodes.deleted_at IS NOT NULL
+            WHERE nodes.deleted_at = ? AND nodes.workspace_id = ?
           )
           UPDATE nodes SET deleted_at = NULL, updated_at = ? WHERE id IN (SELECT id FROM subtree)`
         )
-        .run(id, now);
+        .run(id, text(row.deleted_at), node.workspaceId, now);
+      return this.getTree(id);
     });
-
-    return this.getTree(id);
   }
 
   searchNodes(query: string, workspaceId?: string, limit = 25): OutlineNode[] {
@@ -1389,17 +1438,18 @@ export class OutlinerService {
     if (this.outlineHistorySuppressionDepth > 0) return mutation();
 
     return this.transaction(() => {
-      const beforeSnapshot = JSON.stringify(this.captureOutlineSnapshot(workspaceId));
+      const beforeNodes = this.captureOutlineSnapshot(workspaceId);
       const result = mutation();
-      const afterSnapshot = JSON.stringify(this.captureOutlineSnapshot(workspaceId));
-      if (beforeSnapshot === afterSnapshot) return result;
+      const afterNodes = this.captureOutlineSnapshot(workspaceId);
+      let [beforeDelta, afterDelta] = outlineHistoryDelta(beforeNodes, afterNodes);
+      if (Object.keys(afterDelta.nodes).length === 0) return result;
 
       const now = timestamp();
       this.db.prepare("DELETE FROM outline_history WHERE workspace_id = ? AND undone = 1").run(workspaceId);
       const previous = coalesceKey
         ? this.db
             .prepare(
-              `SELECT seq, updated_at FROM outline_history
+              `SELECT seq, updated_at, before_snapshot, after_snapshot FROM outline_history
                WHERE workspace_id = ? AND undone = 0 AND coalesce_key = ?
                ORDER BY seq DESC LIMIT 1`
             )
@@ -1408,13 +1458,18 @@ export class OutlinerService {
       const latest = this.db
         .prepare("SELECT seq FROM outline_history WHERE workspace_id = ? AND undone = 0 ORDER BY seq DESC LIMIT 1")
         .get(workspaceId) as Row | undefined;
-      const canCoalesce = previous && latest && number(previous.seq) === number(latest.seq) &&
+      const previousBefore = previous ? JSON.parse(text(previous.before_snapshot)) as OutlineNodeSnapshot[] | OutlineHistoryDelta : undefined;
+      const previousAfter = previous ? JSON.parse(text(previous.after_snapshot)) as OutlineNodeSnapshot[] | OutlineHistoryDelta : undefined;
+      const canCoalesce = previous && latest && previousBefore && !Array.isArray(previousBefore) &&
+        previousAfter && !Array.isArray(previousAfter) && number(previous.seq) === number(latest.seq) &&
         Date.now() - Date.parse(text(previous.updated_at)) <= outlineHistoryCoalesceWindowMs;
 
       if (canCoalesce) {
+        beforeDelta = mergeHistoryDeltas(beforeDelta, previousBefore);
+        afterDelta = mergeHistoryDeltas(previousAfter, afterDelta);
         this.db
-          .prepare("UPDATE outline_history SET label = ?, after_snapshot = ?, updated_at = ? WHERE seq = ?")
-          .run(label, afterSnapshot, now, number(previous.seq));
+          .prepare("UPDATE outline_history SET label = ?, before_snapshot = ?, after_snapshot = ?, updated_at = ? WHERE seq = ?")
+          .run(label, JSON.stringify(beforeDelta), JSON.stringify(afterDelta), now, number(previous.seq));
       } else {
         this.db
           .prepare(
@@ -1422,7 +1477,7 @@ export class OutlinerService {
               (id, workspace_id, label, before_snapshot, after_snapshot, coalesce_key, undone, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`
           )
-          .run(randomUUID(), workspaceId, label, beforeSnapshot, afterSnapshot, coalesceKey, now, now);
+          .run(randomUUID(), workspaceId, label, JSON.stringify(beforeDelta), JSON.stringify(afterDelta), coalesceKey, now, now);
       }
 
       this.db
@@ -1433,6 +1488,20 @@ export class OutlinerService {
            )`
         )
         .run(workspaceId, workspaceId, outlineHistoryLimit);
+      // Keep a contiguous suffix so undo cannot skip a mutation whose history was
+      // discarded. An individual entry exceeding the budget clears older history.
+      let retainedBytes = 0;
+      for (const row of this.db.prepare(
+        `SELECT seq, LENGTH(CAST(before_snapshot AS BLOB)) + LENGTH(CAST(after_snapshot AS BLOB)) AS bytes
+         FROM outline_history WHERE workspace_id = ? ORDER BY seq DESC`
+      ).all(workspaceId)) {
+        retainedBytes += number(row.bytes);
+        if (retainedBytes > outlineHistoryByteLimit) {
+          this.db.prepare("DELETE FROM outline_history WHERE workspace_id = ? AND seq <= ?")
+            .run(workspaceId, number(row.seq));
+          break;
+        }
+      }
       return result;
     });
   }
@@ -1456,8 +1525,11 @@ export class OutlinerService {
 
       const snapshot = JSON.parse(
         text(direction === "undo" ? entry.before_snapshot : entry.after_snapshot)
-      ) as OutlineNodeSnapshot[];
-      this.withoutOutlineHistory(() => this.applyOutlineSnapshot(workspaceId, snapshot));
+      ) as OutlineNodeSnapshot[] | OutlineHistoryDelta;
+      this.withoutOutlineHistory(() => {
+        if (Array.isArray(snapshot)) this.applyOutlineSnapshot(workspaceId, snapshot);
+        else this.applyOutlineDelta(workspaceId, snapshot);
+      });
       this.db
         .prepare("UPDATE outline_history SET undone = ?, updated_at = ? WHERE seq = ?")
         .run(direction === "undo" ? 1 : 0, timestamp(), number(entry.seq));
@@ -1484,6 +1556,27 @@ export class OutlinerService {
       createdAt: text(row.created_at),
       updatedAt: text(row.updated_at)
     }));
+  }
+
+  private applyOutlineDelta(workspaceId: string, delta: OutlineHistoryDelta): void {
+    const columns: Record<keyof OutlineNodeSnapshot, string> = {
+      id: "id", parentId: "parent_id", position: "position", title: "title", body: "body",
+      dueDate: "due_date", done: "done", collapsed: "collapsed", deletedAt: "deleted_at",
+      createdAt: "created_at", updatedAt: "updated_at"
+    };
+    for (const [id, node] of Object.entries(delta.nodes)) {
+      if (node === null) {
+        const now = timestamp();
+        this.db.prepare("UPDATE nodes SET deleted_at = COALESCE(deleted_at, ?), updated_at = ? WHERE id = ? AND workspace_id = ?")
+          .run(now, now, id, workspaceId);
+        continue;
+      }
+      const keys = (Object.keys(node) as (keyof OutlineNodeSnapshot)[]).filter(key => key !== "id" && columns[key]);
+      if (keys.length === 0) continue;
+      const values = keys.map(key => typeof node[key] === "boolean" ? (node[key] ? 1 : 0) : node[key] ?? null);
+      this.db.prepare(`UPDATE nodes SET ${keys.map(key => `${columns[key]} = ?`).join(", ")} WHERE id = ? AND workspace_id = ?`)
+        .run(...values, id, workspaceId);
+    }
   }
 
   private applyOutlineSnapshot(workspaceId: string, snapshot: OutlineNodeSnapshot[]): void {
