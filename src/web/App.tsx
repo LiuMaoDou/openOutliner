@@ -9,7 +9,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Code2,
-  FileDown,
   FolderClosed,
   FolderInput,
   FolderOpen,
@@ -17,13 +16,15 @@ import {
   FolderTree,
   Highlighter,
   Italic,
+  ListPlus,
   Ellipsis,
   Monitor,
   Moon,
   Palette,
+  Pencil,
+  PanelLeft,
   PanelRight,
   Plus,
-  Redo2,
   Search,
   Strikethrough,
   Sun,
@@ -31,7 +32,6 @@ import {
   Tags as TagsIcon,
   Trash2,
   Undo2,
-  Upload,
   X
 } from "lucide-react";
 import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
@@ -61,6 +61,7 @@ import {
   type OutlineHistoryResult,
   type OutlineHistoryState,
   type OutlineTreeNode,
+  type RecycleBinEntry,
   type Tag,
   type TaggedNodeGroup,
   type TaggedNodeResult,
@@ -68,6 +69,8 @@ import {
   type WorkspaceFolder
 } from "./api";
 import { useTheme, type Theme } from "./theme";
+import { SyncPanel } from "./SyncPanel";
+import { useInlineTagInput } from "./InlineTagInput";
 import { resolveTagColor } from "../backend/shared/tagColors";
 import { beginNodeEdit, endNodeEdit, flushNodeDraft, readNodeDraft, stageNodeDraft } from "./offline";
 import {
@@ -267,6 +270,7 @@ interface PendingDelete {
   workspaceId: string;
   focusAfterDeleteId: string;
   createdAt: number;
+  action: "delete" | "complete";
 }
 
 interface ConvertWorkspaceCandidate {
@@ -296,6 +300,7 @@ const COLLAPSED_SYSTEM_TAGS_STORAGE_KEY = "openoutliner.collapsed-system-tags:v1
 const SIDEBAR_WIDTH_STORAGE_KEY = "openoutliner.sidebar-width";
 const INSPECTOR_WIDTH_STORAGE_KEY = "openoutliner.inspector-width";
 export const SYSTEM_TAGS_WORKSPACE_ID = "system:tags";
+export const SYSTEM_RECYCLE_BIN_WORKSPACE_ID = "system:recycle-bin";
 const EMPTY_OUTLINE_HISTORY: OutlineHistoryState = {
   canUndo: false,
   canRedo: false,
@@ -326,16 +331,12 @@ export function App() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
-  const [tagName, setTagName] = useState("");
-  const [isTagSuggestionOpen, setIsTagSuggestionOpen] = useState(false);
-  const [activeTagSuggestion, setActiveTagSuggestion] = useState(-1);
   const [tags, setTags] = useState<Tag[]>([]);
-  const tagSuggestionRef = useRef<HTMLDivElement | null>(null);
-  const tagSuggestionListRef = useRef<HTMLDivElement | null>(null);
-  const [tagSuggestionPosition, setTagSuggestionPosition] = useState<CSSProperties>({});
   const [activeTagFilter, setActiveTagFilter] = useState("");
   const [tagResults, setTagResults] = useState<TaggedNodeResult[]>([]);
   const [systemTagGroups, setSystemTagGroups] = useState<TaggedNodeGroup[]>([]);
+  const [recycleBinEntries, setRecycleBinEntries] = useState<RecycleBinEntry[]>([]);
+  const [restoringRecycleBinIds, setRestoringRecycleBinIds] = useState<Set<string>>(() => new Set());
   const [collapsedSystemTags, setCollapsedSystemTags] = useState<Set<string>>(() =>
     readStoredIdSet(COLLAPSED_SYSTEM_TAGS_STORAGE_KEY)
   );
@@ -343,6 +344,9 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readStoredBoolean(SIDEBAR_COLLAPSED_STORAGE_KEY, false)
   );
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const sidebarCompact = sidebarCollapsed && !mobileSidebarOpen;
+  const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     readStoredPanelWidth(SIDEBAR_WIDTH_STORAGE_KEY, DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
   );
@@ -354,7 +358,6 @@ export function App() {
       MAX_INSPECTOR_WIDTH
     )
   );
-  const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
   const [isMarkdownHelpOpen, setIsMarkdownHelpOpen] = useState(false);
   const [workspaceDragTarget, setWorkspaceDragTarget] = useState<WorkspaceDragTarget | null>(null);
   const [collapsedWorkspaceFolderIds, setCollapsedWorkspaceFolderIds] = useState<Set<string>>(() =>
@@ -377,6 +380,7 @@ export function App() {
   const tagsRequestRef = useRef(0);
   const tagResultsRequestRef = useRef(0);
   const systemTagGroupsRequestRef = useRef(0);
+  const recycleBinRequestRef = useRef(0);
   const outlineHistoryRequestRef = useRef(0);
   const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
   const workspaceDragTargetRef = useRef<WorkspaceDragTarget | null>(null);
@@ -391,6 +395,7 @@ export function App() {
   const suppressSelectionClickRef = useRef(false);
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const resolvedTempNodeIdsRef = useRef(new Map<string, string>());
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
   const virtualListRef = useRef<HTMLDivElement | null>(null);
   const [compactLayout, setCompactLayout] = useState(() => window.matchMedia("(max-width: 760px)").matches);
@@ -418,6 +423,23 @@ export function App() {
   useEffect(() => {
     storeBoolean(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed);
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!mobileSidebarOpen) return;
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setMobileSidebarOpen(false);
+    };
+    const media = window.matchMedia("(max-width: 980px)");
+    const closeOnDesktop = () => {
+      if (!media.matches) setMobileSidebarOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    media.addEventListener("change", closeOnDesktop);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      media.removeEventListener("change", closeOnDesktop);
+    };
+  }, [mobileSidebarOpen]);
 
   useEffect(() => {
     storeIdSet(COLLAPSED_WORKSPACE_FOLDERS_STORAGE_KEY, collapsedWorkspaceFolderIds);
@@ -525,7 +547,9 @@ export function App() {
   const loadWorkspaces = useCallback(async () => {
     const next = await apiGet<Workspace[]>("/api/workspaces");
     const currentId = workspaceIdRef.current;
-    const nextId = currentId === SYSTEM_TAGS_WORKSPACE_ID || next.some(workspace => workspace.id === currentId)
+    const nextId = currentId === SYSTEM_TAGS_WORKSPACE_ID
+      || currentId === SYSTEM_RECYCLE_BIN_WORKSPACE_ID
+      || next.some(workspace => workspace.id === currentId)
       ? currentId
       : next[0]?.id || "";
     workspaceIdRef.current = nextId;
@@ -542,7 +566,7 @@ export function App() {
 
   const loadTree = useCallback(async (id: string, options: LoadTreeOptions = {}) => {
     const requestId = ++treeRequestRef.current;
-    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID) {
+    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID || id === SYSTEM_RECYCLE_BIN_WORKSPACE_ID) {
       setFlatState(null);
       setVisibleIds([]);
       setSingleSelectedId("");
@@ -582,7 +606,7 @@ export function App() {
 
   const loadOutlineHistory = useCallback(async (id: string) => {
     const requestId = ++outlineHistoryRequestRef.current;
-    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID) {
+    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID || id === SYSTEM_RECYCLE_BIN_WORKSPACE_ID) {
       setOutlineHistory(EMPTY_OUTLINE_HISTORY);
       return;
     }
@@ -613,13 +637,13 @@ export function App() {
 
   const loadTags = useCallback(async (id: string) => {
     const requestId = ++tagsRequestRef.current;
-    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID) {
+    if (!id) {
       setTags([]);
       return;
     }
     let next: Tag[];
     try {
-      next = await apiGet<Tag[]>(`/api/tags?workspaceId=${id}`);
+      next = await apiGet<Tag[]>("/api/system/tags");
     } catch (error) {
       if (requestId !== tagsRequestRef.current || id !== workspaceIdRef.current) return;
       throw error;
@@ -646,7 +670,7 @@ export function App() {
     const requestId = ++systemTagGroupsRequestRef.current;
     let next: TaggedNodeGroup[];
     try {
-      next = await apiGet<TaggedNodeGroup[]>("/api/system/tag-tree");
+      next = await apiGet<TaggedNodeGroup[]>("/api/system/tag-tree?includeUnused=1");
     } catch (error) {
       if (requestId !== systemTagGroupsRequestRef.current || workspaceIdRef.current !== SYSTEM_TAGS_WORKSPACE_ID) {
         return;
@@ -655,6 +679,13 @@ export function App() {
     }
     if (requestId !== systemTagGroupsRequestRef.current || workspaceIdRef.current !== SYSTEM_TAGS_WORKSPACE_ID) return;
     setSystemTagGroups(next);
+  }, []);
+
+  const loadRecycleBin = useCallback(async () => {
+    const requestId = ++recycleBinRequestRef.current;
+    const next = await apiGet<RecycleBinEntry[]>("/api/recycle-bin");
+    if (requestId !== recycleBinRequestRef.current || workspaceIdRef.current !== SYSTEM_RECYCLE_BIN_WORKSPACE_ID) return;
+    setRecycleBinEntries(next);
   }, []);
 
   useEffect(() => {
@@ -671,7 +702,8 @@ export function App() {
       pending = false;
       void loadWorkspaces().then(() => Promise.all([
         loadWorkspaceFolders(), loadTree(workspaceIdRef.current, { preserveSelection: true }),
-        loadTags(workspaceIdRef.current), loadOutlineHistory(workspaceIdRef.current)
+        loadTags(workspaceIdRef.current), loadOutlineHistory(workspaceIdRef.current),
+        workspaceIdRef.current === SYSTEM_RECYCLE_BIN_WORKSPACE_ID ? loadRecycleBin() : Promise.resolve()
       ])).catch(toError(setError));
     };
     const onSync = () => { pending = true; refresh(); };
@@ -679,7 +711,7 @@ export function App() {
     window.addEventListener("outliner-sync", onSync);
     window.addEventListener("focusout", onBlur);
     return () => { clearTimeout(timer); window.removeEventListener("outliner-sync", onSync); window.removeEventListener("focusout", onBlur); };
-  }, [loadWorkspaces, loadWorkspaceFolders, loadTree, loadTags, loadOutlineHistory]);
+  }, [loadWorkspaces, loadWorkspaceFolders, loadTree, loadTags, loadOutlineHistory, loadRecycleBin]);
 
 
   useEffect(() => {
@@ -715,7 +747,20 @@ export function App() {
   }, [loadSystemTagGroups, workspaceId]);
 
   useEffect(() => {
-    setIsTagManagerOpen(false);
+    if (workspaceId !== SYSTEM_RECYCLE_BIN_WORKSPACE_ID) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") loadRecycleBin().catch(toError(setError));
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [loadRecycleBin, workspaceId]);
+
+  useEffect(() => {
     setPendingDelete(null);
   }, [workspaceId]);
 
@@ -762,6 +807,21 @@ export function App() {
   const selectedNode = selectedId && flatState ? getNode(flatState, selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
   const isSystemTagsWorkspace = workspaceId === SYSTEM_TAGS_WORKSPACE_ID;
+  const isRecycleBinWorkspace = workspaceId === SYSTEM_RECYCLE_BIN_WORKSPACE_ID;
+  const overdueNodes = useMemo(() => {
+    if (!flatState) return [];
+    const now = new Date();
+    const today = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0")
+    ].join("-");
+    return Object.values(flatState.nodes)
+      .filter(node => node.id !== flatState.rootId && !node.done && Boolean(node.dueDate) && node.dueDate! < today)
+      .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? "")
+        || left.position - right.position
+        || left.title.localeCompare(right.title));
+  }, [flatState]);
   const draggingNodeIds = useMemo(() => new Set(dragState?.draggingIds ?? []), [dragState?.draggingIds]);
   const rootWorkspaces = useMemo(
     () => workspaces.filter(workspace => !workspace.folderId && !workspace.parentWorkspaceId),
@@ -812,8 +872,20 @@ export function App() {
     () => buildSystemTagRows(systemTagGroups, collapsedSystemTags, search),
     [collapsedSystemTags, search, systemTagGroups]
   );
-  const visibleItemCount = isSystemTagsWorkspace
-    ? systemTagRows.length
+  const filteredRecycleBinEntries = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return recycleBinEntries;
+    return recycleBinEntries.filter(entry =>
+      entry.workspace.name.toLowerCase().includes(query)
+      || entry.node.title.toLowerCase().includes(query)
+      || entry.node.body.toLowerCase().includes(query)
+      || entry.descendants.some(node => `${node.title}\n${node.body}`.toLowerCase().includes(query))
+    );
+  }, [recycleBinEntries, search]);
+  const visibleItemCount = isRecycleBinWorkspace
+    ? filteredRecycleBinEntries.length
+    : isSystemTagsWorkspace
+      ? systemTagRows.length
     : isTagFiltering
       ? filteredTagResults.length
       : filteredNodes.length;
@@ -831,13 +903,17 @@ export function App() {
     getScrollElement: getOutlineScrollElement,
     scrollMargin: listScrollMargin,
     getItemKey: index =>
-      isSystemTagsWorkspace
+      isRecycleBinWorkspace
+        ? filteredRecycleBinEntries[index]?.node.id ?? `recycle-bin-${index}`
+        : isSystemTagsWorkspace
         ? systemTagRowKey(systemTagRows[index], index)
         : isTagFiltering
         ? filteredTagResults[index]?.node.id ?? `tag-result-${index}`
         : filteredNodes[index] ?? index,
     measureElement: element => Math.ceil(element.getBoundingClientRect().height),
-    estimateSize: index => isSystemTagsWorkspace && systemTagRows[index]?.kind === "node" ? 46 : 38,
+    estimateSize: index => isRecycleBinWorkspace
+      ? 92
+      : isSystemTagsWorkspace && systemTagRows[index]?.kind === "node" ? 46 : 38,
     overscan: 16,
     useAnimationFrameWithResizeObserver: true
   });
@@ -1064,7 +1140,6 @@ export function App() {
     setFlatState(null);
     setSingleSelectedId("");
     setTags([]);
-    setTagName("");
     if (!isCurrentWorkspace) return;
     try {
       await Promise.all([loadTree(result.workspace.id), loadTags(result.workspace.id)]);
@@ -1124,6 +1199,7 @@ export function App() {
       );
       nodeCreateQueueRef.current = createRequest.then(() => undefined, () => undefined);
       const created = await createRequest;
+      resolvedTempNodeIdsRef.current.set(tempId, created.id);
       loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
       if (cancelledTempIdsRef.current.has(tempId)) {
         cancelledTempIdsRef.current.delete(tempId);
@@ -1249,7 +1325,7 @@ export function App() {
     }
   };
 
-  const deleteNodeOptimistically = async (node: FlatNodeData) => {
+  const deleteNodeOptimistically = async (node: FlatNodeData, action: PendingDelete["action"] = "delete") => {
     const before = flatStateRef.current;
     if (!before || node.id === before.rootId) return;
     const visibleBefore = computeVisibleIds(before);
@@ -1297,7 +1373,8 @@ export function App() {
         nodeCount: selectedIds.length,
         workspaceId: currentWorkspaceId,
         focusAfterDeleteId: previousId,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        action
       });
     } catch (error) {
       setFlatState(before);
@@ -1728,6 +1805,7 @@ export function App() {
   };
 
   const selectWorkspace = useCallback((id: string) => {
+    setMobileSidebarOpen(false);
     if (id === workspaceIdRef.current) return;
     pendingNodeRevealRef.current = null;
     workspaceIdRef.current = id;
@@ -1735,6 +1813,7 @@ export function App() {
     tagsRequestRef.current += 1;
     tagResultsRequestRef.current += 1;
     systemTagGroupsRequestRef.current += 1;
+    recycleBinRequestRef.current += 1;
     setWorkspaceId(id);
     setFlatState(null);
     setVisibleIds([]);
@@ -1742,8 +1821,48 @@ export function App() {
     setTags([]);
     setActiveTagFilter("");
     setTagResults([]);
-    setTagName("");
   }, [setSingleSelectedId]);
+
+  const openOverdueNode = (nodeId: string) => {
+    const current = flatStateRef.current;
+    if (!current || !hasNode(current, nodeId)) return;
+    const revealed = revealNodeInFlatTree(current, nodeId);
+    setSearch("");
+    setActiveTagFilter("");
+    setTagResults([]);
+    setFlatState(revealed.state);
+    setVisibleIds(revealed.visibleIds);
+    flatStateRef.current = revealed.state;
+    setSingleSelectedId(nodeId);
+    window.setTimeout(() => {
+      if (revealed.index >= 0) rowVirtualizer.scrollToIndex(revealed.index, { align: "center" });
+      window.setTimeout(() => focusTitleInput(inputRefs.current.get(nodeId)), 30);
+    }, 0);
+  };
+
+  const restoreRecycleBinEntry = async (entry: RecycleBinEntry) => {
+    setRestoringRecycleBinIds(current => new Set(current).add(entry.node.id));
+    try {
+      await apiPost<OutlineTreeNode>(`/api/nodes/${entry.node.id}/restore`, {});
+      setRecycleBinEntries(current => current.filter(item => item.node.id !== entry.node.id));
+    } finally {
+      setRestoringRecycleBinIds(current => {
+        const next = new Set(current);
+        next.delete(entry.node.id);
+        return next;
+      });
+    }
+  };
+
+  const splitNodeByLineBreaks = async (node: FlatNodeData, title: string) => {
+    const currentWorkspaceId = workspaceIdRef.current;
+    await apiPost(`/api/nodes/${node.id}/split-lines`, { title });
+    if (workspaceIdRef.current !== currentWorkspaceId) return;
+    await Promise.all([
+      loadTree(currentWorkspaceId, { preserveSelection: true }),
+      loadOutlineHistory(currentWorkspaceId)
+    ]);
+  };
 
   const createWorkspace = async (folderId?: string | null, parentWorkspaceId?: string | null) => {
     const created = await apiPost<Workspace>(
@@ -1975,38 +2094,37 @@ export function App() {
     await loadWorkspaces();
   };
 
-  const addTag = async (nextName?: string) => {
-    const name = (nextName ?? tagName).trim().replace(/^#/, "");
-    if (!selectedNode || !name) return;
-    if (selectedNode.tags.some(tag => tag.name === name)) {
-      setTagName("");
-      return;
-    }
-    const nodeId = selectedNode.id;
-    const startedWorkspaceId = workspaceId;
-    const existingTag = tags.find(tag => tag.name === name);
+  const addTag = async (nodeId: string, nextName: string) => {
+    const name = nextName.trim().replace(/^#/, "");
+    const node = flatStateRef.current ? getNode(flatStateRef.current, nodeId) : undefined;
+    if (!node || !name) throw new Error("The outline is no longer available.");
+    if (node.tags.some(tag => tag.name === name)) return;
+    const startedWorkspaceId = node.workspaceId;
+    const existingTag = tags.find(tag => tag.name === name && tag.workspaceId === startedWorkspaceId);
     const optimisticTag: Tag = existingTag ?? {
-      id: `temp-tag-${crypto.randomUUID()}`,
-      workspaceId: startedWorkspaceId,
-      name,
-      color: "#9ca3af",
-      createdAt: new Date().toISOString()
+      id: `temp-tag-${crypto.randomUUID()}`, workspaceId: startedWorkspaceId,
+      name, color: "#9ca3af", createdAt: new Date().toISOString()
     };
-    setTagName("");
+    let persistedNodeId = nodeId;
     setFlatState(current => {
       if (!current) return current;
       const next = addOptimisticNodeTag(current, nodeId, optimisticTag);
       flatStateRef.current = next;
       return next;
     });
-
     try {
-      const savedTag = await apiPost<Tag>(`/api/nodes/${nodeId}/tags`, { name });
+      if (nodeId.startsWith("temp-")) {
+        await nodeCreateQueueRef.current;
+        persistedNodeId = resolvedTempNodeIdsRef.current.get(nodeId) ?? "";
+        if (!persistedNodeId) throw new Error("The new outline could not be saved. Please try adding the tag again.");
+      }
+      const savedTag = await apiPost<Tag>(`/api/nodes/${persistedNodeId}/tags`, { name });
       if (workspaceIdRef.current !== startedWorkspaceId) return;
-      setTags(current => upsertWorkspaceTag(current, savedTag));
+      setTags(current => [...current.filter(tag => tag.id !== savedTag.id), savedTag]);
       setFlatState(current => {
         if (!current) return current;
-        const next = reconcileOptimisticNodeTag(current, nodeId, optimisticTag.id, savedTag);
+        const localId = hasNode(current, persistedNodeId) ? persistedNodeId : nodeId;
+        const next = reconcileOptimisticNodeTag(current, localId, optimisticTag.id, savedTag);
         flatStateRef.current = next;
         return next;
       });
@@ -2014,11 +2132,11 @@ export function App() {
       if (workspaceIdRef.current === startedWorkspaceId) {
         setFlatState(current => {
           if (!current) return current;
-          const next = removeOptimisticNodeTag(current, nodeId, optimisticTag.id);
+          const localId = hasNode(current, persistedNodeId) ? persistedNodeId : nodeId;
+          const next = removeOptimisticNodeTag(current, localId, optimisticTag.id);
           flatStateRef.current = next;
           return next;
         });
-        setTagName(current => current || name);
       }
       throw error;
     }
@@ -2036,94 +2154,20 @@ export function App() {
     });
   };
 
-  const tagSuggestions = useMemo(() => {
-    const normalized = tagName.trim().replace(/^#/, "").toLowerCase();
-    const existingNodeTags = new Set(selectedNode?.tags.map(tag => tag.name) ?? []);
-    return tags
-      .filter(tag => !existingNodeTags.has(tag.name))
-      .filter(tag => !normalized || tag.name.toLowerCase().includes(normalized))
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [selectedNode?.id, selectedNode?.tags.length, tagName, tags]);
-
-  useLayoutEffect(() => {
-    if (!isTagSuggestionOpen || !tagSuggestions.length) return;
-    const anchor = tagSuggestionRef.current;
-    if (!anchor) return;
-    const updatePosition = () => {
-      const rect = anchor.getBoundingClientRect();
-      const viewport = window.visualViewport;
-      const viewportTop = viewport?.offsetTop ?? 0;
-      const viewportLeft = viewport?.offsetLeft ?? 0;
-      const viewportHeight = viewport?.height ?? window.innerHeight;
-      const viewportWidth = viewport?.width ?? window.innerWidth;
-      const gap = 6;
-      const margin = 8;
-      const below = viewportTop + viewportHeight - rect.bottom - gap - margin;
-      const above = rect.top - viewportTop - gap - margin;
-      const desiredHeight = Math.min(248, tagSuggestions.length * 34 + 14);
-      const opensAbove = below < desiredHeight && above > below;
-      const maxHeight = Math.max(0, Math.min(desiredHeight, opensAbove ? above : below));
-      const width = Math.min(rect.width, viewportWidth - margin * 2);
-      setTagSuggestionPosition({
-        left: Math.max(viewportLeft + margin, Math.min(rect.left, viewportLeft + viewportWidth - width - margin)),
-        top: opensAbove ? rect.top - gap : rect.bottom + gap,
-        width,
-        maxHeight,
-        transform: opensAbove ? "translateY(-100%)" : undefined
-      });
-    };
-    updatePosition();
-    const observer = new ResizeObserver(updatePosition);
-    observer.observe(anchor);
-    const onScroll = (event: Event) => {
-      if (event.target instanceof Node && tagSuggestionListRef.current?.contains(event.target)) return;
-      updatePosition();
-    };
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", onScroll, true);
-    window.visualViewport?.addEventListener("resize", updatePosition);
-    window.visualViewport?.addEventListener("scroll", updatePosition);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", onScroll, true);
-      window.visualViewport?.removeEventListener("resize", updatePosition);
-      window.visualViewport?.removeEventListener("scroll", updatePosition);
-    };
-  }, [isTagSuggestionOpen, tagSuggestions.length]);
-
-  useEffect(() => {
-    if (!isTagSuggestionOpen) return;
-    const closeSuggestion = (event: globalThis.MouseEvent) => {
-      const root = tagSuggestionRef.current;
-      const target = event.target;
-      if (target instanceof Node && (root?.contains(target) || tagSuggestionListRef.current?.contains(target))) return;
-      setIsTagSuggestionOpen(false);
-    };
-    window.addEventListener("pointerdown", closeSuggestion);
-    return () => window.removeEventListener("pointerdown", closeSuggestion);
-  }, [isTagSuggestionOpen]);
-
-  const updateTagDraft = (id: string, name: string) => {
-    setTags(current => current.map(tag => (tag.id === id ? { ...tag, name } : tag)));
+  const renameSystemTag = async (previous: string, name: string) => {
+    await apiPatch(`/api/system/tags/${encodeURIComponent(previous)}`, { name });
+    setCollapsedSystemTags(current => {
+      const next = new Set(current);
+      if (next.delete(previous)) next.add(name.trim().replace(/^#/, ""));
+      return next;
+    });
+    await Promise.all([loadTags(workspaceIdRef.current), loadSystemTagGroups()]);
   };
 
-  const saveTag = async (tag: Tag) => {
-    const name = tag.name.trim();
-    if (!name) {
-      await loadTags(workspaceId);
-      return;
-    }
-    await apiPatch<Tag>(`/api/tags/${tag.id}`, { name });
-    await loadTags(workspaceId);
-    await refresh();
-  };
-
-  const deleteTag = async (tag: Tag) => {
-    if (!window.confirm(`Delete tag #${tag.name}?`)) return;
-    await apiDelete(`/api/tags/${tag.id}`);
-    await loadTags(workspaceId);
-    await refresh();
+  const deleteSystemTag = async (name: string) => {
+    if (!window.confirm(`Delete #${name} from all workspaces? Outline text will be kept.`)) return;
+    await apiDelete(`/api/system/tags/${encodeURIComponent(name)}`);
+    await Promise.all([loadTags(workspaceIdRef.current), loadSystemTagGroups()]);
   };
 
   const exportFile = async (format: "markdown" | "opml") => {
@@ -2174,7 +2218,7 @@ export function App() {
           ]
             .filter(Boolean)
             .join(" ")}
-          title={sidebarCollapsed ? workspace.name : undefined}
+          title={sidebarCompact ? workspace.name : undefined}
           data-workspace-drop-id={workspace.id}
           data-workspace-folder-id={workspace.folderId ?? ""}
           data-workspace-parent-id={workspace.parentWorkspaceId ?? ""}
@@ -2182,7 +2226,7 @@ export function App() {
           style={{ "--workspace-depth": depth } as CSSProperties}
           onClick={() => selectWorkspace(workspace.id)}
         >
-          {!sidebarCollapsed && (
+          {!sidebarCompact && (
             <button
               className="workspaceDisclosure"
               type="button"
@@ -2200,7 +2244,7 @@ export function App() {
           )}
           <span
             className="workspaceIcon workspaceDragHandle"
-            title={sidebarCollapsed ? workspace.name : "Drag workspace"}
+            title={sidebarCompact ? workspace.name : "Drag workspace"}
             onPointerDown={event => startWorkspaceDrag(workspace, event)}
           >
             <DynamicIcon
@@ -2210,7 +2254,7 @@ export function App() {
               strokeWidth={2.2}
             />
           </span>
-          {!sidebarCollapsed && (
+          {!sidebarCompact && (
             <input
               value={workspace.name}
               onChange={event => updateWorkspaceDraft(workspace.id, event.target.value)}
@@ -2222,7 +2266,7 @@ export function App() {
               }}
             />
           )}
-          {!sidebarCollapsed && (
+          {!sidebarCompact && (
             <button
               className="workspaceAddChildButton"
               type="button"
@@ -2235,7 +2279,7 @@ export function App() {
               <Plus size={13} />
             </button>
           )}
-          {!sidebarCollapsed && (
+          {!sidebarCompact && (
             <button
               className="workspaceDeleteButton"
               type="button"
@@ -2256,7 +2300,7 @@ export function App() {
 
   return (
     <div
-      className={`appShell${sidebarCollapsed ? " sidebarCollapsed" : ""}`}
+      className={`appShell${sidebarCompact ? " sidebarCollapsed" : ""}${mobileSidebarOpen ? " mobileSidebarOpen" : ""}`}
       style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       onPointerDownCapture={event => {
         if (!(event.target as HTMLElement).closest(".outlineList")) {
@@ -2264,32 +2308,30 @@ export function App() {
         }
       }}
     >
-      <aside className="sidebar">
+      {mobileSidebarOpen && (
+        <button className="sidebarBackdrop" type="button" aria-label="Close sidebar" onClick={() => setMobileSidebarOpen(false)} />
+      )}
+      <aside className="sidebar" id="workspace-sidebar" aria-label="Workspace navigation">
         <div className="sidebarHeader">
           <div className="brand">
             <span className="brandMark">
               <FolderTree size={18} />
             </span>
-            {!sidebarCollapsed && <span>OpenOutliner</span>}
+            {!sidebarCompact && <span>OpenOutliner</span>}
             <button
               className="collapseButton"
               type="button"
-              onClick={() => setSidebarCollapsed(collapsed => !collapsed)}
-              title={sidebarCollapsed ? "Expand" : "Collapse"}
+              onClick={() => mobileSidebarOpen ? setMobileSidebarOpen(false) : setSidebarCollapsed(collapsed => !collapsed)}
+              title={mobileSidebarOpen ? "Close sidebar" : sidebarCompact ? "Expand sidebar" : "Collapse sidebar"}
             >
-              {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+              {sidebarCompact ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
             </button>
           </div>
-          {!sidebarCollapsed ? (
-            <button className="commandButton" type="button" onClick={() => createWorkspace().catch(toError(setError))}>
-              <Plus size={15} />
-              <span>Workspace</span>
-            </button>
-          ) : (
+          {sidebarCompact && (
             <button
               className="sidebarCollapsedAdd"
               type="button"
-              onClick={() => createWorkspace().catch(toError(setError))}
+              onClick={() => createWorkspace(null, null).catch(toError(setError))}
               title="New Workspace"
             >
               <Plus size={15} />
@@ -2297,29 +2339,76 @@ export function App() {
           )}
         </div>
 
+        {sidebarCompact ? (
+          <button
+            className="sidebarIconButton sidebarSearchToggle"
+            type="button"
+            title="Search"
+            aria-label="Search"
+            onClick={() => {
+              setSidebarCollapsed(false);
+              window.requestAnimationFrame(() => sidebarSearchRef.current?.focus());
+            }}
+          >
+            <Search size={17} />
+          </button>
+        ) : (
+          <div className="searchBox sidebarSearch">
+            <Search size={16} aria-hidden="true" />
+            <input
+              ref={sidebarSearchRef}
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              placeholder="Search"
+              aria-label="Search"
+            />
+            {search && (
+              <button className="searchClearButton" type="button" title="Clear search" aria-label="Clear search" onClick={() => setSearch("")}>
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="workspaceGroup">
           <button
             className={isSystemTagsWorkspace ? "systemWorkspaceItem active" : "systemWorkspaceItem"}
             type="button"
-            title={sidebarCollapsed ? "Tags" : "System workspace"}
+            title={sidebarCompact ? "Tags" : "System workspace"}
             onClick={() => selectWorkspace(SYSTEM_TAGS_WORKSPACE_ID)}
           >
             <span className="workspaceIcon" aria-hidden="true">
               <TagsIcon size={15} strokeWidth={2.2} />
             </span>
-            {!sidebarCollapsed && (
+            {!sidebarCompact && (
               <span className="systemWorkspaceLabel">
                 <span>Tags</span>
                 <small>System</small>
               </span>
             )}
           </button>
-          {!sidebarCollapsed ? (
+          <button
+            className={isRecycleBinWorkspace ? "systemWorkspaceItem active" : "systemWorkspaceItem"}
+            type="button"
+            title={sidebarCompact ? "Recycle Bin" : "Completed and deleted outlines"}
+            onClick={() => selectWorkspace(SYSTEM_RECYCLE_BIN_WORKSPACE_ID)}
+          >
+            <span className="workspaceIcon" aria-hidden="true">
+              <Trash2 size={15} strokeWidth={2.2} />
+            </span>
+            {!sidebarCompact && (
+              <span className="systemWorkspaceLabel">
+                <span>Recycle Bin</span>
+                <small>{recycleBinEntries.length || "System"}</small>
+              </span>
+            )}
+          </button>
+          {!sidebarCompact ? (
             <>
               <div className="sidebarLabel workspaceLabel">
                 <span>Workspaces</span>
-                <button type="button" title="New folder" onClick={() => createWorkspaceFolder().catch(toError(setError))}>
-                  <FolderPlus size={14} />
+                <button type="button" title="New Workspace" aria-label="New Workspace" onClick={() => createWorkspace(null, null).catch(toError(setError))}>
+                  <Plus size={14} />
                 </button>
               </div>
               <div
@@ -2327,6 +2416,12 @@ export function App() {
                 data-workspace-folder-drop-id="root"
               >
                 {rootWorkspaces.map(workspace => renderWorkspaceItem(workspace))}
+              </div>
+              <div className="sidebarLabel workspaceLabel foldersLabel">
+                <span>Folders</span>
+                <button type="button" title="New folder" aria-label="New folder" onClick={() => createWorkspaceFolder().catch(toError(setError))}>
+                  <FolderPlus size={14} />
+                </button>
               </div>
               {workspaceFolders.map(folder => {
                 const isCollapsed = collapsedWorkspaceFolderIds.has(folder.id);
@@ -2389,7 +2484,31 @@ export function App() {
             workspaces.filter(workspace => !workspace.parentWorkspaceId).map(workspace => renderWorkspaceItem(workspace))
           )}
         </div>
-        {!sidebarCollapsed && (
+        <div className="sidebarFooter">
+          <SyncPanel embedded compact={sidebarCompact} onImport={() => fileInputRef.current?.click()} onExport={exportFile} />
+          <button
+            className="sidebarIconButton"
+            type="button"
+            title="Markdown shortcuts"
+            aria-label="Markdown shortcuts"
+            onClick={() => {
+              setMobileSidebarOpen(false);
+              setIsMarkdownHelpOpen(true);
+            }}
+          >
+            <CircleHelp size={17} />
+          </button>
+          <button
+            className="sidebarIconButton themeToggle"
+            type="button"
+            title={`Theme: ${themeLabel(theme)}`}
+            aria-label={`Theme: ${themeLabel(theme)}`}
+            onClick={cycleTheme}
+          >
+            {theme === "light" ? <Sun size={17} /> : theme === "dark" ? <Moon size={17} /> : <Monitor size={17} />}
+          </button>
+        </div>
+        {!sidebarCompact && (
           <div
             className="panelResizeHandle sidebarResizeHandle"
             role="separator"
@@ -2408,90 +2527,28 @@ export function App() {
       </aside>
 
       <main className="mainPane">
-        <div className="mobileWorkspaceBar">
-          <span className="mobileWorkspaceIcon">
-            {isSystemTagsWorkspace ? (
-              <TagsIcon size={16} strokeWidth={2.2} />
-            ) : (
-              <DynamicIcon
-                name={workspaceIconName(selectedWorkspace?.icon ?? "")}
-                fallback={() => <FolderTree size={16} />}
-                size={16}
-                strokeWidth={2.2}
-              />
-            )}
-          </span>
-          <select
-            aria-label="Workspace"
-            value={workspaceId}
-            onChange={event => selectWorkspace(event.target.value)}
-          >
-            <option value={SYSTEM_TAGS_WORKSPACE_ID}>Tags · System</option>
-            {workspaces.map(workspace => (
-              <option key={workspace.id} value={workspace.id}>
-                {workspace.name}
-              </option>
-            ))}
-          </select>
-          <button type="button" onClick={() => createWorkspace().catch(toError(setError))} title="New Workspace">
-            <Plus size={16} />
-          </button>
-        </div>
-        <header className="topbar">
-          <div className="searchBox">
-            <Search size={17} />
-            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search" />
-          </div>
-          <div className="toolbar">
-            <button
-              aria-label="Undo outline action"
-              disabled={isSystemTagsWorkspace || !outlineHistory.canUndo}
-              title={outlineHistory.undoLabel ? `Undo ${outlineHistory.undoLabel}` : "Undo outline action"}
-              type="button"
-              onClick={() => runOutlineHistory("undo").catch(toError(setError))}
-            >
-              <Undo2 size={17} />
-            </button>
-            <button
-              aria-label="Redo outline action"
-              disabled={isSystemTagsWorkspace || !outlineHistory.canRedo}
-              title={outlineHistory.redoLabel ? `Redo ${outlineHistory.redoLabel}` : "Nothing to redo"}
-              type="button"
-              onClick={() => runOutlineHistory("redo").catch(toError(setError))}
-            >
-              <Redo2 size={17} />
-            </button>
-            <button className="themeToggle" title={`Theme: ${theme}`} type="button" onClick={cycleTheme}>
-              {theme === "light" ? <Sun size={17} /> : theme === "dark" ? <Moon size={17} /> : <Monitor size={17} />}
-              <span>{themeLabel(theme)}</span>
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".md,.markdown,.opml,.xml,text/markdown,text/xml"
-              hidden
-              onChange={event => {
-                const file = event.target.files?.[0];
-                if (file) importFile(file).catch(toError(setError));
-                event.currentTarget.value = "";
-              }}
-            />
-            <button title="Import" type="button" onClick={() => fileInputRef.current?.click()}>
-              <Upload size={17} />
-            </button>
-            <button
-              aria-label="Export OPML"
-              title="Export OPML"
-              type="button"
-              onClick={() => exportFile("opml").catch(toError(setError))}
-            >
-              <FileDown size={17} />
-            </button>
-            <button title="Markdown shortcuts" type="button" onClick={() => setIsMarkdownHelpOpen(true)}>
-              <CircleHelp size={17} />
-            </button>
-          </div>
-        </header>
+        <button
+          className="sidebarIconButton mobileSidebarToggle"
+          type="button"
+          title="Open sidebar"
+          aria-label="Open sidebar"
+          aria-expanded={mobileSidebarOpen}
+          aria-controls="workspace-sidebar"
+          onClick={() => setMobileSidebarOpen(true)}
+        >
+          <PanelLeft size={18} />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".md,.markdown,.opml,.xml,text/markdown,text/xml"
+          hidden
+          onChange={event => {
+            const file = event.target.files?.[0];
+            if (file) importFile(file).catch(toError(setError));
+            event.currentTarget.value = "";
+          }}
+        />
 
         {isMarkdownHelpOpen && (
           <div className="modalBackdrop" role="presentation" onClick={() => setIsMarkdownHelpOpen(false)}>
@@ -2669,7 +2726,9 @@ export function App() {
 
         {pendingDelete && pendingDelete.workspaceId === workspaceId && outlineHistory.undoLabel === "Delete outline" && (
           <div className="undoBar" role="status" aria-live="polite">
-            <span>{pendingDelete.nodeCount === 1 ? "Deleted node" : `Deleted ${pendingDelete.nodeCount} nodes`}</span>
+            <span>{pendingDelete.action === "complete"
+              ? pendingDelete.nodeCount === 1 ? "Completed outline" : `Completed ${pendingDelete.nodeCount} outlines`
+              : pendingDelete.nodeCount === 1 ? "Deleted node" : `Deleted ${pendingDelete.nodeCount} nodes`}</span>
             <button type="button" onClick={() => undoPendingDelete().catch(toError(setError))}>
               <Undo2 size={15} />
               <span>Undo</span>
@@ -2678,13 +2737,21 @@ export function App() {
         )}
 
         <section
-          className={isInspectorOpen && !isSystemTagsWorkspace ? "contentGrid" : "contentGrid commentsClosed"}
+          className={isInspectorOpen && !isSystemTagsWorkspace && !isRecycleBinWorkspace ? "contentGrid" : "contentGrid commentsClosed"}
           ref={contentGridRef}
           style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
         >
           <div className="outlineSurface" ref={outlineSurfaceRef}>
             <div className="outlineHeader">
-              {isSystemTagsWorkspace ? (
+              {isRecycleBinWorkspace ? (
+                <div className="systemWorkspaceTitle">
+                  <div>
+                    <Trash2 size={21} strokeWidth={2.2} />
+                    <h1>Recycle Bin</h1>
+                  </div>
+                  <span>Completed outlines · Restore anytime</span>
+                </div>
+              ) : isSystemTagsWorkspace ? (
                 <div className="systemWorkspaceTitle">
                   <div>
                     <TagsIcon size={21} strokeWidth={2.2} />
@@ -2725,6 +2792,25 @@ export function App() {
                   style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
                 >
                   {virtualItems.map(virtualItem => {
+                    if (isRecycleBinWorkspace) {
+                      const entry = filteredRecycleBinEntries[virtualItem.index];
+                      if (!entry) return null;
+                      return (
+                        <div
+                          className="virtualOutlineRow"
+                          data-index={virtualItem.index}
+                          key={entry.node.id}
+                          ref={element => registerVirtualRow(entry.node.id, element)}
+                          style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
+                        >
+                          <RecycleBinRow
+                            entry={entry}
+                            restoring={restoringRecycleBinIds.has(entry.node.id)}
+                            onRestore={() => restoreRecycleBinEntry(entry).catch(toError(setError))}
+                          />
+                        </div>
+                      );
+                    }
                     if (isSystemTagsWorkspace) {
                       const row = systemTagRows[virtualItem.index];
                       if (!row) return null;
@@ -2739,6 +2825,8 @@ export function App() {
                           {row.kind === "tag" ? (
                             <SystemTagGroupRow
                               group={row.group}
+                              onRename={name => renameSystemTag(row.group.name, name)}
+                              onDelete={() => deleteSystemTag(row.group.name)}
                               collapsed={collapsedSystemTags.has(row.group.name)}
                               onToggle={() => setCollapsedSystemTags(current =>
                                 nextCollapsedWorkspaceIds(current, row.group.name)
@@ -2855,17 +2943,26 @@ export function App() {
                           onMoveStart={event => startNodeDrag(node, event)}
                           onTagClick={tag => loadTagResults(tag.name).catch(toError(setError))}
                           onTagRemove={tag => unlinkNodeTag(node.id, tag).catch(toError(setError))}
+                          tagCatalog={tags}
+                          onTagAdd={name => addTag(node.id, name)}
+                          onTagError={toError(setError)}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
                           onMoveToWorkspace={title => {
                             const firstTargetId = moveWorkspaceOptions[0]?.workspace.id ?? "";
                             setMoveWorkspaceTargetId(firstTargetId);
                             setMoveWorkspaceCandidate({ id: node.id, title, sourceWorkspaceId: workspaceId });
                           }}
+                          onSplitLines={title => splitNodeByLineBreaks(node, title)}
+                          onComplete={() => deleteNodeOptimistically(node, "complete")}
                           onDelete={() => deleteNodeOptimistically(node)}
                         />
                       </div>
                     );
                   })}
+                </div>
+              ) : isRecycleBinWorkspace ? (
+                <div className="outlineEmptyState">
+                  {isSearching ? "No matching completed outlines" : "Recycle Bin is empty"}
                 </div>
               ) : isSystemTagsWorkspace ? (
                 <div className="outlineEmptyState">
@@ -2886,7 +2983,7 @@ export function App() {
             </div>
           </div>
 
-          {isInspectorOpen && !isSystemTagsWorkspace && (
+          {isInspectorOpen && !isSystemTagsWorkspace && !isRecycleBinWorkspace && (
             <aside className="inspector">
               <div
                 className="panelResizeHandle inspectorResizeHandle"
@@ -2930,138 +3027,14 @@ export function App() {
                       }} />
                     </div>
                   </div>
-                  <div className="inspectorSection">
-                    <label>Tags</label>
-                    <div className="tagInput" ref={tagSuggestionRef}>
-                      <TagIcon size={15} />
-                      <div className="tagInputWithSuggestions">
-                        <input
-                          name="openoutliner-tag-input"
-                          type="text"
-                          autoComplete="off"
-                          autoCorrect="off"
-                          autoCapitalize="off"
-                          spellCheck={false}
-                          value={tagName}
-                          role="combobox"
-                          aria-label="Tag"
-                          aria-autocomplete="list"
-                          aria-expanded={isTagSuggestionOpen && tagSuggestions.length > 0}
-                          aria-controls={isTagSuggestionOpen && tagSuggestions.length > 0 ? "tag-suggestions" : undefined}
-                          aria-activedescendant={isTagSuggestionOpen && tagSuggestions[activeTagSuggestion] ? `tag-option-${tagSuggestions[activeTagSuggestion].id}` : undefined}
-                          onFocus={() => {
-                            setActiveTagSuggestion(-1);
-                            setIsTagSuggestionOpen(tagSuggestions.length > 0);
-                          }}
-                          onChange={event => {
-                            setTagName(event.target.value);
-                            setActiveTagSuggestion(-1);
-                            setIsTagSuggestionOpen(true);
-                          }}
-                          onKeyDown={event => {
-                            if (shouldIgnoreTextInputKeyDown(event)) return;
-                            if ((event.key === "ArrowDown" || event.key === "ArrowUp") && tagSuggestions.length) {
-                              event.preventDefault();
-                              setIsTagSuggestionOpen(true);
-                              const next = event.key === "ArrowDown"
-                                ? (activeTagSuggestion + 1) % tagSuggestions.length
-                                : (activeTagSuggestion <= 0 ? tagSuggestions.length : activeTagSuggestion) - 1;
-                              setActiveTagSuggestion(next);
-                              document.getElementById(`tag-option-${tagSuggestions[next].id}`)?.scrollIntoView({ block: "nearest" });
-                            }
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              setIsTagSuggestionOpen(false);
-                              addTag(isTagSuggestionOpen ? tagSuggestions[activeTagSuggestion]?.name : undefined).catch(toError(setError));
-                            }
-                            if (event.key === "Escape") setIsTagSuggestionOpen(false);
-                          }}
-                          placeholder="Tag"
-                        />
-                        {isTagSuggestionOpen && tagSuggestions.length > 0 && createPortal(
-                          <div id="tag-suggestions" className="tagSuggestionList" ref={tagSuggestionListRef} style={tagSuggestionPosition} role="listbox" aria-label="标签建议">
-                            {tagSuggestions.map((tag, index) => (
-                              <button
-                                key={tag.id}
-                                id={`tag-option-${tag.id}`}
-                                type="button"
-                                className="tagSuggestionItem"
-                                role="option"
-                                aria-selected={index === activeTagSuggestion}
-                                onMouseDown={event => event.preventDefault()}
-                                onClick={() => {
-                                  void addTag(tag.name).catch(toError(setError));
-                                  setIsTagSuggestionOpen(false);
-                                }}
-                              >
-                                <span className="tagSuggestionDot" style={{ backgroundColor: resolveTagColor(tag) }} aria-hidden="true" />
-                                <span className="tagSuggestionName" title={tag.name}>{tag.name}</span>
-                              </button>
-                            ))}
-                          </div>,
-                          document.body
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        aria-label="Add tag to node"
-                        onClick={() => {
-                          setIsTagSuggestionOpen(false);
-                          void addTag().catch(toError(setError));
-                        }}
-                      >
-                        <Plus size={15} />
-                        <span>Add</span>
-                      </button>
-                    </div>
-                  </div>
                 </>
               ) : (
                 <div className="emptyInspector">No node selected</div>
               )}
-              <div className="inspectorSection tagManagerSection">
-                <button
-                  className="tagManagerToggle"
-                  type="button"
-                  aria-expanded={isTagManagerOpen}
-                  onClick={() => setIsTagManagerOpen(open => !open)}
-                >
-                  {isTagManagerOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                  <span>Manage tags</span>
-                  <small>{tags.length}</small>
-                </button>
-                {isTagManagerOpen && (
-                  <>
-                    <div className="tagManagerList">
-                      {tags.map(tag => (
-                        <div className="tagManagerRow" key={tag.id}>
-                          <span className="tagManagerDot" style={{ backgroundColor: resolveTagColor(tag) }} aria-hidden="true" />
-                          <input
-                            aria-label={`Rename tag ${tag.name}`}
-                            value={tag.name}
-                            onChange={event => updateTagDraft(tag.id, event.target.value)}
-                            onBlur={() => saveTag(tag).catch(toError(setError))}
-                            onKeyDown={event => {
-                              if (shouldIgnoreTextInputKeyDown(event)) return;
-                              if (event.key === "Enter") event.currentTarget.blur();
-                            }}
-                          />
-                          <button
-                            type="button"
-                            title="Delete tag"
-                            onClick={() => deleteTag(tag).catch(toError(setError))}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
+              <OverdueTasks nodes={overdueNodes} onOpen={openOverdueNode} />
             </aside>
           )}
-          {!isInspectorOpen && !isSystemTagsWorkspace && (
+          {!isInspectorOpen && !isSystemTagsWorkspace && !isRecycleBinWorkspace && (
             <button
               className="commentsRestoreButton"
               type="button"
@@ -3084,6 +3057,44 @@ export function App() {
         </div>
       )}
     </div>
+  );
+}
+
+function OverdueTasks({ nodes, onOpen }: { nodes: FlatNodeData[]; onOpen: (nodeId: string) => void }) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <section className="overduePanel" aria-labelledby="overdue-panel-title">
+      <button
+        className="overdueHeader"
+        type="button"
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed(current => !current)}
+      >
+        <span>
+          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          <CalendarX2 size={16} />
+          <strong id="overdue-panel-title">Overdue</strong>
+        </span>
+        <small>{nodes.length}</small>
+      </button>
+      {!collapsed && nodes.length > 0 ? (
+        <div className="overdueList">
+          {nodes.map(node => (
+            <button type="button" key={node.id} onClick={() => onOpen(node.id)}>
+              <span>{node.title || "Untitled"}</span>
+              <time dateTime={node.dueDate ?? undefined}>
+                {node.dueDate ? new Date(`${node.dueDate}T00:00:00`).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric"
+                }) : ""}
+              </time>
+            </button>
+          ))}
+        </div>
+      ) : !collapsed ? (
+        <p className="overdueEmpty">No overdue tasks</p>
+      ) : null}
+    </section>
   );
 }
 
@@ -3144,8 +3155,13 @@ function NodeRow({
   onMoveStart,
   onTagClick,
   onTagRemove,
+  tagCatalog,
+  onTagAdd,
+  onTagError,
   onConvertToWorkspace,
   onMoveToWorkspace,
+  onSplitLines,
+  onComplete,
   onDelete
 }: {
   node: FlatNodeData;
@@ -3175,11 +3191,17 @@ function NodeRow({
   onMoveStart: (event: PointerEvent<HTMLButtonElement>) => void;
   onTagClick: (tag: Tag) => void;
   onTagRemove: (tag: Tag) => void;
+  tagCatalog: Tag[];
+  onTagAdd: (name: string) => Promise<void>;
+  onTagError: (error: unknown) => void;
   onConvertToWorkspace: (title: string) => void;
   onMoveToWorkspace: (title: string) => void;
+  onSplitLines: (title: string) => Promise<void>;
+  onComplete: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const inlineTagSelectionRef = useRef<{ value: string; start: number } | null>(null);
   const titleMeasureRef = useRef<HTMLDivElement | null>(null);
   const dateInputRef = useRef<HTMLInputElement | null>(null);
   const markdownMenuRef = useRef<HTMLDivElement | null>(null);
@@ -3243,6 +3265,26 @@ function NodeRow({
       syncTimerRef.current = null;
     }, 300);
   }, [stageTitle, onPatchLocal]);
+
+  const inlineTags = useInlineTagInput({
+    nodeId: node.id, value: localTitle, inputRef: titleInputRef, tags: tagCatalog,
+    onAdd: onTagAdd, onError: onTagError,
+    onApply: (title, selectionStart) => {
+      inlineTagSelectionRef.current = { value: title, start: selectionStart };
+      setLocalTitle(title);
+      flushTitle(title);
+    }
+  });
+
+  useLayoutEffect(() => {
+    const selection = inlineTagSelectionRef.current;
+    const input = titleInputRef.current;
+    if (selection && input && document.activeElement === input && input.value === selection.value) {
+      input.setSelectionRange(selection.start, selection.start);
+      resizeTitleInput(input);
+    }
+    inlineTagSelectionRef.current = null;
+  }, [localTitle]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -3369,7 +3411,7 @@ function NodeRow({
 
   const openNodeContextMenu = (clientX: number, clientY: number) => {
     const menuWidth = 220;
-    const menuHeight = 96;
+    const menuHeight = 184;
     setMarkdownMenu(null);
     setNodeContextMenu({
       x: Math.max(12, Math.min(clientX, window.innerWidth - menuWidth - 12)),
@@ -3493,10 +3535,12 @@ function NodeRow({
             registerInput(element);
           }}
           className="nodeTitle"
+          {...inlineTags.inputProps}
           value={localTitle}
           placeholder="Untitled"
           rows={1}
-          onFocus={() => {
+          onFocus={event => {
+            inlineTags.refresh(event.currentTarget);
             if (!node.id.startsWith("temp-")) beginNodeEdit(node.id, "title", node.title);
             onFocusSelect();
           }}
@@ -3518,13 +3562,21 @@ function NodeRow({
             setLocalTitle(value);
             resizeTitleInput(event.currentTarget);
             syncTitleDebounced(value);
+            inlineTags.refresh(event.currentTarget);
           }}
-          onCompositionStart={() => onCompositionChange(true)}
+          onSelect={event => inlineTags.refresh(event.currentTarget)}
+          onCompositionStart={() => {
+            inlineTags.composing.current = true;
+            inlineTags.close();
+            onCompositionChange(true);
+          }}
           onCompositionEnd={event => {
             const value = event.currentTarget.value;
             setLocalTitle(value);
             syncTitleDebounced(value);
             onCompositionChange(false);
+            inlineTags.composing.current = false;
+            inlineTags.refresh(event.currentTarget);
           }}
           onPaste={event => {
             const input = event.currentTarget;
@@ -3542,6 +3594,8 @@ function NodeRow({
             commitMarkdownEdit(result.value, result.selectionStart, result.selectionEnd);
           }}
           onBlur={event => {
+            inlineTags.close();
+            inlineTags.composing.current = false;
             onCompositionChange(false);
             if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
             // A stale editor that was only focused must never write its old value.
@@ -3602,6 +3656,7 @@ function NodeRow({
           }}
           onKeyDown={event => {
             if (shouldIgnoreTextInputKeyDown(event)) return;
+            if (inlineTags.onKeyDown(event)) return;
             if (handleMarkdownShortcut(event, localTitle, patch => {
               if (patch.title !== undefined) {
                 setLocalTitle(patch.title);
@@ -3716,6 +3771,7 @@ function NodeRow({
         <div ref={titleMeasureRef} className="nodeTitleMeasure" aria-hidden="true">
           {localTitle}
         </div>
+        {inlineTags.menu}
       </div>
       <div className="nodeDateControl">
         <input
@@ -3894,6 +3950,39 @@ function NodeRow({
             type="button"
             role="menuitem"
             onClick={() => {
+              const complete = async () => {
+                flushTitle(localTitle);
+                if (!node.id.startsWith("temp-")) await flushNodeDraft(node.id, "title");
+                setNodeContextMenu(null);
+                await onComplete();
+              };
+              void complete().catch(onTagError);
+            }}
+          >
+            <CircleCheck size={16} />
+            <span>Complete</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!/[\r\n]/.test(localTitle)}
+            onClick={() => {
+              const split = async () => {
+                flushTitle(localTitle);
+                if (!node.id.startsWith("temp-")) await flushNodeDraft(node.id, "title");
+                setNodeContextMenu(null);
+                await onSplitLines(localTitle);
+              };
+              void split().catch(onTagError);
+            }}
+          >
+            <ListPlus size={16} />
+            <span>Split by line breaks</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
               flushTitle(localTitle);
               if (!node.id.startsWith("temp-")) void flushNodeDraft(node.id, "title").catch(() => {});
               setNodeContextMenu(null);
@@ -3952,30 +4041,112 @@ function TagResultRow({
   );
 }
 
-function SystemTagGroupRow({
-  group,
-  collapsed,
-  onToggle
+function RecycleBinRow({
+  entry,
+  restoring,
+  onRestore
 }: {
+  entry: RecycleBinEntry;
+  restoring: boolean;
+  onRestore: () => void;
+}) {
+  const nodesById = new Map([entry.node, ...entry.descendants].map(node => [node.id, node]));
+  const depthFor = (node: RecycleBinEntry["node"]) => {
+    let depth = 0;
+    let parentId = node.parentId;
+    while (parentId && parentId !== entry.node.id) {
+      const parent = nodesById.get(parentId);
+      if (!parent) break;
+      depth += 1;
+      parentId = parent.parentId;
+    }
+    return depth;
+  };
+
+  return (
+    <article className="recycleBinRow">
+      <div className="recycleBinMain">
+        <div className="recycleBinHeading">
+          <span className="recycleBinTitle">{entry.node.title || "Untitled"}</span>
+          <span className="recycleBinWorkspace">{entry.workspace.name}</span>
+        </div>
+        {entry.node.body && <p className="recycleBinBody">{entry.node.body}</p>}
+        <div className="recycleBinMeta">
+          <span>{new Date(entry.completedAt).toLocaleString()}</span>
+          <span>{entry.descendants.length === 0 ? "No nested outlines" : `${entry.descendants.length} nested outlines`}</span>
+        </div>
+        {entry.descendants.length > 0 && (
+          <details className="recycleBinChildren">
+            <summary>Show nested outlines</summary>
+            <div>
+              {entry.descendants.map(node => (
+                <div className="recycleBinChild" key={node.id} style={{ "--recycle-depth": depthFor(node) } as CSSProperties}>
+                  <span>{node.title || "Untitled"}</span>
+                  {node.body && <small>{node.body}</small>}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+      <button className="recycleBinRestore" type="button" disabled={restoring} onClick={onRestore}>
+        <Undo2 size={15} />
+        <span>{restoring ? "Restoring…" : "Restore"}</span>
+      </button>
+    </article>
+  );
+}
+
+function SystemTagGroupRow({ group, collapsed, onToggle, onRename, onDelete }: {
   group: TaggedNodeGroup;
   collapsed: boolean;
   onToggle: () => void;
+  onRename: (name: string) => Promise<void>;
+  onDelete: () => Promise<void>;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(group.name);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const act = async (action: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
+    try { await action(); setEditing(false); }
+    catch (error) { setError(error instanceof Error ? error.message : "Unable to update tag."); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+  const cancel = () => { setEditing(false); setName(group.name); setError(""); };
   return (
-    <button
-      className="systemTagGroupRow"
-      type="button"
-      aria-expanded={!collapsed}
-      onClick={onToggle}
-      style={{ "--system-tag-color": group.color } as CSSProperties}
-    >
-      <span className="systemTagDisclosure" aria-hidden="true">
-        {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-      </span>
-      <span className="systemTagColor" aria-hidden="true" />
-      <strong>#{group.name}</strong>
-      <span className="systemTagCount">{group.results.length}</span>
-    </button>
+    <div className="systemTagGroupRow" style={{ "--system-tag-color": group.color } as CSSProperties}>
+      {editing ? <>
+        <input className="systemTagRenameInput" autoFocus value={name} disabled={busy}
+          aria-label={`Rename tag ${group.name}`}
+          onChange={event => setName(event.target.value)}
+          onKeyDown={event => {
+            if (shouldIgnoreTextInputKeyDown(event)) return;
+            if (event.key === "Enter") { event.preventDefault(); void act(() => onRename(name)); }
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+          }} />
+        <button className="systemTagAction" type="button" title="Save tag name" aria-label="Save tag name" disabled={busy || !name.trim()}
+          onClick={() => void act(() => onRename(name))}><Check size={15} /></button>
+        <button className="systemTagAction" type="button" title="Cancel rename" aria-label="Cancel rename" disabled={busy} onClick={cancel}><X size={15} /></button>
+      </> : <>
+        <button className="systemTagGroupToggle" type="button" aria-expanded={!collapsed} onClick={onToggle}>
+          <span className="systemTagDisclosure" aria-hidden="true">{collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}</span>
+          <span className="systemTagColor" aria-hidden="true" />
+          <strong>#{group.name}</strong>
+          <span className="systemTagCount">{group.results.length}</span>
+        </button>
+        <button className="systemTagAction" type="button" title="Rename tag" aria-label={`Rename tag ${group.name}`} disabled={busy}
+          onClick={() => { setName(group.name); setEditing(true); setError(""); }}><Pencil size={14} /></button>
+        <button className="systemTagAction systemTagDelete" type="button" title="Delete tag" aria-label={`Delete tag ${group.name}`} disabled={busy}
+          onClick={() => void act(onDelete)}><Trash2 size={14} /></button>
+      </>}
+      {error && <span className="systemTagError" role="alert">{error}</span>}
+    </div>
   );
 }
 

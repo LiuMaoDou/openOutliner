@@ -51,6 +51,15 @@ export interface OutlineTreeNode {
   children: OutlineTreeNode[];
 }
 
+export type OutlineNode = Omit<OutlineTreeNode, "tags" | "fieldValues" | "children">;
+
+export interface RecycleBinEntry {
+  node: OutlineNode;
+  descendants: OutlineNode[];
+  workspace: Workspace;
+  completedAt: string;
+}
+
 export interface OutlineHistoryState {
   canUndo: boolean;
   canRedo: boolean;

@@ -10,6 +10,7 @@ import type {
   FieldValue,
   OutlineNode,
   OutlineTreeNode,
+  RecycleBinEntry,
   Tag,
   TaggedNodeGroup,
   TaggedNodeResult,
@@ -890,6 +891,95 @@ export class OutlinerService {
     });
   }
 
+  splitNodeByLineBreaks(id: string, title?: string): OutlineNode[] {
+    const node = this.getNode(id);
+    if (!node.parentId) throw new ValidationError("Workspace root nodes cannot be split.");
+    const lines = (title ?? node.title)
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map(line => line.trim())
+      .filter(Boolean);
+    if (lines.length < 2) throw new ValidationError("The outline needs at least two non-empty lines.");
+
+    const createdIds = lines.slice(1).map(() => randomUUID());
+    const now = timestamp();
+    return this.recordOutlineMutation(node.workspaceId, "Split outline", null, () => {
+      this.transaction(() => {
+        this.db
+          .prepare(
+            `UPDATE nodes SET position = position + ?, updated_at = ?
+             WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position > ?`
+          )
+          .run(createdIds.length, now, node.workspaceId, node.parentId, node.position);
+        this.db.prepare("UPDATE nodes SET title = ?, updated_at = ? WHERE id = ?").run(lines[0], now, node.id);
+
+        const insert = this.db.prepare(
+          `INSERT INTO nodes (
+            id, workspace_id, parent_id, position, title, body, due_date,
+            done, collapsed, deleted_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, '', NULL, 0, 0, NULL, ?, ?)`
+        );
+        createdIds.forEach((createdId, index) => {
+          insert.run(createdId, node.workspaceId, node.parentId, node.position + index + 1, lines[index + 1], now, now);
+        });
+        this.db.prepare("UPDATE workspaces SET updated_at = ? WHERE id = ?").run(now, node.workspaceId);
+      });
+      return [node.id, ...createdIds].map(nodeId => this.getNode(nodeId));
+    });
+  }
+
+  listRecycleBin(): RecycleBinEntry[] {
+    const rows = this.db
+      .prepare(
+        `SELECT nodes.* FROM nodes
+         JOIN nodes AS parent ON parent.id = nodes.parent_id
+         JOIN workspaces ON workspaces.id = nodes.workspace_id
+         WHERE nodes.deleted_at IS NOT NULL
+           AND parent.deleted_at IS NULL
+           AND nodes.id != workspaces.root_node_id
+         ORDER BY nodes.deleted_at DESC, nodes.updated_at DESC`
+      )
+      .all() as Row[];
+
+    return rows.map(row => {
+      const node = rowToNode(row);
+      const completedAt = text(row.deleted_at);
+      const subtree = (this.db
+        .prepare(
+          `WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM nodes WHERE id = ? AND deleted_at = ?
+            UNION ALL
+            SELECT nodes.id FROM nodes JOIN subtree ON nodes.parent_id = subtree.id
+            WHERE nodes.deleted_at = ?
+          )
+          SELECT nodes.* FROM nodes JOIN subtree ON subtree.id = nodes.id
+          ORDER BY nodes.position ASC, nodes.created_at ASC`
+        )
+        .all(node.id, completedAt, completedAt) as Row[]).map(rowToNode);
+      const childrenByParent = new Map<string, OutlineNode[]>();
+      for (const child of subtree) {
+        if (!child.parentId || child.id === node.id) continue;
+        const children = childrenByParent.get(child.parentId) ?? [];
+        children.push(child);
+        childrenByParent.set(child.parentId, children);
+      }
+      const descendants: OutlineNode[] = [];
+      const appendChildren = (parentId: string) => {
+        for (const child of childrenByParent.get(parentId) ?? []) {
+          descendants.push(child);
+          appendChildren(child.id);
+        }
+      };
+      appendChildren(node.id);
+      return {
+        node,
+        descendants,
+        workspace: this.getWorkspace(node.workspaceId),
+        completedAt
+      };
+    });
+  }
+
   restoreNode(id: string): OutlineTreeNode {
     const row = this.db
       .prepare("SELECT * FROM nodes WHERE id = ? AND deleted_at IS NOT NULL")
@@ -1096,7 +1186,35 @@ export class OutlinerService {
     return this.mapTaggedNodeRows(rows, normalized);
   }
 
-  listTaggedNodeGroups(): TaggedNodeGroup[] {
+  listAllTags(): Tag[] {
+    return this.db.prepare("SELECT * FROM tags ORDER BY name COLLATE NOCASE ASC, name ASC, created_at ASC").all().map(rowToTag);
+  }
+
+  renameTagGroup(tagName: string, nextName: string): { renamed: string; name: string } {
+    if (typeof tagName !== "string" || typeof nextName !== "string") throw new ValidationError("Tag name is required.");
+    const previous = tagName.trim().replace(/^#/, "");
+    const name = nextName.trim().replace(/^#/, "");
+    if (!previous || !name) throw new ValidationError("Tag name is required.");
+    return this.transaction(() => {
+      const tags = this.listAllTags().filter(tag => tag.name === previous);
+      if (!tags.length) throw new NotFoundError(`Tag not found: ${previous}`);
+      for (const tag of tags) this.updateTag(tag.id, { name });
+      return { renamed: previous, name };
+    });
+  }
+
+  deleteTagGroup(tagName: string): { deleted: string } {
+    if (typeof tagName !== "string") throw new ValidationError("Tag name is required.");
+    const name = tagName.trim().replace(/^#/, "");
+    if (!name) throw new ValidationError("Tag name is required.");
+    return this.transaction(() => {
+      if (!this.db.prepare("SELECT id FROM tags WHERE name = ?").get(name)) throw new NotFoundError(`Tag not found: ${name}`);
+      this.db.prepare("DELETE FROM tags WHERE name = ?").run(name);
+      return { deleted: name };
+    });
+  }
+
+  listTaggedNodeGroups(includeUnused = false): TaggedNodeGroup[] {
     const rows = this.db
       .prepare(
         `SELECT
@@ -1126,6 +1244,12 @@ export class OutlinerService {
       .all() as Row[];
     const results = this.mapTaggedNodeRows(rows);
     const groupsByName = new Map<string, TaggedNodeGroup>();
+
+    if (includeUnused) {
+      for (const tag of this.listAllTags()) {
+        if (!groupsByName.has(tag.name)) groupsByName.set(tag.name, { name: tag.name, color: resolveTagColor(tag), results: [] });
+      }
+    }
 
     rows.forEach((row, index) => {
       const matchedTag = rowToMatchedTag(row);

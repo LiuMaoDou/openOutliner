@@ -34,6 +34,13 @@ export interface OutlineNode {
   updatedAt: string;
 }
 
+export interface RecycleBinEntry {
+  node: OutlineNode;
+  descendants: OutlineNode[];
+  workspace: Workspace;
+  completedAt: string;
+}
+
 export interface Tag {
   id: string;
   workspaceId: string;

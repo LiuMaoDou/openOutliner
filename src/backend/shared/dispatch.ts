@@ -16,6 +16,11 @@ export function dispatch(service: OutlinerService, method: string, address: stri
     return;
   }
 
+  if (method === "GET" && path === "/api/recycle-bin") {
+    return json(service.listRecycleBin());
+    return;
+  }
+
   if (method === "GET" && path === "/api/workspace-folders") {
     return json( service.listWorkspaceFolders());
     return;
@@ -66,6 +71,18 @@ export function dispatch(service: OutlinerService, method: string, address: stri
         ? service.undoOutline(workspaceHistoryActionMatch[1])
         : service.redoOutline(workspaceHistoryActionMatch[1])
     );
+    return;
+  }
+
+  const restoreNodeMatch = path.match(/^\/api\/nodes\/([^/]+)\/restore$/);
+  if (method === "POST" && restoreNodeMatch) {
+    return json(service.restoreNode(restoreNodeMatch[1]));
+    return;
+  }
+
+  const splitNodeLinesMatch = path.match(/^\/api\/nodes\/([^/]+)\/split-lines$/);
+  if (method === "POST" && splitNodeLinesMatch) {
+    return json(service.splitNodeByLineBreaks(splitNodeLinesMatch[1], input.title));
     return;
   }
 
@@ -173,8 +190,20 @@ export function dispatch(service: OutlinerService, method: string, address: stri
   }
 
   if (method === "GET" && path === "/api/system/tag-tree") {
-    return json( service.listTaggedNodeGroups());
+    return json( service.listTaggedNodeGroups(url.searchParams.get("includeUnused") === "1"));
     return;
+  }
+
+  if (method === "GET" && path === "/api/system/tags") {
+    return json(service.listAllTags());
+  }
+
+  const systemTagMatch = path.match(/^\/api\/system\/tags\/([^/]+)$/);
+  if (method === "PATCH" && systemTagMatch) {
+    return json(service.renameTagGroup(decodeURIComponent(systemTagMatch[1]), input.name));
+  }
+  if (method === "DELETE" && systemTagMatch) {
+    return json(service.deleteTagGroup(decodeURIComponent(systemTagMatch[1])));
   }
 
   if (method === "POST" && path === "/api/tags") {
@@ -253,4 +282,3 @@ function requiredParam(url: URL, name: string): string {
   if (!value) throw new ValidationError(`Missing required query param: ${name}`);
   return value;
 }
-

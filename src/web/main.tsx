@@ -50,7 +50,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
 
 function OfflineApp() {
   const ready = React.useSyncExternalStore(subscribeSync, () => getSyncStatus().ready);
-  return <><SyncPanel />{ready && <App />}</>;
+  return ready ? <App /> : <SyncPanel />;
 }
 void initializeOffline().catch(error => console.error("Offline initialization failed", error));
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
