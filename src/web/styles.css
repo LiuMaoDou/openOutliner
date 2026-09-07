@@ -1292,8 +1292,8 @@ body.isResizingPanel .appShell {
 
 .outlineSurface {
   min-width: 0;
-  margin: 10px var(--content-edge-gap);
-  padding: 30px var(--content-gutter);
+  margin: 26px var(--content-edge-gap);
+  padding: 20px var(--content-gutter);
   overflow: auto;
   background: var(--content-surface);
   border-radius: 18px;
