@@ -3485,6 +3485,14 @@ function NodeRow({
         }
       }}
     >
+      {depth > 0 && (
+        <span className="nodeTreeGuides" aria-hidden="true">
+          {Array.from({ length: depth }, (_, index) => {
+            const guideDepth = index + 1;
+            return <i key={guideDepth} style={{ "--guide-depth": guideDepth } as CSSProperties} />;
+          })}
+        </span>
+      )}
       <button
         className="iconButton nodeMenuButton"
         type="button"
@@ -3511,7 +3519,9 @@ function NodeRow({
         disabled={node.childIds.length === 0}
         onClick={() => onToggle({ collapsed: !node.collapsed })}
       >
-        {node.childIds.length > 0 ? node.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} /> : null}
+        {node.childIds.length > 0 ? (
+          <span className={node.collapsed ? "disclosureTriangle right" : "disclosureTriangle down"} />
+        ) : null}
       </button>
       <button
         className={[

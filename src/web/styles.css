@@ -1421,6 +1421,118 @@ body.isResizingPanel .appShell {
   position: relative;
 }
 
+.nodeTreeGuides {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.nodeTreeGuides i {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: calc(41.5px + (var(--guide-depth) * 28px));
+  width: 1px;
+  background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
+  transform: scaleX(0.55);
+  transform-origin: center;
+}
+
+.dark .nodeTreeGuides i {
+  background: color-mix(in srgb, var(--muted-foreground) 24%, transparent);
+}
+
+.nodeRow .disclosureButton {
+  position: relative;
+  color: color-mix(in srgb, var(--foreground) 68%, transparent);
+  opacity: 0;
+  transition: opacity 120ms, border-color 120ms, background-color 120ms, color 120ms;
+}
+
+.nodeRow .nodeMenuButton {
+  position: relative;
+  opacity: 0;
+  transition: opacity 120ms, color 120ms;
+}
+
+.nodeRow:hover .nodeMenuButton,
+.nodeRow .nodeMenuButton:focus-visible {
+  opacity: 1;
+}
+
+.nodeRow .nodeMenuButton::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 14px;
+  content: "";
+  background: var(--content-surface);
+  border-radius: 3px;
+  transform: translate(-50%, -50%);
+}
+
+.nodeRow .nodeMenuButton svg {
+  position: relative;
+  z-index: 1;
+}
+
+.nodeRow .nodeMenuButton:hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.dark .nodeRow .nodeMenuButton:hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.nodeRow .disclosureButton::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  content: "";
+  background: var(--content-surface);
+  border-radius: 3px;
+  transform: translate(-50%, -50%);
+}
+
+.nodeRow:hover .disclosureButton:not(:disabled),
+.nodeRow .disclosureButton:focus-visible {
+  opacity: 1;
+}
+
+.disclosureTriangle {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 0;
+  height: 0;
+}
+
+.disclosureTriangle.right {
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid currentColor;
+}
+
+.disclosureTriangle.down {
+  border-top: 7px solid currentColor;
+  border-right: 5px solid transparent;
+  border-left: 5px solid transparent;
+}
+
+@media (hover: none) {
+  .nodeRow .nodeMenuButton,
+  .nodeRow .disclosureButton:not(:disabled) {
+    opacity: 1;
+  }
+}
+
 .nodeRow::before {
   position: absolute;
   right: 8px;
@@ -1706,11 +1818,11 @@ body.isResizingPanel .appShell {
 }
 
 .nodeRow:hover {
-  background: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: transparent;
 }
 
 .nodeRow.selected {
-  background: color-mix(in srgb, var(--selected) 72%, transparent);
+  background: transparent;
   border-color: transparent;
 }
 
@@ -1731,7 +1843,7 @@ body.isResizingPanel .appShell {
 }
 
 .nodeRow.active {
-  background: var(--selected);
+  background: transparent;
   box-shadow: none;
 }
 
