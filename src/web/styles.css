@@ -1452,12 +1452,15 @@ body.isResizingPanel .appShell {
 .nodeRow .nodeMenuButton {
   position: relative;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 120ms, color 120ms;
 }
 
 .nodeRow:hover .nodeMenuButton,
-.nodeRow .nodeMenuButton:focus-visible {
+.nodeRow .nodeMenuButton:focus-visible,
+.nodeRow .nodeMenuButton[aria-expanded="true"] {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .nodeRow .nodeMenuButton::before {
@@ -1527,9 +1530,15 @@ body.isResizingPanel .appShell {
 }
 
 @media (hover: none) {
-  .nodeRow .nodeMenuButton,
   .nodeRow .disclosureButton:not(:disabled) {
     opacity: 1;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .nodeRow .nodeMenuButton {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
@@ -1985,11 +1994,6 @@ body.isSelectingNodes .nodeTitlePreview {
   opacity: 0;
 }
 
-.nodeMenuButton {
-  opacity: 0;
-  pointer-events: none;
-}
-
 .nodeMenuButton:hover:not(:disabled),
 .nodeMenuButton:active,
 .nodeMenuButton:focus-visible,
@@ -2001,13 +2005,6 @@ body.isSelectingNodes .nodeTitlePreview {
 .nodeMenuButton:focus-visible {
   color: var(--foreground);
   background: var(--accent);
-}
-
-.nodeRow:hover .nodeMenuButton,
-.nodeMenuButton:focus-visible,
-.nodeMenuButton[aria-expanded="true"] {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .nodeRow:hover .iconButton.danger,
@@ -3599,11 +3596,6 @@ body.isSelectingNodes .nodeTitlePreview {
   .nodeTags .nodeTagRemove {
     width: 22px;
     opacity: 1;
-    pointer-events: auto;
-  }
-
-  .nodeMenuButton {
-    opacity: 0.72;
     pointer-events: auto;
   }
 }
