@@ -472,6 +472,48 @@ describe("OutlinerService", () => {
     expect(() => service.restoreNode(node.id)).toThrow("Node is not deleted.");
   });
 
+  it("empties deleted outlines across workspaces with nested deletions and related data", () => {
+    const first = service.createWorkspace("First");
+    const second = service.createWorkspace("Second");
+    const untouched = service.createWorkspace("Untouched");
+    const live = service.createNode({ parentId: first.rootNodeId, title: "Keep me" });
+    service.createNode({ parentId: untouched.rootNodeId, title: "Keep history" });
+    const parent = service.createNode({ parentId: first.rootNodeId, title: "Delete parent" });
+    const child = service.createNode({ parentId: parent.id, title: "Previously deleted child" });
+    const other = service.createNode({ parentId: second.rootNodeId, title: "Delete other" });
+    const tag = service.setNodeTag(child.id, "test");
+    const field = service.createFieldDefinition({ workspaceId: first.id, tagId: tag.id, name: "Note", type: "text" });
+    service.setFieldValue(child.id, field.id, "Remove value");
+    service.deleteNode(child.id);
+    service.deleteNode(parent.id);
+    service.deleteNode(other.id);
+    expect(dispatch(service, "DELETE", "/api/recycle-bin")).toEqual({ deletedCount: 3 });
+    expect(service.listRecycleBin()).toEqual([]);
+    expect(db.prepare("SELECT id FROM nodes WHERE deleted_at IS NOT NULL").all()).toEqual([]);
+    expect(db.prepare("SELECT * FROM node_tags WHERE node_id = ?").all(child.id)).toEqual([]);
+    expect(db.prepare("SELECT * FROM field_values WHERE node_id = ?").all(child.id)).toEqual([]);
+    expect(service.getTree(first.rootNodeId).children.map(node => node.id)).toEqual([live.id]);
+    expect(service.getNode(second.rootNodeId)).toBeDefined();
+    expect(service.listTags(first.id).map(item => item.id)).toContain(tag.id);
+    expect(service.getOutlineHistoryState(first.id).canUndo).toBe(false);
+    expect(service.getOutlineHistoryState(second.id).canUndo).toBe(false);
+    expect(service.getOutlineHistoryState(untouched.id).canUndo).toBe(true);
+    expect(() => service.restoreNode(parent.id)).toThrow("Node is not deleted");
+    expect(service.emptyRecycleBin()).toEqual({ deletedCount: 0 });
+    expect(service.getOutlineHistoryState(untouched.id).canUndo).toBe(true);
+  });
+
+  it("refuses to cascade permanent deletion into an active child", () => {
+    const workspace = service.createWorkspace("Guard");
+    const parent = service.createNode({ parentId: workspace.rootNodeId, title: "Parent" });
+    const child = service.createNode({ parentId: parent.id, title: "Active child" });
+    db.prepare("UPDATE nodes SET deleted_at = ? WHERE id = ?").run(new Date().toISOString(), parent.id);
+    expect(() => service.emptyRecycleBin()).toThrow("active outline");
+    expect(service.getNode(child.id).title).toBe("Active child");
+    expect(service.listRecycleBin()).toHaveLength(1);
+    expect(service.getOutlineHistoryState(workspace.id).canUndo).toBe(true);
+  });
+
   it("updates and deletes workspaces", () => {
     const workspace = service.createWorkspace("Draft", "rocket");
     const renamed = service.updateWorkspace(workspace.id, { name: "Personal" });

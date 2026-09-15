@@ -980,6 +980,32 @@ export class OutlinerService {
     });
   }
 
+  emptyRecycleBin(): { deletedCount: number } {
+    return this.transaction(() => {
+      // Reject inconsistent trees rather than cascading into active outlines.
+      const protectedNode = this.db.prepare(`
+        SELECT nodes.id FROM nodes
+        LEFT JOIN nodes AS parent ON parent.id = nodes.parent_id
+        WHERE (nodes.deleted_at IS NULL AND parent.deleted_at IS NOT NULL)
+          OR (nodes.deleted_at IS NOT NULL AND nodes.id IN (SELECT root_node_id FROM workspaces))
+        LIMIT 1
+      `).get();
+      if (protectedNode) throw new ValidationError("Cannot empty Recycle Bin: an active outline or workspace root would be deleted.");
+
+      const row = this.db.prepare("SELECT COUNT(*) AS count FROM nodes WHERE deleted_at IS NOT NULL").get() as Row;
+      const deletedCount = Number(row.count);
+      if (!deletedCount) return { deletedCount: 0 };
+      // History snapshots must not resurrect permanently removed content.
+      this.db.exec(`
+        DELETE FROM outline_history WHERE workspace_id IN (
+          SELECT DISTINCT workspace_id FROM nodes WHERE deleted_at IS NOT NULL
+        );
+        DELETE FROM nodes WHERE deleted_at IS NOT NULL;
+      `);
+      return { deletedCount };
+    });
+  }
+
   restoreNode(id: string): OutlineTreeNode {
     const row = this.db
       .prepare("SELECT * FROM nodes WHERE id = ? AND deleted_at IS NOT NULL")

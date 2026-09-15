@@ -21,6 +21,10 @@ export function dispatch(service: OutlinerService, method: string, address: stri
     return;
   }
 
+  if (method === "DELETE" && path === "/api/recycle-bin") {
+    return json(service.emptyRecycleBin());
+  }
+
   if (method === "GET" && path === "/api/workspace-folders") {
     return json( service.listWorkspaceFolders());
     return;

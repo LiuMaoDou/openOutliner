@@ -337,6 +337,7 @@ export function App() {
   const [systemTagGroups, setSystemTagGroups] = useState<TaggedNodeGroup[]>([]);
   const [recycleBinEntries, setRecycleBinEntries] = useState<RecycleBinEntry[]>([]);
   const [restoringRecycleBinIds, setRestoringRecycleBinIds] = useState<Set<string>>(() => new Set());
+  const [emptyingRecycleBin, setEmptyingRecycleBin] = useState(false);
   const [collapsedSystemTags, setCollapsedSystemTags] = useState<Set<string>>(() =>
     readStoredIdSet(COLLAPSED_SYSTEM_TAGS_STORAGE_KEY)
   );
@@ -1841,6 +1842,7 @@ export function App() {
   };
 
   const restoreRecycleBinEntry = async (entry: RecycleBinEntry) => {
+    if (emptyingRecycleBin) return;
     setRestoringRecycleBinIds(current => new Set(current).add(entry.node.id));
     try {
       await apiPost<OutlineTreeNode>(`/api/nodes/${entry.node.id}/restore`, {});
@@ -1851,6 +1853,22 @@ export function App() {
         next.delete(entry.node.id);
         return next;
       });
+    }
+  };
+
+  const emptyRecycleBin = async () => {
+    if (emptyingRecycleBin || restoringRecycleBinIds.size || !recycleBinEntries.length) return;
+    if (!window.confirm("Permanently delete all outlines in Recycle Bin, including their children, across all workspaces? This includes items hidden by search. This cannot be undone; undo history in affected workspaces will also be cleared.")) return;
+    setEmptyingRecycleBin(true);
+    recycleBinRequestRef.current += 1;
+    try {
+      await apiDelete<{ deletedCount: number }>("/api/recycle-bin");
+      recycleBinRequestRef.current += 1;
+      setRecycleBinEntries([]);
+      setPendingDelete(null);
+      await loadRecycleBin();
+    } finally {
+      setEmptyingRecycleBin(false);
     }
   };
 
@@ -2749,7 +2767,7 @@ export function App() {
                     <Trash2 size={21} strokeWidth={2.2} />
                     <h1>Recycle Bin</h1>
                   </div>
-                  <span>Completed outlines · Restore anytime</span>
+                  <span>Completed and deleted outlines</span>
                 </div>
               ) : isSystemTagsWorkspace ? (
                 <div className="systemWorkspaceTitle">
@@ -2783,6 +2801,17 @@ export function App() {
                   <span>Clear</span>
                 </button>
               )}
+              {isRecycleBinWorkspace && (
+                <button
+                  className="recycleBinEmpty"
+                  type="button"
+                  disabled={emptyingRecycleBin || restoringRecycleBinIds.size > 0 || recycleBinEntries.length === 0}
+                  onClick={() => emptyRecycleBin().catch(toError(setError))}
+                >
+                  <Trash2 size={15} />
+                  <span>{emptyingRecycleBin ? "Deleting…" : "Delete all"}</span>
+                </button>
+              )}
             </div>
             <div className="outlineList">
               {visibleItemCount > 0 ? (
@@ -2806,6 +2835,7 @@ export function App() {
                           <RecycleBinRow
                             entry={entry}
                             restoring={restoringRecycleBinIds.has(entry.node.id)}
+                            disabled={emptyingRecycleBin}
                             onRestore={() => restoreRecycleBinEntry(entry).catch(toError(setError))}
                           />
                         </div>
@@ -4054,10 +4084,12 @@ function TagResultRow({
 function RecycleBinRow({
   entry,
   restoring,
+  disabled,
   onRestore
 }: {
   entry: RecycleBinEntry;
   restoring: boolean;
+  disabled: boolean;
   onRestore: () => void;
 }) {
   const nodesById = new Map([entry.node, ...entry.descendants].map(node => [node.id, node]));
@@ -4099,7 +4131,7 @@ function RecycleBinRow({
           </details>
         )}
       </div>
-      <button className="recycleBinRestore" type="button" disabled={restoring} onClick={onRestore}>
+      <button className="recycleBinRestore" type="button" disabled={disabled || restoring} onClick={onRestore}>
         <Undo2 size={15} />
         <span>{restoring ? "Restoring…" : "Restore"}</span>
       </button>

@@ -15,6 +15,30 @@ function fixture() {
   return { db, service, workspace, node, sync: new SyncService(db) };
 }
 describe("offline sync", () => {
+  it("syncs an emptied recycle bin and rejects a stale restore without resurrecting content", () => {
+    const { db, service, node, sync } = fixture();
+    const replica = openDatabase(":memory:");
+    try {
+      const removed = service.createNode({ parentId: node.id, title: "Deleted" });
+      service.setNodeTag(removed.id, "removed-tag");
+      service.deleteNode(removed.id);
+      const base = snapshot(db);
+      replaceSnapshot(replica, base);
+      const local = new OutlinerService(replica);
+      local.restoreNode(removed.id);
+      const staleRestore = changesBetween(base, snapshot(replica));
+      replaceSnapshot(replica, base);
+      dispatch(local, "DELETE", "/api/recycle-bin");
+      const request = { changes: changesBetween(base, snapshot(replica)) };
+      const response = sync.push(request);
+      expect(response.data.nodes.some(row => row.id === removed.id)).toBe(false);
+      expect(service.getNode(node.id).title).toBe("Original");
+      expect(sync.push(request).revision).toBe(response.revision);
+      expect(() => sync.push({ changes: staleRestore })).toThrow(SyncConflict);
+      expect(service.listRecycleBin()).toEqual([]);
+      expect(snapshot(db)).toEqual(response.data);
+    } finally { replica.close(); db.close(); }
+  });
   it("imports deleted descendants after their live ancestor moved to another workspace", () => {
     const { db, service, node, sync } = fixture();
     const replica = openDatabase(":memory:");
@@ -167,6 +191,10 @@ describe("offline sync", () => {
       expect(dispatch(service, "GET", `/api/nodes/${node.id}`).title).toBe("Offline");
       dispatch(service, "POST", "/api/import/markdown", { workspaceId: workspace.id, content: "- Imported" });
       expect(dispatch(service, "GET", "/api/export/markdown")).toContain("Imported");
+      dispatch(service, "DELETE", `/api/nodes/${node.id}`);
+      expect(dispatch(service, "DELETE", "/api/recycle-bin").deletedCount).toBeGreaterThan(0);
+      expect(dispatch(service, "GET", "/api/recycle-bin")).toEqual([]);
+      expect(snapshot(sql).nodes.some(row => row.id === node.id)).toBe(false);
       const exported = db.export();
       const restored = new SQL.Database(exported);
       expect(restored.exec("SELECT title FROM nodes WHERE title='Imported'")[0].values[0][0]).toBe("Imported");
