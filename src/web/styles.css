@@ -1452,11 +1452,11 @@ body.isResizingPanel .appShell {
 .nodeRow .nodeMenuButton {
   position: relative;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
   transition: opacity 120ms, color 120ms;
 }
 
-.nodeRow:hover .nodeMenuButton,
+.nodeRow .nodeMenuButton:hover,
 .nodeRow .nodeMenuButton:focus-visible,
 .nodeRow .nodeMenuButton[aria-expanded="true"] {
   opacity: 1;
