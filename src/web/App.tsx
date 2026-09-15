@@ -2401,7 +2401,7 @@ export function App() {
             {!sidebarCompact && (
               <span className="systemWorkspaceLabel">
                 <span>Tags</span>
-                <small>System</small>
+                <small className="systemWorkspaceBadge">System</small>
               </span>
             )}
           </button>
@@ -2417,7 +2417,7 @@ export function App() {
             {!sidebarCompact && (
               <span className="systemWorkspaceLabel">
                 <span>Recycle Bin</span>
-                <small>{recycleBinEntries.length || "System"}</small>
+                <small className={recycleBinEntries.length ? undefined : "systemWorkspaceBadge"}>{recycleBinEntries.length || "System"}</small>
               </span>
             )}
           </button>
