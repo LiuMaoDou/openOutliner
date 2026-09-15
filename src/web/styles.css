@@ -55,6 +55,14 @@
   --topbar-background: rgba(255, 255, 255, 0.88);
   --surface: #fcfcfc;
   --content-surface: #ffffff;
+  --outline-grid-line: rgba(95, 99, 180, 0.075);
+  --outline-glow-size: clamp(460px, 48vw, 720px);
+  --outline-glow-purple: rgba(151, 139, 244, 0.32);
+  --outline-glow-teal: rgba(91, 193, 208, 0.26);
+  --outline-glow-top: -180px;
+  --outline-glow-right: -160px;
+  --outline-glow-bottom: -220px;
+  --outline-glow-left: -180px;
   --content-shadow:
     0 4px 14px rgba(24, 24, 27, 0.045),
     -6px 0 14px -12px rgba(24, 24, 27, 0.1),
@@ -128,6 +136,14 @@
   --topbar-background: rgba(9, 9, 11, 0.86);
   --surface: #0f0f12;
   --content-surface: #111115;
+  --outline-grid-line: rgba(146, 149, 255, 0.05);
+  --outline-glow-size: 460px;
+  --outline-glow-purple: rgba(134, 137, 246, 0.2);
+  --outline-glow-teal: rgba(102, 197, 210, 0.16);
+  --outline-glow-top: -250px;
+  --outline-glow-right: -120px;
+  --outline-glow-bottom: -310px;
+  --outline-glow-left: -150px;
   --content-shadow:
     0 12px 36px rgba(0, 0, 0, 0.34),
     -12px 0 28px -18px rgba(0, 0, 0, 0.62),
@@ -1291,6 +1307,8 @@ body.isResizingPanel .appShell {
 }
 
 .outlineSurface {
+  position: relative;
+  isolation: isolate;
   min-width: 0;
   margin: 26px var(--content-edge-gap);
   padding: 20px var(--content-gutter);
@@ -1298,6 +1316,37 @@ body.isResizingPanel .appShell {
   background: var(--content-surface);
   border-radius: 18px;
   box-shadow: var(--content-shadow);
+}
+
+/* timeFri's fading grid and purple/teal ambient light, scoped to the outline. */
+.outlineSurface::before,
+.outlineSurface::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+}
+
+.outlineSurface::before {
+  background:
+    linear-gradient(var(--outline-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--outline-grid-line) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.75), transparent 82%);
+}
+
+.outlineSurface::after {
+  background-image:
+    radial-gradient(circle, var(--outline-glow-purple), transparent 68%),
+    radial-gradient(circle, var(--outline-glow-teal), transparent 68%);
+  background-size: var(--outline-glow-size) var(--outline-glow-size);
+  background-position:
+    right var(--outline-glow-right) top var(--outline-glow-top),
+    left var(--outline-glow-left) bottom var(--outline-glow-bottom);
+  background-repeat: no-repeat;
+  opacity: 0.7;
 }
 
 .outlineHeader {
