@@ -129,7 +129,7 @@
   --topbar-background: rgba(9, 9, 11, 0.86);
   --surface: #0f0f12;
   --content-surface: #111115;
-  --outline-grid-line: rgba(146, 149, 255, 0.05);
+  --outline-grid-line: rgba(146, 149, 255, 0.08);
   --content-shadow:
     0 12px 36px rgba(0, 0, 0, 0.34),
     -12px 0 28px -18px rgba(0, 0, 0, 0.62),
@@ -1322,7 +1322,7 @@ body.isResizingPanel .appShell {
   overflow: auto;
   background-color: var(--outline-grid-surface);
   background-image:
-    linear-gradient(to bottom, color-mix(in srgb, var(--outline-grid-surface) 25%, transparent), var(--outline-grid-surface) 82%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--outline-grid-surface) 25%, transparent) 15%, var(--outline-grid-surface) 100%),
     linear-gradient(var(--outline-grid-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--outline-grid-line) 1px, transparent 1px);
   background-size: 100% 100%, 32px 32px, 32px 32px;
