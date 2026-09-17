@@ -1885,9 +1885,9 @@ body.isResizingPanel .appShell {
   background: transparent;
 }
 
-.nodeRow.selected {
-  background: transparent;
-  border-color: transparent;
+:where(.outlineList.hasMultiSelection) .nodeRow.selected {
+  background: color-mix(in srgb, var(--ring) 16%, var(--content-surface));
+  border-color: var(--selected-border);
 }
 
 .nodeRow.selection-start {
@@ -1907,7 +1907,6 @@ body.isResizingPanel .appShell {
 }
 
 .nodeRow.active {
-  background: transparent;
   box-shadow: none;
 }
 

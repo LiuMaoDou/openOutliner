@@ -2813,7 +2813,7 @@ export function App() {
                 </button>
               )}
             </div>
-            <div className="outlineList">
+            <div className={selectedNodeIds.size > 1 ? "outlineList hasMultiSelection" : "outlineList"}>
               {visibleItemCount > 0 ? (
                 <div
                   className="virtualOutlineList"
