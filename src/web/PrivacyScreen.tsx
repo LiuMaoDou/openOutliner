@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react"
 
-const IDLE_TIMEOUT_MS = 10_000
+const IDLE_TIMEOUT_MS = 5 * 60_000
 const PRIVACY_LOCK_EVENT = "outliner-privacy-lock"
 const ACTIVITY_EVENTS = ["pointerdown", "keydown", "input", "wheel", "scroll", "touchmove"] as const
 
