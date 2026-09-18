@@ -1338,6 +1338,7 @@ body.isResizingPanel .appShell {
 
 .outlineSurface {
   --outline-grid-surface: var(--content-surface);
+  scrollbar-color: color-mix(in srgb, var(--scrollbar-thumb) 50%, transparent) transparent;
   min-width: 0;
   margin: 26px var(--content-edge-gap);
   padding: 20px var(--content-gutter);
@@ -1351,6 +1352,10 @@ body.isResizingPanel .appShell {
   background-attachment: fixed;
   border-radius: 18px;
   box-shadow: var(--content-shadow);
+}
+
+.outlineSurface::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--scrollbar-thumb) 50%, transparent);
 }
 
 .outlineHeader {
@@ -3508,6 +3513,11 @@ body.isSelectingNodes .nodeTitlePreview {
   .contentGrid {
     grid-template-columns: 1fr;
     overflow-y: auto;
+    scrollbar-color: color-mix(in srgb, var(--scrollbar-thumb) 50%, transparent) transparent;
+  }
+
+  .contentGrid::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--scrollbar-thumb) 50%, transparent);
   }
 
   .inspector {
