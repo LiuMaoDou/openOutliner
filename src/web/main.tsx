@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
 import { ThemeProvider } from "./theme";
+import { PrivacyScreen } from "./PrivacyScreen";
 
 class ErrorBoundary extends React.Component<{
   children: React.ReactNode
@@ -43,6 +44,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
     <ErrorBoundary>
       <ThemeProvider>
         <OfflineApp />
+        <PrivacyScreen />
       </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>

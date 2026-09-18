@@ -18,6 +18,7 @@ import {
   Italic,
   ListPlus,
   Ellipsis,
+  EyeOff,
   Monitor,
   Moon,
   Palette,
@@ -70,6 +71,7 @@ import {
 } from "./api";
 import { useTheme, type Theme } from "./theme";
 import { SyncPanel } from "./SyncPanel";
+import { activatePrivacyScreen } from "./PrivacyScreen";
 import { useInlineTagInput } from "./InlineTagInput";
 import { resolveTagColor } from "../backend/shared/tagColors";
 import { beginNodeEdit, endNodeEdit, flushNodeDraft, readNodeDraft, stageNodeDraft } from "./offline";
@@ -2504,6 +2506,15 @@ export function App() {
         </div>
         <div className="sidebarFooter">
           <SyncPanel embedded compact={sidebarCompact} onImport={() => fileInputRef.current?.click()} onExport={exportFile} />
+          <button
+            className="sidebarIconButton"
+            type="button"
+            title="防窥：立即虚化"
+            aria-label="立即虚化"
+            onClick={activatePrivacyScreen}
+          >
+            <EyeOff size={17} />
+          </button>
           <button
             className="sidebarIconButton"
             type="button"
