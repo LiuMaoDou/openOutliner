@@ -70,6 +70,7 @@ import {
   type WorkspaceFolder
 } from "./api";
 import { useTheme, type Theme } from "./theme";
+import { getDueReminderCutoff, getDueReminderNodes } from "./dueTasks";
 import { SyncPanel } from "./SyncPanel";
 import { activatePrivacyScreen } from "./PrivacyScreen";
 import { useInlineTagInput } from "./InlineTagInput";
@@ -811,20 +812,22 @@ export function App() {
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
   const isSystemTagsWorkspace = workspaceId === SYSTEM_TAGS_WORKSPACE_ID;
   const isRecycleBinWorkspace = workspaceId === SYSTEM_RECYCLE_BIN_WORKSPACE_ID;
-  const overdueNodes = useMemo(() => {
-    if (!flatState) return [];
-    const now = new Date();
-    const today = [
-      now.getFullYear(),
-      String(now.getMonth() + 1).padStart(2, "0"),
-      String(now.getDate()).padStart(2, "0")
-    ].join("-");
-    return Object.values(flatState.nodes)
-      .filter(node => node.id !== flatState.rootId && !node.done && Boolean(node.dueDate) && node.dueDate! < today)
-      .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? "")
-        || left.position - right.position
-        || left.title.localeCompare(right.title));
-  }, [flatState]);
+  const [dueReminderCutoff, setDueReminderCutoff] = useState(() => getDueReminderCutoff());
+  useEffect(() => {
+    const refresh = () => setDueReminderCutoff(getDueReminderCutoff());
+    const interval = window.setInterval(refresh, 60_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
+  const overdueNodes = useMemo(
+    () => getDueReminderNodes(flatState, dueReminderCutoff),
+    [flatState, dueReminderCutoff]
+  );
   const draggingNodeIds = useMemo(() => new Set(dragState?.draggingIds ?? []), [dragState?.draggingIds]);
   const rootWorkspaces = useMemo(
     () => workspaces.filter(workspace => !workspace.folderId && !workspace.parentWorkspaceId),
@@ -3108,6 +3111,7 @@ function OverdueTasks({ nodes, onOpen }: { nodes: FlatNodeData[]; onOpen: (nodeI
       <button
         className="overdueHeader"
         type="button"
+        title="Unfinished tasks due by tomorrow, including overdue tasks"
         aria-expanded={!collapsed}
         onClick={() => setCollapsed(current => !current)}
       >
@@ -3133,7 +3137,7 @@ function OverdueTasks({ nodes, onOpen }: { nodes: FlatNodeData[]; onOpen: (nodeI
           ))}
         </div>
       ) : !collapsed ? (
-        <p className="overdueEmpty">No overdue tasks</p>
+        <p className="overdueEmpty">No tasks due by tomorrow</p>
       ) : null}
     </section>
   );
