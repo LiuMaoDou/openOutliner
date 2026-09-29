@@ -16,6 +16,10 @@ export function dispatch(service: OutlinerService, method: string, address: stri
     return;
   }
 
+  if (method === "GET" && path === "/api/due-reminders") {
+    return json(service.listDueReminderNodes(url.searchParams.get("cutoff") ?? ""));
+  }
+
   if (method === "GET" && path === "/api/recycle-bin") {
     return json(service.listRecycleBin());
     return;

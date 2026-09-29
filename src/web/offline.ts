@@ -155,7 +155,10 @@ const locked = <T>(fn: () => Promise<T>) => {
   return navigator.locks.request("openoutliner-data", fn);
 };
 const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("openoutliner-data") : null;
-function changed() { channel?.postMessage("changed"); }
+function changed() {
+  channel?.postMessage("changed");
+  window.dispatchEvent(new Event("outliner-data-changed"));
+}
 channel?.addEventListener("message", () => { window.dispatchEvent(new Event("outliner-sync")); void refreshStatus(); });
 async function refreshStatus() {
   await locked(async () => {

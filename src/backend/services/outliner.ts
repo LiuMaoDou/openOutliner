@@ -928,6 +928,19 @@ export class OutlinerService {
     });
   }
 
+  listDueReminderNodes(cutoff: string): OutlineNode[] {
+    const date = normalizeDueDate(cutoff);
+    if (!date) throw new ValidationError("A reminder cutoff date is required.");
+    return this.db.prepare(
+      `SELECT nodes.* FROM nodes
+       JOIN workspaces ON workspaces.id = nodes.workspace_id
+       WHERE nodes.deleted_at IS NULL AND nodes.done = 0
+         AND nodes.id != workspaces.root_node_id
+         AND nodes.due_date IS NOT NULL AND nodes.due_date <= ?
+       ORDER BY nodes.due_date ASC, nodes.position ASC, nodes.title ASC, nodes.id ASC`
+    ).all(date).map(rowToNode);
+  }
+
   listRecycleBin(): RecycleBinEntry[] {
     const rows = this.db
       .prepare(

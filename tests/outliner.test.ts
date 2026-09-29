@@ -48,6 +48,7 @@ import {
   isMarkdownThematicBreak,
   remarkLiteralHtml,
   shouldIgnoreTextInputKeyDown,
+  shouldHandleOutlineSelectAll,
   shouldHandleMultiSelectionDelete,
   shouldHandleMultiSelectionTab,
   nextCollapsedWorkspaceFolderIds,
@@ -91,6 +92,49 @@ afterEach(() => {
 });
 
 describe("OutlinerService", () => {
+  it("selects outline rows with either platform shortcut while preserving other editors and IME", () => {
+    expect(shouldHandleOutlineSelectAll({ key: "a", ctrlKey: true }, false, false)).toBe(true);
+    expect(shouldHandleOutlineSelectAll({ key: "A", metaKey: true }, true, true)).toBe(true);
+    expect(shouldHandleOutlineSelectAll({ key: "a", metaKey: true }, true, false)).toBe(false);
+    for (const patch of [{ altKey: true }, { shiftKey: true }, { defaultPrevented: true },
+      { isComposing: true }, { nativeEvent: { keyCode: 229 } }]) {
+      expect(shouldHandleOutlineSelectAll({ key: "a", ctrlKey: true, ...patch }, true, true)).toBe(false);
+    }
+    expect(shouldHandleOutlineSelectAll({ key: "a" }, true, true)).toBeFalsy();
+  });
+
+  it("queries reminders across all pages and refreshes after edits, deletion, restoration and moves", () => {
+    const first = service.createWorkspace("First page");
+    const second = service.createWorkspace("Nested page", undefined, undefined, first.id);
+    const due = (parentId: string, title: string, dueDate = "2026-09-21") => {
+      const created = service.createNode({ parentId, title });
+      return service.updateNode(created.id, { dueDate });
+    };
+    const firstTask = due(first.rootNodeId, "First task");
+    const parent = service.createNode({ parentId: second.rootNodeId, title: "Collapsed parent" });
+    service.updateNode(parent.id, { collapsed: true });
+    const hidden = due(parent.id, "Hidden task", "2026-09-20");
+    const tomorrow = due(second.rootNodeId, "Tomorrow", "2026-09-22");
+    due(second.rootNodeId, "Later", "2026-09-23");
+    service.createNode({ parentId: second.rootNodeId, title: "Undated" });
+    const completed = due(first.rootNodeId, "Completed");
+    service.updateNode(completed.id, { done: true });
+    service.updateNode(first.rootNodeId, { dueDate: "2026-09-20" });
+    const query = () => dispatch(service, "GET", "/api/due-reminders?cutoff=2026-09-22") as { id: string; workspaceId: string }[];
+    expect(query().map(node => node.id)).toEqual([hidden.id, firstTask.id, tomorrow.id]);
+    service.deleteNode(parent.id);
+    expect(query().map(node => node.id)).toEqual([firstTask.id, tomorrow.id]);
+    service.restoreNode(parent.id);
+    service.moveNodesToWorkspace([firstTask.id], second.id);
+    expect(query().find(node => node.id === firstTask.id)?.workspaceId).toBe(second.id);
+    service.updateNode(tomorrow.id, { dueDate: null });
+    service.updateNode(firstTask.id, { done: true });
+    expect(query().map(node => node.id)).toEqual([hidden.id]);
+    service.deleteWorkspace(second.id);
+    expect(query()).toEqual([]);
+    expect(() => dispatch(service, "GET", "/api/due-reminders")).toThrow();
+  });
+
   it("persists create undo and redo across a service restart", () => {
     const dbPath = join(tempDir, "test.sqlite");
     const workspace = service.createWorkspace("Persistent History");

@@ -23,6 +23,27 @@ describe("due reminders", () => {
     expect(getDueReminderNodes(null, cutoff)).toEqual([]);
   });
 
+  it("merges other pages with live edits without duplicates or stale current-page tasks", () => {
+    const cutoff = "2026-09-22";
+    const previous = [
+      node("edited", "Old title", [], { dueDate: "2026-09-20" }),
+      node("removed", "Removed", [], { dueDate: "2026-09-20" }),
+      node("completed", "Completed", [], { dueDate: "2026-09-20" }),
+      node("rescheduled", "Rescheduled", [], { dueDate: "2026-09-20" }),
+      node("other", "Other page", [], { workspaceId: "other-page", dueDate: "2026-09-19" })
+    ];
+    const { state } = fromNestedTree(node("root", "Page", [
+      node("edited", "New title", [], { dueDate: "2026-09-21" }),
+      node("completed", "Completed", [], { dueDate: "2026-09-20", done: true }),
+      node("rescheduled", "Rescheduled", [], { dueDate: "2026-09-23" })
+    ]));
+    expect(getDueReminderNodes(state, cutoff, previous).map(item => [item.id, item.title]))
+      .toEqual([["other", "Other page"], ["edited", "New title"]]);
+    expect(getDueReminderNodes(null, cutoff, previous)).toHaveLength(5);
+    const moved = node("edited", "New title", [], { workspaceId: "destination", dueDate: "2026-09-21" });
+    expect(getDueReminderNodes(state, cutoff, [moved]).map(item => item.id)).toEqual(["edited"]);
+  });
+
   it.each([
     [new Date(2026, 8, 30, 23, 59), "2026-10-01"],
     [new Date(2026, 11, 31, 0, 1), "2027-01-01"],

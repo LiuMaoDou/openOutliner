@@ -61,6 +61,7 @@ import {
   apiText,
   type OutlineHistoryResult,
   type OutlineHistoryState,
+  type OutlineNode,
   type OutlineTreeNode,
   type RecycleBinEntry,
   type Tag,
@@ -282,7 +283,8 @@ interface ConvertWorkspaceCandidate {
 }
 
 interface MoveWorkspaceCandidate {
-  id: string;
+  ids: string[];
+  selectedCount: number;
   title: string;
   sourceWorkspaceId: string;
 }
@@ -605,8 +607,17 @@ export function App() {
         ? current
         : state.rootId);
     if (pendingFocusId === nextSelectedId) pendingWorkspaceFocusIdRef.current = "";
-    setSingleSelectedId(nextSelectedId);
-  }, [setSingleSelectedId]);
+    const preservedIds = options.preserveSelection && !pendingRevealId && !pendingFocusId
+      ? [...selectedNodeIdsRef.current].filter(nodeId => hasNode(state, nodeId))
+      : [];
+    if (preservedIds.length > 1) {
+      const primaryId = preservedIds.includes(nextSelectedId) ? nextSelectedId : preservedIds[0];
+      const anchorId = preservedIds.includes(selectionAnchorIdRef.current) ? selectionAnchorIdRef.current : primaryId;
+      setNodeSelection(preservedIds, primaryId, anchorId);
+    } else {
+      setSingleSelectedId(nextSelectedId);
+    }
+  }, [setNodeSelection, setSingleSelectedId]);
 
   const loadOutlineHistory = useCallback(async (id: string) => {
     const requestId = ++outlineHistoryRequestRef.current;
@@ -813,6 +824,31 @@ export function App() {
   const isSystemTagsWorkspace = workspaceId === SYSTEM_TAGS_WORKSPACE_ID;
   const isRecycleBinWorkspace = workspaceId === SYSTEM_RECYCLE_BIN_WORKSPACE_ID;
   const [dueReminderCutoff, setDueReminderCutoff] = useState(() => getDueReminderCutoff());
+  const [allDueReminderNodes, setAllDueReminderNodes] = useState<OutlineNode[]>([]);
+  useEffect(() => {
+    let requestId = 0;
+    const refresh = async () => {
+      const currentRequest = ++requestId;
+      try {
+        const nodes = await apiGet<OutlineNode[]>(`/api/due-reminders?cutoff=${dueReminderCutoff}`);
+        if (currentRequest === requestId) setAllDueReminderNodes(nodes);
+      } catch (error) {
+        if (currentRequest === requestId) toError(setError)(error);
+      }
+    };
+    void refresh();
+    window.addEventListener("outliner-data-changed", refresh);
+    window.addEventListener("outliner-sync", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      requestId += 1;
+      window.removeEventListener("outliner-data-changed", refresh);
+      window.removeEventListener("outliner-sync", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [dueReminderCutoff]);
   useEffect(() => {
     const refresh = () => setDueReminderCutoff(getDueReminderCutoff());
     const interval = window.setInterval(refresh, 60_000);
@@ -825,8 +861,8 @@ export function App() {
     };
   }, []);
   const overdueNodes = useMemo(
-    () => getDueReminderNodes(flatState, dueReminderCutoff),
-    [flatState, dueReminderCutoff]
+    () => getDueReminderNodes(flatState, dueReminderCutoff, allDueReminderNodes),
+    [flatState, dueReminderCutoff, allDueReminderNodes]
   );
   const draggingNodeIds = useMemo(() => new Set(dragState?.draggingIds ?? []), [dragState?.draggingIds]);
   const rootWorkspaces = useMemo(
@@ -1829,13 +1865,18 @@ export function App() {
     setTagResults([]);
   }, [setSingleSelectedId]);
 
-  const openOverdueNode = (nodeId: string) => {
+  const openOverdueNode = (node: OutlineNode) => {
+    const nodeId = node.id;
+    setSearch("");
+    clearTagFilter();
+    if (node.workspaceId !== workspaceIdRef.current) {
+      selectWorkspace(node.workspaceId);
+      pendingNodeRevealRef.current = { workspaceId: node.workspaceId, nodeId };
+      return;
+    }
     const current = flatStateRef.current;
     if (!current || !hasNode(current, nodeId)) return;
     const revealed = revealNodeInFlatTree(current, nodeId);
-    setSearch("");
-    setActiveTagFilter("");
-    setTagResults([]);
     setFlatState(revealed.state);
     setVisibleIds(revealed.visibleIds);
     flatStateRef.current = revealed.state;
@@ -1917,6 +1958,20 @@ export function App() {
     }
   };
 
+  const prepareMoveToWorkspace = async (nodeId: string, title: string) => {
+    await nodeCreateQueueRef.current;
+    const current = flatStateRef.current;
+    if (!current || !hasNode(current, nodeId)) return;
+    const selectableIds = isSearching ? searchNodeIds(current, search) : computeVisibleIds(current);
+    const selectedIds = selectedNodeIdsRef.current.has(nodeId)
+      ? selectableIds.filter(id => selectedNodeIdsRef.current.has(id))
+      : [nodeId];
+    const ids = getTopLevelNodeIds(current, selectedIds);
+    if (!ids.length) return;
+    setMoveWorkspaceTargetId(moveWorkspaceOptions[0]?.workspace.id ?? "");
+    setMoveWorkspaceCandidate({ ids, selectedCount: selectedIds.length, title, sourceWorkspaceId: current.nodes[nodeId].workspaceId });
+  };
+
   const moveNodeToWorkspace = async () => {
     const candidate = moveWorkspaceCandidate;
     const targetWorkspaceId = moveWorkspaceTargetId;
@@ -1924,13 +1979,15 @@ export function App() {
 
     setIsMovingToWorkspace(true);
     try {
+      await Promise.all([...nodePatchQueuesRef.current.values()]);
       await apiPost("/api/nodes/move-to-workspace", {
-        ids: [candidate.id],
+        ids: candidate.ids,
         workspaceId: targetWorkspaceId
       });
-      pendingWorkspaceFocusIdRef.current = candidate.id;
       setMoveWorkspaceCandidate(null);
+      setSearch("");
       selectWorkspace(targetWorkspaceId);
+      pendingNodeRevealRef.current = { workspaceId: targetWorkspaceId, nodeId: candidate.ids[0] };
     } finally {
       setIsMovingToWorkspace(false);
     }
@@ -2705,7 +2762,9 @@ export function App() {
               <div className="convertWorkspaceCopy">
                 <h2 id="move-workspace-title">Move to workspace</h2>
                 <p>
-                  Move <strong>{moveWorkspaceCandidate.title || "Untitled"}</strong> and all nested outlines to another workspace.
+                  Move <strong>{moveWorkspaceCandidate.selectedCount > 1
+                    ? `${moveWorkspaceCandidate.selectedCount} selected outlines`
+                    : moveWorkspaceCandidate.title || "Untitled"}</strong> and all nested outlines to another workspace.
                 </p>
                 <label className="moveWorkspaceField">
                   <span>Destination</span>
@@ -2773,7 +2832,24 @@ export function App() {
           ref={contentGridRef}
           style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
         >
-          <div className="outlineSurface" ref={outlineSurfaceRef}>
+          <div className="outlineSurface" ref={outlineSurfaceRef} tabIndex={-1}
+            onPointerDown={event => {
+              if (event.target === event.currentTarget || event.target === virtualListRef.current
+                || (event.target as HTMLElement).classList.contains("outlineList")) {
+                event.currentTarget.focus({ preventScroll: true });
+              }
+            }}
+            onKeyDownCapture={event => {
+              if (isSystemTagsWorkspace || isRecycleBinWorkspace || isTagFiltering || !filteredNodes.length
+                || !shouldHandleOutlineSelectAll(event, isEditableElement(event.target),
+                  event.target instanceof HTMLElement && event.target.matches(".nodeTitle"))) return;
+              event.preventDefault();
+              event.stopPropagation();
+              event.currentTarget.focus({ preventScroll: true });
+              window.getSelection()?.removeAllRanges();
+              const primaryId = filteredNodes.includes(selectedIdRef.current) ? selectedIdRef.current : filteredNodes[0];
+              setNodeSelection(filteredNodes, primaryId, filteredNodes[0]);
+            }}>
             <div className="outlineHeader">
               {isRecycleBinWorkspace ? (
                 <div className="systemWorkspaceTitle">
@@ -2943,6 +3019,9 @@ export function App() {
                             editingNodeIdRef.current = node.id;
                             setSingleSelectedId(node.id);
                           }}
+                          onContextSelect={() => {
+                            if (!selectedNodeIdsRef.current.has(node.id)) setSingleSelectedId(node.id);
+                          }}
                           onBlurFocus={() => {
                             if (editingNodeIdRef.current === node.id) editingNodeIdRef.current = "";
                           }}
@@ -2991,11 +3070,7 @@ export function App() {
                           onTagAdd={name => addTag(node.id, name)}
                           onTagError={toError(setError)}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
-                          onMoveToWorkspace={title => {
-                            const firstTargetId = moveWorkspaceOptions[0]?.workspace.id ?? "";
-                            setMoveWorkspaceTargetId(firstTargetId);
-                            setMoveWorkspaceCandidate({ id: node.id, title, sourceWorkspaceId: workspaceId });
-                          }}
+                          onMoveToWorkspace={title => { void prepareMoveToWorkspace(node.id, title).catch(toError(setError)); }}
                           onSplitLines={title => splitNodeByLineBreaks(node, title)}
                           onComplete={() => deleteNodeOptimistically(node, "complete")}
                           onDelete={() => deleteNodeOptimistically(node)}
@@ -3075,7 +3150,7 @@ export function App() {
               ) : (
                 <div className="emptyInspector">No node selected</div>
               )}
-              <OverdueTasks nodes={overdueNodes} onOpen={openOverdueNode} />
+              <OverdueTasks nodes={overdueNodes} workspaces={workspaces} onOpen={openOverdueNode} />
             </aside>
           )}
           {!isInspectorOpen && !isSystemTagsWorkspace && !isRecycleBinWorkspace && (
@@ -3104,14 +3179,18 @@ export function App() {
   );
 }
 
-function OverdueTasks({ nodes, onOpen }: { nodes: FlatNodeData[]; onOpen: (nodeId: string) => void }) {
+function OverdueTasks({ nodes, workspaces, onOpen }: {
+  nodes: OutlineNode[];
+  workspaces: Workspace[];
+  onOpen: (node: OutlineNode) => void;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   return (
     <section className="overduePanel" aria-labelledby="overdue-panel-title">
       <button
         className="overdueHeader"
         type="button"
-        title="Unfinished tasks due by tomorrow, including overdue tasks"
+        title="Unfinished tasks across all pages due by tomorrow, including overdue tasks"
         aria-expanded={!collapsed}
         onClick={() => setCollapsed(current => !current)}
       >
@@ -3125,7 +3204,8 @@ function OverdueTasks({ nodes, onOpen }: { nodes: FlatNodeData[]; onOpen: (nodeI
       {!collapsed && nodes.length > 0 ? (
         <div className="overdueList">
           {nodes.map(node => (
-            <button type="button" key={node.id} onClick={() => onOpen(node.id)}>
+            <button type="button" key={node.id} onClick={() => onOpen(node)}
+              title={`${workspaces.find(workspace => workspace.id === node.workspaceId)?.name ?? ""} / ${node.title || "Untitled"}`}>
               <span>{node.title || "Untitled"}</span>
               <time dateTime={node.dueDate ?? undefined}>
                 {node.dueDate ? new Date(`${node.dueDate}T00:00:00`).toLocaleDateString(undefined, {
@@ -3184,6 +3264,7 @@ function NodeRow({
   registerInput,
   onMouseSelect,
   onFocusSelect,
+  onContextSelect,
   onBlurFocus,
   onCompositionChange,
   onSelectionStart,
@@ -3220,6 +3301,7 @@ function NodeRow({
   registerInput: (element: HTMLTextAreaElement | null) => void;
   onMouseSelect: (event: MouseEvent<HTMLElement>) => boolean;
   onFocusSelect: () => void;
+  onContextSelect: () => void;
   onBlurFocus: () => void;
   onCompositionChange: (isComposing: boolean) => void;
   onSelectionStart: (event: PointerEvent<HTMLDivElement>) => void;
@@ -3510,7 +3592,7 @@ function NodeRow({
         if (node.id.startsWith("temp-")) return;
         event.preventDefault();
         event.stopPropagation();
-        onFocusSelect();
+        onContextSelect();
         openNodeContextMenu(event.clientX, event.clientY);
       }}
       onClick={event => {
@@ -3550,7 +3632,7 @@ function NodeRow({
         onClick={event => {
           event.preventDefault();
           event.stopPropagation();
-          onFocusSelect();
+          onContextSelect();
           const bounds = event.currentTarget.getBoundingClientRect();
           openNodeContextMenu(bounds.left, bounds.bottom + 4);
         }}
@@ -4938,6 +5020,25 @@ export function shouldHandleMultiSelectionTab(
     selectedCount > 1 &&
     keyboardActive
   );
+}
+
+export function shouldHandleOutlineSelectAll(
+  event: {
+    key: string;
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    altKey?: boolean;
+    shiftKey?: boolean;
+    defaultPrevented?: boolean;
+    isComposing?: boolean;
+    nativeEvent?: { isComposing?: boolean; keyCode?: number };
+  },
+  editable: boolean,
+  outlineTitle: boolean
+) {
+  return event.key.toLowerCase() === "a" && (event.metaKey || event.ctrlKey)
+    && !event.altKey && !event.shiftKey && !event.defaultPrevented
+    && !shouldIgnoreTextInputKeyDown(event) && (!editable || outlineTitle);
 }
 
 export function shouldHandleMultiSelectionDelete(

@@ -1,4 +1,5 @@
 import type { FlatTreeState } from "./flatTree";
+import type { OutlineNode } from "./api";
 
 export function getDueReminderCutoff(now = new Date()): string {
   const tomorrow = new Date(now);
@@ -10,11 +11,16 @@ export function getDueReminderCutoff(now = new Date()): string {
   ].join("-");
 }
 
-export function getDueReminderNodes(state: FlatTreeState | null, cutoff: string) {
-  if (!state) return [];
-  return Object.values(state.nodes)
-    .filter(node => node.id !== state.rootId && !node.done && node.dueDate !== null && node.dueDate <= cutoff)
+export function getDueReminderNodes(state: FlatTreeState | null, cutoff: string, allNodes: OutlineNode[] = []) {
+  const currentWorkspaceId = state?.nodes[state.rootId]?.workspaceId;
+  const nodes = [
+    ...allNodes.filter(node => node.workspaceId !== currentWorkspaceId && !state?.nodes[node.id]),
+    ...Object.values(state?.nodes ?? {}).filter(node => node.id !== state?.rootId)
+  ];
+  return nodes
+    .filter(node => !node.done && node.dueDate !== null && node.dueDate <= cutoff)
     .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? "")
       || left.position - right.position
-      || left.title.localeCompare(right.title));
+      || left.title.localeCompare(right.title)
+      || left.id.localeCompare(right.id));
 }
