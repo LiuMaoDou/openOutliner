@@ -39,7 +39,7 @@ if [[ ! -f "$key" ]]; then
   "$java_bin/keytool" -genkeypair -keystore "$key" -storepass:file "$password" -keypass:file "$password" -alias openoutliner -keyalg RSA -keysize 3072 -validity 10000 -dname "CN=OpenOutliner Personal, O=liu.red" -storetype JKS
   chmod 600 "$key"
 fi
-apk="$out/OpenOutliner-0.1.1-$mode.apk"
+apk="$out/OpenOutliner-0.1.2-$mode.apk"
 "$tools/apksigner" sign --ks "$key" --ks-key-alias openoutliner --ks-pass "file:$password" --out "$apk" "$out/aligned.apk"
 "$tools/apksigner" verify --verbose "$apk"
 shasum -a 256 "$apk" > "$apk.sha256"

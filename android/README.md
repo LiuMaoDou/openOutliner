@@ -23,7 +23,7 @@ bash android/build.sh release
 bash android/build.sh debug
 ```
 
-产物：`android/build/release/OpenOutliner-0.1.1-release.apk`，附 SHA-256 文件。发布包关闭 WebView 调试和明文 HTTP。
+产物：`android/build/release/OpenOutliner-0.1.2-release.apk`，附 SHA-256 文件。发布包关闭 WebView 调试和明文 HTTP。
 
 个人签名自动生成在 `~/.local/share/openoutliner/android-signing/`（或 `OPENOUTLINER_SIGNING_DIR`），不进入 Git。请安全备份整个签名目录；后续覆盖安装必须使用同一签名，并增加 Manifest 的 `versionCode`。debug 和 release 使用不同签名；切换包时请保留已有数据或使用独立测试模拟器。
 
@@ -32,7 +32,7 @@ bash android/build.sh debug
 debug 包允许启动参数 `testUrl=http://127.0.0.1:4318/`，用于 `adb reverse tcp:4318 tcp:4318` 后连接临时数据库服务。发布包完全忽略该参数。
 
 ```sh
-adb install android/build/debug/OpenOutliner-0.1.1-debug.apk
+adb install android/build/debug/OpenOutliner-0.1.2-debug.apk
 adb reverse tcp:4318 tcp:4318
 adb shell am start -n red.liu.line/.MainActivity --es testUrl http://127.0.0.1:4318/
 ```
