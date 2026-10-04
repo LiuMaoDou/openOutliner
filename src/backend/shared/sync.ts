@@ -16,7 +16,9 @@ export function equal(a: unknown, b: unknown): boolean {
 }
 export function snapshot(db: SqlDatabase): Snapshot {
   return Object.fromEntries(tables.map(table => [table, (db.prepare(`SELECT * FROM ${table}`).all() as Row[])
-    .sort((a, b) => rowKey(table, a).localeCompare(rowKey(table, b)))])) as Snapshot;
+    .map(row => ({ key: rowKey(table, row), row }))
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map(entry => entry.row)])) as Snapshot;
 }
 export function changesBetween(before: Snapshot, after: Snapshot): Change[] {
   return tables.flatMap(table => {
@@ -35,11 +37,17 @@ export class SyncConflict extends Error {
 // Merge different fields independently; never silently overwrite the same field.
 export function mergeChanges(current: Snapshot, changes: Change[]): Snapshot {
   const result = structuredClone(current);
+  // Index each affected table once. Map insertion order preserves row order,
+  // including a delete followed by a reinsert in the same batch.
+  const indexed = new Map<Table, Map<string, Row>>();
   const conflicts: string[] = [];
   for (const change of changes) {
-    const rows = result[change.table];
-    const index = rows.findIndex(row => rowKey(change.table, row) === change.key);
-    const remote = rows[index] ?? null;
+    let rows = indexed.get(change.table);
+    if (!rows) {
+      rows = new Map(result[change.table].map(row => [rowKey(change.table, row), row]));
+      indexed.set(change.table, rows);
+    }
+    const remote = rows.get(change.key) ?? null;
     let merged = change.after;
     if (equal(remote, change.after)) continue; // Acknowledgement lost: already applied.
     if (!equal(remote, change.before)) {
@@ -54,11 +62,11 @@ export function mergeChanges(current: Snapshot, changes: Change[]): Snapshot {
         }
       } else conflicts.push(`${change.table}: ${String(remote?.title ?? change.before?.title ?? change.key)} (新增或删除)`);
     }
-    if (merged === null) { if (index >= 0) rows.splice(index, 1); }
-    else if (index >= 0) rows[index] = merged;
-    else rows.push(merged);
+    if (merged === null) rows.delete(change.key);
+    else rows.set(change.key, merged);
   }
   if (conflicts.length) throw new SyncConflict(current, conflicts);
+  for (const [table, rows] of indexed) result[table] = [...rows.values()];
   return result;
 }
 export function replaceSnapshot(db: SqlDatabase, data: Snapshot, clearHistory = true): void {
@@ -84,10 +92,11 @@ function validateTrees(data: Snapshot): void {
   }
   for (const [rows, parentField] of [[data.nodes, "parent_id"], [data.workspaces, "parent_workspace_id"]] as const) {
     const map = new Map(rows.map(row => [row.id, row]));
+    const validated = new Set<Row["id"]>();
     for (const row of rows) {
-      const seen = new Set();
+      const seen = new Set<Row["id"]>();
       let cursor: Row | undefined = row;
-      while (cursor) {
+      while (cursor && !validated.has(cursor.id)) {
         if (seen.has(cursor.id)) throw new Error("移动冲突：不能形成循环层级");
         seen.add(cursor.id);
         const parent: Row | undefined = map.get(cursor[parentField]);
@@ -100,6 +109,7 @@ function validateTrees(data: Snapshot): void {
         }
         cursor = parent;
       }
+      for (const id of seen) validated.add(id);
     }
   }
 }

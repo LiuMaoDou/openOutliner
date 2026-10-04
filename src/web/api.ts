@@ -1,121 +1,26 @@
 import { localRequest } from "./offline";
-export interface Workspace {
-  id: string;
-  name: string;
-  icon: string;
-  folderId: string | null;
-  parentWorkspaceId: string | null;
-  position: number;
-  rootNodeId: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WorkspaceFolder {
-  id: string;
-  name: string;
-  position: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Tag {
-  id: string;
-  workspaceId: string;
-  name: string;
-  color: string;
-  createdAt: string;
-}
-
-export interface FieldValue {
-  nodeId: string;
-  fieldId: string;
-  value: string;
-  updatedAt: string;
-}
-
-export interface OutlineTreeNode {
-  id: string;
-  workspaceId: string;
-  parentId: string | null;
-  position: number;
-  title: string;
-  body: string;
-  dueDate: string | null;
-  done: boolean;
-  collapsed: boolean;
-  createdAt: string;
-  updatedAt: string;
-  tags: Tag[];
-  fieldValues: FieldValue[];
-  children: OutlineTreeNode[];
-}
-
-export type OutlineNode = Omit<OutlineTreeNode, "tags" | "fieldValues" | "children">;
-
-export interface RecycleBinEntry {
-  node: OutlineNode;
-  descendants: OutlineNode[];
-  workspace: Workspace;
-  completedAt: string;
-}
-
-export interface OutlineHistoryState {
-  canUndo: boolean;
-  canRedo: boolean;
-  undoLabel: string | null;
-  redoLabel: string | null;
-}
-
-export interface OutlineHistoryResult {
-  tree: OutlineTreeNode;
-  history: OutlineHistoryState;
-}
-
-export interface TaggedNodePathSegment {
-  id: string;
-  title: string;
-  position: number;
-}
-
-export interface TaggedNodeResult {
-  node: Omit<OutlineTreeNode, "tags" | "fieldValues" | "children">;
-  tags: Tag[];
-  workspace: Workspace;
-  path: TaggedNodePathSegment[];
-}
-
-export interface TaggedNodeGroup {
-  name: string;
-  color: string;
-  results: TaggedNodeResult[];
-}
+export type {
+  Workspace, WorkspaceFolder, Tag, FieldValue, OutlineNode, OutlineTreeNode,
+  RecycleBinEntry, TaggedNodePathSegment, TaggedNodeResult, TaggedNodeGroup
+} from "../backend/domain/types";
+export type { OutlineHistoryState, OutlineHistoryResult } from "../backend/services/outliner";
 
 export async function apiGet<T>(path: string): Promise<T> {
-  return request<T>(path);
+  return localRequest<T>(path);
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  return request<T>(path, {
-    method: "POST",
-    body: JSON.stringify(body)
-  });
+  return localRequest<T>(path, "POST", body);
 }
 
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  return request<T>(path, {
-    method: "PATCH",
-    body: JSON.stringify(body)
-  });
+  return localRequest<T>(path, "PATCH", body);
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
-  return request<T>(path, { method: "DELETE" });
+  return localRequest<T>(path, "DELETE");
 }
 
 export async function apiText(path: string): Promise<string> {
   return localRequest<string>(path);
-}
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return localRequest<T>(path, init?.method ?? "GET", typeof init?.body === "string" ? JSON.parse(init.body) : undefined);
 }

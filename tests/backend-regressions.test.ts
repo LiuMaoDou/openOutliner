@@ -3,6 +3,7 @@ import { openDatabase, type OpenOutlinerDb } from "../src/backend/db/database.js
 import { OutlinerService } from "../src/backend/services/outliner.js";
 import { exportMarkdown, importMarkdown } from "../src/backend/importExport/markdown.js";
 import { exportOpml, importOpml } from "../src/backend/importExport/opml.js";
+import type { SqlDatabase } from "../src/backend/shared/sql.js";
 
 let db: OpenOutlinerDb;
 let service: OutlinerService;
@@ -206,6 +207,34 @@ describe("restore deletion batches", () => {
 });
 
 describe("bounded incremental history", () => {
+  it("reads only the edited node for field history and preserves undo and redo", () => {
+    const ws = service.createWorkspace("Field history");
+    const edited = service.createNode({ parentId: ws.rootNodeId, title: "Before", body: "Old note" });
+    const child = service.createNode({ parentId: edited.id, title: "Keep child" });
+    let capturedRows = 0;
+    const sql: SqlDatabase = { exec: text => db.exec(text), prepare: text => {
+      const statement = db.prepare(text);
+      return {
+        get: (...values) => statement.get(...values),
+        run: (...values) => statement.run(...values),
+        all: (...values) => {
+          const rows = statement.all(...values);
+          if (text.startsWith("SELECT * FROM nodes")) capturedRows += rows.length;
+          return rows;
+        }
+      };
+    } };
+    const measured = new OutlinerService(sql);
+    const patch = { title: "After", body: "New note", dueDate: "2026-10-05", done: true, collapsed: true };
+    measured.updateNode(edited.id, patch);
+    expect(capturedRows).toBe(2);
+    service.undoOutline(ws.id);
+    expect(service.getNode(edited.id)).toMatchObject({ title: "Before", body: "Old note", dueDate: null, done: false, collapsed: false });
+    service.redoOutline(ws.id);
+    expect(service.getNode(edited.id)).toMatchObject(patch);
+    expect(service.getNode(child.id)).toEqual(child);
+  });
+
   it("stores 50 title edits in a 1000-node workspace in under 64 KiB and replays them", () => {
     const ws = service.createWorkspace("Large");
     const insert = db.prepare(`INSERT INTO nodes (id, workspace_id, parent_id, position, title, body, done, collapsed, created_at, updated_at)

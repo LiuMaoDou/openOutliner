@@ -7,91 +7,73 @@ export function dispatch(service: OutlinerService, method: string, address: stri
   const url = new URL(address, "http://localhost");
   const path = url.pathname;
   if (method === "GET" && path === "/api/health") {
-    return json( { ok: true });
-    return;
+    return { ok: true };
   }
 
   if (method === "GET" && path === "/api/workspaces") {
-    return json( service.listWorkspaces());
-    return;
+    return service.listWorkspaces();
   }
 
   if (method === "GET" && path === "/api/due-reminders") {
-    return json(service.listDueReminderNodes(url.searchParams.get("cutoff") ?? ""));
+    return service.listDueReminderNodes(url.searchParams.get("cutoff") ?? "");
   }
 
   if (method === "GET" && path === "/api/recycle-bin") {
-    return json(service.listRecycleBin());
-    return;
+    return service.listRecycleBin();
   }
 
   if (method === "DELETE" && path === "/api/recycle-bin") {
-    return json(service.emptyRecycleBin());
+    return service.emptyRecycleBin();
   }
 
   if (method === "GET" && path === "/api/workspace-folders") {
-    return json( service.listWorkspaceFolders());
-    return;
+    return service.listWorkspaceFolders();
   }
 
   if (method === "POST" && path === "/api/workspace-folders") {
     const body = input;
-    return json( service.createWorkspaceFolder(body.name ?? "New Folder"), 201);
-    return;
+    return service.createWorkspaceFolder(body.name ?? "New Folder");
   }
 
   const workspaceFolderMatch = path.match(/^\/api\/workspace-folders\/([^/]+)$/);
   if (method === "PATCH" && workspaceFolderMatch) {
-    return json( service.updateWorkspaceFolder(workspaceFolderMatch[1], input));
-    return;
+    return service.updateWorkspaceFolder(workspaceFolderMatch[1], input);
   }
   if (method === "DELETE" && workspaceFolderMatch) {
-    return json( service.deleteWorkspaceFolder(workspaceFolderMatch[1]));
-    return;
+    return service.deleteWorkspaceFolder(workspaceFolderMatch[1]);
   }
 
   if (method === "POST" && path === "/api/workspaces") {
     const body = input;
-    return json(
-      service.createWorkspace(body.name?.trim() || "Untitled Workspace", body.icon, body.folderId, body.parentWorkspaceId),
-      201
-    );
-    return;
+    return service.createWorkspace(body.name?.trim() || "Untitled Workspace", body.icon, body.folderId, body.parentWorkspaceId);
   }
 
   const workspaceTreeMatch = path.match(/^\/api\/workspaces\/([^/]+)\/tree$/);
   if (method === "GET" && workspaceTreeMatch) {
     const workspace = service.getWorkspace(workspaceTreeMatch[1]);
-    return json( service.getTree(workspace.rootNodeId));
-    return;
+    return service.getTree(workspace.rootNodeId);
   }
 
   const workspaceHistoryMatch = path.match(/^\/api\/workspaces\/([^/]+)\/history$/);
   if (method === "GET" && workspaceHistoryMatch) {
-    return json( service.getOutlineHistoryState(workspaceHistoryMatch[1]));
-    return;
+    return service.getOutlineHistoryState(workspaceHistoryMatch[1]);
   }
 
   const workspaceHistoryActionMatch = path.match(/^\/api\/workspaces\/([^/]+)\/(undo|redo)$/);
   if (method === "POST" && workspaceHistoryActionMatch) {
-    return json(
-      workspaceHistoryActionMatch[2] === "undo"
-        ? service.undoOutline(workspaceHistoryActionMatch[1])
-        : service.redoOutline(workspaceHistoryActionMatch[1])
-    );
-    return;
+    return workspaceHistoryActionMatch[2] === "undo"
+      ? service.undoOutline(workspaceHistoryActionMatch[1])
+      : service.redoOutline(workspaceHistoryActionMatch[1]);
   }
 
   const restoreNodeMatch = path.match(/^\/api\/nodes\/([^/]+)\/restore$/);
   if (method === "POST" && restoreNodeMatch) {
-    return json(service.restoreNode(restoreNodeMatch[1]));
-    return;
+    return service.restoreNode(restoreNodeMatch[1]);
   }
 
   const splitNodeLinesMatch = path.match(/^\/api\/nodes\/([^/]+)\/split-lines$/);
   if (method === "POST" && splitNodeLinesMatch) {
-    return json(service.splitNodeByLineBreaks(splitNodeLinesMatch[1], input.title));
-    return;
+    return service.splitNodeByLineBreaks(splitNodeLinesMatch[1], input.title);
   }
 
   const workspaceMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
@@ -105,186 +87,149 @@ export function dispatch(service: OutlinerService, method: string, address: stri
         body.position ?? Number.MAX_SAFE_INTEGER,
         body.parentWorkspaceId !== undefined ? body.parentWorkspaceId : current.parentWorkspaceId
       );
-      return json( body.name !== undefined ? service.updateWorkspace(moved.id, { name: body.name }) : moved);
-      return;
+      return body.name !== undefined ? service.updateWorkspace(moved.id, { name: body.name }) : moved;
     }
-    return json( service.updateWorkspace(workspaceMatch[1], body));
-    return;
+    return service.updateWorkspace(workspaceMatch[1], body);
   }
   if (method === "DELETE" && workspaceMatch) {
-    return json( service.deleteWorkspace(workspaceMatch[1]));
-    return;
+    return service.deleteWorkspace(workspaceMatch[1]);
   }
 
   const nodeChildrenMatch = path.match(/^\/api\/nodes\/([^/]+)\/children$/);
   if (method === "GET" && nodeChildrenMatch) {
-    return json( service.listChildren(nodeChildrenMatch[1]));
-    return;
+    return service.listChildren(nodeChildrenMatch[1]);
   }
 
   const nodeMatch = path.match(/^\/api\/nodes\/([^/]+)$/);
   if (method === "GET" && nodeMatch) {
-    return json( service.getNode(nodeMatch[1]));
-    return;
+    return service.getNode(nodeMatch[1]);
   }
   if (method === "PATCH" && nodeMatch) {
-    return json( service.updateNode(nodeMatch[1], input));
-    return;
+    return service.updateNode(nodeMatch[1], input);
   }
   if (method === "DELETE" && nodeMatch) {
-    return json( service.deleteNode(nodeMatch[1]));
-    return;
+    return service.deleteNode(nodeMatch[1]);
   }
 
   if (method === "POST" && path === "/api/nodes") {
-    return json( service.createNode(input), 201);
-    return;
+    return service.createNode(input);
   }
 
   if (method === "POST" && path === "/api/nodes/delete-batch") {
     const body = input;
-    return json( service.deleteNodes(body.ids ?? []));
-    return;
+    return service.deleteNodes(body.ids ?? []);
   }
 
   const convertNodeToWorkspaceMatch = path.match(/^\/api\/nodes\/([^/]+)\/convert-to-workspace$/);
   if (method === "POST" && convertNodeToWorkspaceMatch) {
     const body = input;
-    return json( service.convertNodeToWorkspace(convertNodeToWorkspaceMatch[1], body.name), 201);
-    return;
-  }
-
-  const restoreMatch = path.match(/^\/api\/nodes\/([^/]+)\/restore$/);
-  if (method === "POST" && restoreMatch) {
-    return json( service.restoreNode(restoreMatch[1]));
-    return;
+    return service.convertNodeToWorkspace(convertNodeToWorkspaceMatch[1], body.name);
   }
 
   if (method === "POST" && path === "/api/nodes/move-batch") {
     const body = input;
-    return json( service.moveNodes(body.ids ?? [], body.parentId, body.position, body.expandParent));
-    return;
+    return service.moveNodes(body.ids ?? [], body.parentId, body.position, body.expandParent);
   }
 
   if (method === "POST" && path === "/api/nodes/move-to-workspace") {
     const body = input;
-    return json( service.moveNodesToWorkspace(body.ids ?? [], body.workspaceId));
-    return;
+    return service.moveNodesToWorkspace(body.ids ?? [], body.workspaceId);
   }
 
   const moveMatch = path.match(/^\/api\/nodes\/([^/]+)\/move$/);
   if (method === "POST" && moveMatch) {
     const body = input;
-    return json( service.moveNode(moveMatch[1], body.parentId, body.position));
-    return;
+    return service.moveNode(moveMatch[1], body.parentId, body.position);
   }
 
   if (method === "GET" && path === "/api/search") {
-    return json(
-      service.searchNodes(url.searchParams.get("q") ?? "", url.searchParams.get("workspaceId") ?? undefined)
-    );
-    return;
+    return service.searchNodes(url.searchParams.get("q") ?? "", url.searchParams.get("workspaceId") ?? undefined);
   }
 
   if (method === "GET" && path === "/api/tags") {
     const workspaceId = requiredParam(url, "workspaceId");
-    return json( service.listTags(workspaceId));
-    return;
+    return service.listTags(workspaceId);
   }
 
   if (method === "GET" && path === "/api/tag-results") {
-    return json( service.listNodesByTagName(requiredParam(url, "name")));
-    return;
+    return service.listNodesByTagName(requiredParam(url, "name"));
   }
 
   if (method === "GET" && path === "/api/system/tag-tree") {
-    return json( service.listTaggedNodeGroups(url.searchParams.get("includeUnused") === "1"));
-    return;
+    return service.listTaggedNodeGroups(url.searchParams.get("includeUnused") === "1");
   }
 
   if (method === "GET" && path === "/api/system/tags") {
-    return json(service.listAllTags());
+    return service.listAllTags();
   }
 
   const systemTagMatch = path.match(/^\/api\/system\/tags\/([^/]+)$/);
   if (method === "PATCH" && systemTagMatch) {
-    return json(service.renameTagGroup(decodeURIComponent(systemTagMatch[1]), input.name));
+    return service.renameTagGroup(decodeURIComponent(systemTagMatch[1]), input.name);
   }
   if (method === "DELETE" && systemTagMatch) {
-    return json(service.deleteTagGroup(decodeURIComponent(systemTagMatch[1])));
+    return service.deleteTagGroup(decodeURIComponent(systemTagMatch[1]));
   }
 
   if (method === "POST" && path === "/api/tags") {
     const body = input;
-    return json( service.createTag(body.workspaceId, body.name, body.color), 201);
-    return;
+    return service.createTag(body.workspaceId, body.name, body.color);
   }
 
   const tagMatch = path.match(/^\/api\/tags\/([^/]+)$/);
   if (method === "PATCH" && tagMatch) {
-    return json( service.updateTag(tagMatch[1], input));
-    return;
+    return service.updateTag(tagMatch[1], input);
   }
   if (method === "DELETE" && tagMatch) {
-    return json( service.deleteTag(tagMatch[1]));
-    return;
+    return service.deleteTag(tagMatch[1]);
   }
 
   const nodeTagsMatch = path.match(/^\/api\/nodes\/([^/]+)\/tags$/);
   if (method === "POST" && nodeTagsMatch) {
     const body = input;
-    return json( service.setNodeTag(nodeTagsMatch[1], body.name), 201);
-    return;
+    return service.setNodeTag(nodeTagsMatch[1], body.name);
   }
 
   const nodeTagMatch = path.match(/^\/api\/nodes\/([^/]+)\/tags\/([^/]+)$/);
   if (method === "DELETE" && nodeTagMatch) {
     service.getNode(nodeTagMatch[1]);
     service.removeNodeTag(nodeTagMatch[1], nodeTagMatch[2]);
-    return json({ removed: nodeTagMatch[2] });
+    return { removed: nodeTagMatch[2] };
   }
 
   if (method === "GET" && path === "/api/fields") {
-    return json( service.listFieldDefinitions(requiredParam(url, "workspaceId")));
-    return;
+    return service.listFieldDefinitions(requiredParam(url, "workspaceId"));
   }
 
   if (method === "POST" && path === "/api/fields") {
-    return json( service.createFieldDefinition(input), 201);
-    return;
+    return service.createFieldDefinition(input);
   }
 
   if (method === "POST" && path === "/api/field-values") {
     const body = input;
-    return json( service.setFieldValue(body.nodeId, body.fieldId, body.value), 201);
-    return;
+    return service.setFieldValue(body.nodeId, body.fieldId, body.value);
   }
 
   if (method === "POST" && path === "/api/import/markdown") {
     const body = input;
-    return json( importMarkdown(service, body));
-    return;
+    return importMarkdown(service, body);
   }
 
   if (method === "GET" && path === "/api/export/markdown") {
     return exportMarkdown(service, url.searchParams.get("workspaceId") ?? undefined);
-    return;
   }
 
   if (method === "POST" && path === "/api/import/opml") {
     const body = input;
-    return json( importOpml(service, body));
-    return;
+    return importOpml(service, body);
   }
 
   if (method === "GET" && path === "/api/export/opml") {
     return exportOpml(service, url.searchParams.get("workspaceId") ?? undefined);
-    return;
   }
 
   throw new NotFoundError(`Route not found: ${method} ${path}`);
 }
-function json<T>(value: T, _status?: number): T { return value; }
 function requiredParam(url: URL, name: string): string {
   const value = url.searchParams.get(name);
   if (!value) throw new ValidationError(`Missing required query param: ${name}`);

@@ -628,7 +628,8 @@ export class OutlinerService {
         values.push(timestamp(), id);
         this.db.prepare(`UPDATE nodes SET ${sets.join(", ")} WHERE id = ?`).run(...values);
         return this.getNode(id);
-      }
+      },
+      id
     );
   }
 
@@ -1596,14 +1597,15 @@ export class OutlinerService {
     workspaceId: string,
     label: string,
     coalesceKey: string | null,
-    mutation: () => T
+    mutation: () => T,
+    affectedNodeId?: string
   ): T {
     if (this.outlineHistorySuppressionDepth > 0) return mutation();
 
     return this.transaction(() => {
-      const beforeNodes = this.captureOutlineSnapshot(workspaceId);
+      const beforeNodes = this.captureOutlineSnapshot(workspaceId, affectedNodeId);
       const result = mutation();
-      const afterNodes = this.captureOutlineSnapshot(workspaceId);
+      const afterNodes = this.captureOutlineSnapshot(workspaceId, affectedNodeId);
       let [beforeDelta, afterDelta] = outlineHistoryDelta(beforeNodes, afterNodes);
       if (Object.keys(afterDelta.nodes).length === 0) return result;
 
@@ -1703,10 +1705,14 @@ export class OutlinerService {
     });
   }
 
-  private captureOutlineSnapshot(workspaceId: string): OutlineNodeSnapshot[] {
+  private captureOutlineSnapshot(workspaceId: string, affectedNodeId?: string): OutlineNodeSnapshot[] {
+    // Field edits affect only one row; structural operations still snapshot the
+    // workspace so undo captures every changed sibling and descendant.
     return (this.db
-      .prepare("SELECT * FROM nodes WHERE workspace_id = ? ORDER BY created_at ASC, id ASC")
-      .all(workspaceId) as Row[]).map(row => ({
+      .prepare(affectedNodeId === undefined
+        ? "SELECT * FROM nodes WHERE workspace_id = ? ORDER BY created_at ASC, id ASC"
+        : "SELECT * FROM nodes WHERE workspace_id = ? AND id = ?")
+      .all(...(affectedNodeId === undefined ? [workspaceId] : [workspaceId, affectedNodeId])) as Row[]).map(row => ({
       id: text(row.id),
       parentId: nullableText(row.parent_id),
       position: number(row.position),

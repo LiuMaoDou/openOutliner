@@ -29,7 +29,6 @@ import {
   Search,
   Strikethrough,
   Sun,
-  Tag as TagIcon,
   Tags as TagsIcon,
   Trash2,
   Undo2,
@@ -75,7 +74,6 @@ import { getDueReminderCutoff, getDueReminderNodes } from "./dueTasks";
 import { SyncPanel } from "./SyncPanel";
 import { activatePrivacyScreen } from "./PrivacyScreen";
 import { useInlineTagInput } from "./InlineTagInput";
-import { resolveTagColor } from "../backend/shared/tagColors";
 import { beginNodeEdit, endNodeEdit, flushNodeDraft, readNodeDraft, stageNodeDraft } from "./offline";
 import {
   type FlatTreeState,
@@ -86,6 +84,7 @@ import {
   updateNode,
   insertNode,
   removeNode,
+  removeNodes,
   replaceNode,
   moveNode,
   moveNodes,
@@ -97,7 +96,7 @@ import {
   hasNode
 } from "./flatTree";
 
-/** Dynamic depth computation: O(1) per node by walking parentId chain */
+/** Compute depth in O(depth) by walking the parent chain. */
 function getNodeDepth(state: FlatTreeState, id: string): number {
   let depth = 0;
   let current = state.nodes[id];
@@ -121,7 +120,10 @@ export function revealNodeInFlatTree(
     visited.add(parentId);
     const parent = getNode(next, parentId);
     if (!parent) break;
-    if (parent.collapsed) next = updateNode(next, parentId, { collapsed: false });
+    if (parent.collapsed) {
+      if (next === state) next = { ...state, nodes: { ...state.nodes } };
+      next.nodes[parentId] = { ...parent, collapsed: false };
+    }
     parentId = parent.parentId;
   }
 
@@ -409,7 +411,6 @@ export function App() {
   const contentGridRef = useRef<HTMLElement | null>(null);
   const panelResizeCleanupRef = useRef<(() => void) | null>(null);
   const flatStateRef = useRef<FlatTreeState | null>(null);
-  const rowResizeObserversRef = useRef(new Map<string, ResizeObserver>());
   const selectedIndexRef = useRef(-1);
   const cancelledTempIdsRef = useRef(new Set<string>());
   const localNodeTitlesRef = useRef(new Map<string, string>());
@@ -986,29 +987,6 @@ export function App() {
     };
   }, [rowVirtualizer]);
 
-  useEffect(
-    () => () => {
-      rowResizeObserversRef.current.forEach(observer => observer.disconnect());
-      rowResizeObserversRef.current.clear();
-    },
-    []
-  );
-  const registerVirtualRow = useCallback(
-    (key: string, element: HTMLDivElement | null) => {
-      rowResizeObserversRef.current.get(key)?.disconnect();
-      rowResizeObserversRef.current.delete(key);
-      if (!element) return;
-
-      rowVirtualizer.measureElement(element);
-      const observer = new ResizeObserver(() => {
-        rowVirtualizer.measureElement(element);
-      });
-      observer.observe(element);
-      rowResizeObserversRef.current.set(key, observer);
-    },
-    [rowVirtualizer]
-  );
-
   const focusWhenReady = useCallback((nodeId: string, selection?: TitleSelection, attempts = 0) => {
     const input = inputRefs.current.get(nodeId);
     if (input) {
@@ -1113,17 +1091,6 @@ export function App() {
     window.addEventListener("keydown", handleOutlineHistoryShortcut);
     return () => window.removeEventListener("keydown", handleOutlineHistoryShortcut);
   }, [outlineHistory.canRedo, outlineHistory.canUndo, runOutlineHistory]);
-
-  const refresh = useCallback(
-    async (focusId?: string) => {
-      await loadTree(workspaceId, { preserveSelection: true });
-      if (focusId) {
-        setSingleSelectedId(focusId);
-        window.setTimeout(() => focusTitleInput(inputRefs.current.get(focusId)), 30);
-      }
-    },
-    [loadTree, setSingleSelectedId, workspaceId]
-  );
 
   const patchNode = (id: string, patch: Partial<OutlineTreeNode>): Promise<void> => {
     if (id.startsWith("temp-")) return Promise.resolve();
@@ -1385,11 +1352,12 @@ export function App() {
     const selectionBefore = new Set(selectedNodeIdsRef.current);
     const primaryBefore = selectedIdRef.current;
     const anchorBefore = selectionAnchorIdRef.current;
-    const firstDeleteIndex = Math.min(...deletingIds.map(id => visibleBefore.indexOf(id)).filter(index => index >= 0));
-    const newState = deletingIds.reduce((state, id) => removeNode(state, id), before);
+    const deletingIdSet = new Set(deletingIds);
+    const firstDeleteIndex = visibleBefore.findIndex(id => deletingIdSet.has(id));
+    const newState = removeNodes(before, deletingIds);
     const removedIds = Object.keys(before.nodes).filter(id => !newState.nodes[id]);
     const previousId = visibleBefore
-      .slice(0, Number.isFinite(firstDeleteIndex) ? firstDeleteIndex : 0)
+      .slice(0, Math.max(0, firstDeleteIndex))
       .reverse()
       .find(id => Boolean(newState.nodes[id])) ?? before.rootId;
     for (const id of removedIds) {
@@ -2919,7 +2887,7 @@ export function App() {
                           className="virtualOutlineRow"
                           data-index={virtualItem.index}
                           key={entry.node.id}
-                          ref={element => registerVirtualRow(entry.node.id, element)}
+                          ref={rowVirtualizer.measureElement}
                           style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
                         >
                           <RecycleBinRow
@@ -2939,7 +2907,7 @@ export function App() {
                           className="virtualOutlineRow"
                           data-index={virtualItem.index}
                           key={systemTagRowKey(row, virtualItem.index)}
-                          ref={element => registerVirtualRow(systemTagRowKey(row, virtualItem.index), element)}
+                          ref={rowVirtualizer.measureElement}
                           style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
                         >
                           {row.kind === "tag" ? (
@@ -2970,7 +2938,7 @@ export function App() {
                           className="virtualOutlineRow"
                           data-index={virtualItem.index}
                           key={result.node.id}
-                          ref={element => registerVirtualRow(result.node.id, element)}
+                          ref={rowVirtualizer.measureElement}
                           style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
                         >
                           <TagResultRow
@@ -2998,7 +2966,7 @@ export function App() {
                         className="virtualOutlineRow"
                         data-index={virtualItem.index}
                         key={node.id}
-                        ref={element => registerVirtualRow(node.id, element)}
+                        ref={rowVirtualizer.measureElement}
                         style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
                       >
                         <NodeRow
@@ -4894,7 +4862,10 @@ export function applyCachedNodeTitles(
 ): FlatTreeState {
   let next = state;
   for (const [id, title] of titles) {
-    if (next.nodes[id]?.title !== title) next = updateNode(next, id, { title });
+    const node = next.nodes[id];
+    if (!node || node.title === title) continue;
+    if (next === state) next = { ...state, nodes: { ...state.nodes } };
+    next.nodes[id] = { ...node, title };
   }
   return next;
 }

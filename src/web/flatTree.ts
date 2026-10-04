@@ -1,10 +1,10 @@
 /**
- * Flat tree data structure for O(1) node operations.
+ * Flat tree data structure with O(1) node lookup.
  *
  * Instead of a deeply nested OutlineTreeNode tree, we maintain:
  * - nodes: Record<string, FlatNode>  — O(1) lookup by id
  * - rootId: string                   — the root node id
- * - visibleIds: string[]             — linear array for virtual scrolling
+ * Visible IDs are computed separately for virtual scrolling.
  */
 
 import type { OutlineTreeNode, Tag, FieldValue } from "./api";
@@ -31,11 +31,6 @@ export interface FlatTreeState {
   rootId: string;
 }
 
-export interface FlatViewItem {
-  id: string;
-  depth: number;
-}
-
 // ─── Conversion ───────────────────────────────────────────────────
 
 /** Convert a nested OutlineTreeNode (from API) into FlatTreeState + visible IDs */
@@ -46,40 +41,20 @@ export function fromNestedTree(root: OutlineTreeNode): {
   const nodes: Record<string, FlatNodeData> = {};
   const visibleIds: string[] = [];
 
-  const visit = (
-    node: OutlineTreeNode,
-    parentId: string | null,
-    depth: number,
-    visible: boolean
-  ): void => {
+  const stack = [{ node: root, parentId: null as string | null, visible: true }];
+  while (stack.length) {
+    const { node, parentId, visible } = stack.pop()!;
     const { children, ...rest } = node;
     const childIds = children.map(c => c.id);
     nodes[node.id] = { ...rest, parentId, childIds };
-    if (depth > 0 && visible) visibleIds.push(node.id);
+    if (parentId !== null && visible) visibleIds.push(node.id);
     const childVisible = visible && !node.collapsed;
-    children.forEach(child => {
-      visit(child, node.id, depth + 1, childVisible);
-    });
-  };
-
-  const { children, ...rootRest } = root;
-  const rootChildIds = children.map(c => c.id);
-  nodes[root.id] = { ...rootRest, parentId: null, childIds: rootChildIds };
-  children.forEach(child => visit(child, root.id, 1, !root.collapsed));
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ node: children[index], parentId: node.id, visible: childVisible });
+    }
+  }
 
   return { state: { nodes, rootId: root.id }, visibleIds };
-}
-
-/** Convert FlatTreeState back to nested OutlineTreeNode (for API) */
-export function toNestedTree(state: FlatTreeState): OutlineTreeNode {
-  function buildNode(id: string): OutlineTreeNode {
-    const n = state.nodes[id];
-    return {
-      ...n,
-      children: n.childIds.map(cid => buildNode(cid)),
-    };
-  }
-  return buildNode(state.rootId);
 }
 
 // ─── Visible ID Computation ───────────────────────────────────────
@@ -90,17 +65,15 @@ export function computeVisibleIds(state: FlatTreeState): string[] {
   const root = state.nodes[state.rootId];
   if (!root) return ids;
 
-  const visit = (nodeId: string, depth: number): void => {
-    const node = state.nodes[nodeId];
-    if (!node) return;
-    for (const childId of node.childIds) {
-      ids.push(childId);
-      const child = state.nodes[childId];
-      if (child && !child.collapsed) visit(childId, depth + 1);
+  const stack = [...root.childIds].reverse();
+  while (stack.length) {
+    const id = stack.pop()!;
+    ids.push(id);
+    const node = state.nodes[id];
+    if (node && !node.collapsed) {
+      for (let index = node.childIds.length - 1; index >= 0; index -= 1) stack.push(node.childIds[index]);
     }
-  };
-
-  visit(state.rootId, 0);
+  }
   return ids;
 }
 
@@ -109,17 +82,18 @@ export function searchNodeIds(state: FlatTreeState, query: string): string[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return computeVisibleIds(state);
   const ids: string[] = [];
-  const visit = (id: string) => {
+  const stack = [state.rootId];
+  while (stack.length) {
+    const id = stack.pop()!;
     const node = state.nodes[id];
-    if (!node) return;
+    if (!node) continue;
     if (id !== state.rootId && `${node.title}\n${node.body}`.toLowerCase().includes(normalized)) ids.push(id);
-    node.childIds.forEach(visit);
-  };
-  visit(state.rootId);
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) stack.push(node.childIds[index]);
+  }
   return ids;
 }
 
-// ─── Mutations (all return new state, O(1) per operation) ────────
+// ─── Immutable mutations (copy the node map once per operation) ────────
 
 function cloneState(state: FlatTreeState): FlatTreeState {
   return { nodes: { ...state.nodes }, rootId: state.rootId };
@@ -134,7 +108,7 @@ function normalizePositions(state: FlatTreeState, parentId: string): void {
   const parent = state.nodes[parentId];
   if (!parent) return;
   parent.childIds.forEach((cid, i) => {
-    state.nodes[cid] = { ...state.nodes[cid], position: i };
+    if (state.nodes[cid].position !== i) state.nodes[cid] = { ...state.nodes[cid], position: i };
   });
 }
 
@@ -175,22 +149,28 @@ export function removeNode(
   state: FlatTreeState,
   id: string
 ): FlatTreeState {
-  const node = state.nodes[id];
-  if (!node || id === state.rootId) return state;
-  if (!node.parentId) return state;
+  return removeNodes(state, [id]);
+}
 
+/** Delete a selection and its subtrees with one immutable map copy. */
+export function removeNodes(state: FlatTreeState, ids: Iterable<string>): FlatTreeState {
+  const deletingIds = getTopLevelNodeIds(state, ids).filter(id => state.nodes[id].parentId);
+  if (!deletingIds.length) return state;
   const next = cloneState(state);
-  cloneNode(next, node.parentId);
-  next.nodes[node.parentId].childIds = next.nodes[node.parentId].childIds.filter(cid => cid !== id);
-  normalizePositions(next, node.parentId);
-  // Also remove node and all descendants from the map
-  const removeDescendants = (nid: string) => {
-    const n = next.nodes[nid];
-    if (!n) return;
-    n.childIds.forEach(removeDescendants);
-    delete next.nodes[nid];
-  };
-  removeDescendants(id);
+  const parentIds = new Set(deletingIds.map(id => state.nodes[id].parentId!));
+  const stack = [...deletingIds];
+  while (stack.length) {
+    const id = stack.pop()!;
+    const node = next.nodes[id];
+    if (!node) continue;
+    for (const childId of node.childIds) stack.push(childId);
+    delete next.nodes[id];
+  }
+  for (const parentId of parentIds) {
+    cloneNode(next, parentId);
+    next.nodes[parentId].childIds = next.nodes[parentId].childIds.filter(id => next.nodes[id]);
+    normalizePositions(next, parentId);
+  }
   return next;
 }
 
@@ -260,7 +240,7 @@ export function moveNode(
   next.nodes[id] = { ...node, parentId: newParentId, position: nextPosition };
 
   normalizePositions(next, node.parentId);
-  normalizePositions(next, newParentId);
+  if (node.parentId !== newParentId) normalizePositions(next, newParentId);
   return next;
 }
 
@@ -371,35 +351,15 @@ export function getParentId(state: FlatTreeState, id: string): string | null {
 }
 
 export function isDescendant(state: FlatTreeState, ancestorId: string, id: string): boolean {
-  const node = state.nodes[ancestorId];
-  if (!node) return false;
-  return node.childIds.some(cid => cid === id || isDescendant(state, cid, id));
+  if (!state.nodes[ancestorId]) return false;
+  let parentId = state.nodes[id]?.parentId;
+  while (parentId) {
+    if (parentId === ancestorId) return true;
+    parentId = state.nodes[parentId]?.parentId;
+  }
+  return false;
 }
 
 export function hasNode(state: FlatTreeState, id: string): boolean {
   return id in state.nodes;
-}
-
-/** Find the nearest visible previous sibling's id */
-export function getPreviousVisibleId(
-  state: FlatTreeState,
-  visibleIds: string[],
-  currentId: string
-): string | undefined {
-  const idx = visibleIds.indexOf(currentId);
-  if (idx <= 0) return undefined;
-  return visibleIds[idx - 1];
-}
-
-/** Find the nearest visible next sibling's id */
-export function getNextVisibleId(
-  state: FlatTreeState,
-  visibleIds: string[],
-  currentId: string,
-  offset: number
-): string | undefined {
-  const idx = visibleIds.indexOf(currentId);
-  const nextIdx = idx + offset;
-  if (nextIdx < 0 || nextIdx >= visibleIds.length) return undefined;
-  return visibleIds[nextIdx];
 }

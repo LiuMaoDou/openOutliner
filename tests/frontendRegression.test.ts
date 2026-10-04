@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeVisibleIds, fromNestedTree, searchNodeIds } from "../src/web/flatTree.js";
+import { computeVisibleIds, fromNestedTree, isDescendant, removeNodes, searchNodeIds } from "../src/web/flatTree.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import { getDueReminderCutoff, getDueReminderNodes } from "../src/web/dueTasks.js";
 
@@ -68,5 +68,44 @@ describe("outline search", () => {
     expect(state.nodes.parent.collapsed).toBe(true);
     expect(searchNodeIds(state, "")).toEqual(["parent", "sibling"]);
     expect(searchNodeIds(state, "Workspace")).toEqual([]);
+  });
+});
+
+describe("large outline operations", () => {
+  it("deletes overlapping selections across parents without mutating the original tree", () => {
+    const { state } = fromNestedTree(node("root", "Root", [
+      node("keep", "Keep"),
+      node("parent", "Parent", [node("child", "Child")], { position: 1 }),
+      node("other", "Other", [node("remove", "Remove"), node("stay", "Stay", [], { position: 1 })], { position: 2 })
+    ]));
+    const next = removeNodes(state, ["parent", "child", "parent", "remove", "missing", "root"]);
+    expect(computeVisibleIds(next)).toEqual(["keep", "other", "stay"]);
+    expect(next.nodes.other.position).toBe(1);
+    expect(next.nodes.stay.position).toBe(0);
+    expect(next.nodes.keep).toBe(state.nodes.keep);
+    expect(next.nodes.child).toBeUndefined();
+    expect(computeVisibleIds(state)).toEqual(["keep", "parent", "child", "other", "remove", "stay"]);
+    expect(removeNodes(state, ["root", "missing"])).toBe(state);
+  });
+
+  it("converts, searches and deletes a 12000-level tree without overflowing the call stack", () => {
+    const root = node("root", "Root");
+    let parent = root;
+    for (let index = 0; index < 12000; index += 1) {
+      const child = node(`deep-${index}`, index === 11999 ? "Target" : "Node");
+      parent.children.push(child);
+      parent = child;
+    }
+    const { state, visibleIds } = fromNestedTree(root);
+    expect(visibleIds).toHaveLength(12000);
+    expect(computeVisibleIds(state)).toEqual(visibleIds);
+    expect(searchNodeIds(state, "target")).toEqual(["deep-11999"]);
+    expect(isDescendant(state, "deep-0", "deep-11999")).toBe(true);
+    expect(isDescendant(state, "deep-11999", "deep-0")).toBe(false);
+    expect(isDescendant(state, "missing", "deep-0")).toBe(false);
+    const next = removeNodes(state, ["deep-0"]);
+    expect(Object.keys(next.nodes)).toEqual(["root"]);
+    expect(next.nodes.root.childIds).toEqual([]);
+    expect(state.nodes.root.childIds).toEqual(["deep-0"]);
   });
 });

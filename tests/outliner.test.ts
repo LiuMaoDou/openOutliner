@@ -66,15 +66,11 @@ import {
   moveNodes as moveFlatNodes,
   moveNodeInside,
   computeVisibleIds,
-  replaceNode
+  replaceNode,
+  removeNode,
+  updateNode
 } from "../src/web/flatTree.js";
-import {
-  insertTreeNode,
-  moveTreeNode,
-  removeTreeNode,
-  replaceTreeNode,
-  updateTreeNode
-} from "../src/web/treeOps.js";
+
 
 let tempDir = "";
 let db: OpenOutlinerDb;
@@ -1021,40 +1017,43 @@ describe("tree operations", () => {
   });
 
   it("inserts and replaces optimistic nodes while preserving sibling positions", () => {
-    const tree = testTree();
-    const inserted = insertTreeNode(tree, "root", testNode("temp-1", "Temp", "root"), 1);
-    const replaced = replaceTreeNode(inserted, "temp-1", testNode("real-1", "Real", "root"));
+    const { state } = fromNestedTree(testTree());
+    const temporary = { ...state.nodes.a, id: "temp-1", title: "Temp", childIds: [] };
+    const inserted = insertNode(state, "root", temporary, 1);
+    const replaced = replaceNode(inserted, "temp-1", { ...temporary, id: "real-1", title: "Real" });
 
-    expect(inserted.children.map(node => node.id)).toEqual(["a", "temp-1", "b"]);
-    expect(inserted.children.map(node => node.position)).toEqual([0, 1, 2]);
-    expect(replaced.children.map(node => node.id)).toEqual(["a", "real-1", "b"]);
-    expect(replaced.children[1].title).toBe("Real");
+    expect(inserted.nodes.root.childIds).toEqual(["a", "temp-1", "b"]);
+    expect(inserted.nodes.root.childIds.map(id => inserted.nodes[id].position)).toEqual([0, 1, 2]);
+    expect(replaced.nodes.root.childIds).toEqual(["a", "real-1", "b"]);
+    expect(replaced.nodes["real-1"].title).toBe("Real");
   });
 
   it("preserves a split title patch while inserting the next node", () => {
-    const tree = testTree();
-    const patched = updateTreeNode(tree, "a", { title: "配置" });
-    const inserted = insertTreeNode(patched, "root", testNode("temp-1", "核查", "root"), 1);
+    const { state } = fromNestedTree(testTree());
+    const patched = updateNode(state, "a", { title: "配置" });
+    const inserted = insertNode(patched, "root", { ...state.nodes.a, id: "temp-1", title: "核查", childIds: [] }, 1);
 
-    expect(inserted.children.map(node => node.title)).toEqual(["配置", "核查", "Beta"]);
+    expect(inserted.nodes.root.childIds.map(id => inserted.nodes[id].title)).toEqual(["配置", "核查", "Beta"]);
   });
 
   it("removes a subtree and normalizes remaining siblings", () => {
-    const tree = testTree();
-    const next = removeTreeNode(tree, "a");
+    const { state } = fromNestedTree(testTree());
+    const next = removeNode(state, "a");
 
-    expect(next.children.map(node => node.id)).toEqual(["b"]);
-    expect(next.children[0].position).toBe(0);
+    expect(next.nodes.root.childIds).toEqual(["b"]);
+    expect(next.nodes.b.position).toBe(0);
+    expect(next.nodes["a-child"]).toBeUndefined();
+    expect(state.nodes["a-child"]).toBeDefined();
   });
 
   it("moves nodes across parents and preserves the moved subtree", () => {
-    const tree = testTree();
-    const next = moveTreeNode(tree, "a", "b", 0);
+    const { state } = fromNestedTree(testTree());
+    const next = moveFlatNode(state, "a", "b", 0);
 
-    expect(next.children.map(node => node.id)).toEqual(["b"]);
-    expect(next.children[0].children.map(node => node.id)).toEqual(["a"]);
-    expect(next.children[0].children[0].children[0].id).toBe("a-child");
-    expect(next.children[0].children[0].parentId).toBe("b");
+    expect(next.nodes.root.childIds).toEqual(["b"]);
+    expect(next.nodes.b.childIds).toEqual(["a"]);
+    expect(next.nodes.a.childIds).toEqual(["a-child"]);
+    expect(next.nodes.a.parentId).toBe("b");
   });
 
   it("moves flat tree nodes without dropping descendants", () => {

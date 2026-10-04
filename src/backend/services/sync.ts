@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { SqlDatabase } from "../shared/sql.js";
-import { tables, rowKey, changesBetween, snapshot, mergeChanges, replaceSnapshot, SyncConflict, type Change } from "../shared/sync.js";
+import { tables, rowKey, changesBetween, snapshot, mergeChanges, replaceSnapshot, SyncConflict, type Change, type Table } from "../shared/sync.js";
 
 const row = z.record(z.string(), z.union([z.string(), z.number().finite(), z.null()]));
 const payload = z.object({ changes: z.array(z.object({ table: z.enum(tables), key: z.string(), before: row.nullable(), after: row.nullable() })).max(100000) });
@@ -13,8 +13,13 @@ export class SyncService {
   }
   push(input: unknown) {
     const { changes } = payload.parse(input);
+    const columnsByTable = new Map<Table, string[]>();
     for (const change of changes) {
-      const columns = this.db.prepare(`PRAGMA table_info(${change.table})`).all().map(column => String(column.name));
+      let columns = columnsByTable.get(change.table);
+      if (!columns) {
+        columns = this.db.prepare(`PRAGMA table_info(${change.table})`).all().map(column => String(column.name));
+        columnsByTable.set(change.table, columns);
+      }
       for (const value of [change.before, change.after]) {
         if (value && (rowKey(change.table, value) !== change.key || Object.keys(value).length !== columns.length || columns.some(key => !(key in value)))) throw new Error("同步数据结构不匹配，请刷新应用。");
       }

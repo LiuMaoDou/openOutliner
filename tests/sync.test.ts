@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { openDatabase } from "../src/backend/db/database.js";
 import { OutlinerService } from "../src/backend/services/outliner.js";
 import { SyncService } from "../src/backend/services/sync.js";
-import { changesBetween, mergeChanges, snapshot, replaceSnapshot, SyncConflict } from "../src/backend/shared/sync.js";
+import { changesBetween, mergeChanges, rowKey, snapshot, replaceSnapshot, SyncConflict, type Change } from "../src/backend/shared/sync.js";
 import { dispatch } from "../src/backend/shared/dispatch.js";
 import initSqlJs from "sql.js";
 import { migrate } from "../src/backend/shared/schema.js";
@@ -15,6 +15,71 @@ function fixture() {
   return { db, service, workspace, node, sync: new SyncService(db) };
 }
 describe("offline sync", () => {
+  it("applies sequential edits, deletion and reinsertion of one key in order", () => {
+    const { db, node } = fixture();
+    try {
+      const current = snapshot(db), original = structuredClone(current);
+      const before = current.nodes.find(row => row.id === node.id)!;
+      const edited = { ...before, title: "First edit" };
+      const restored = { ...before, title: "Reinserted" };
+      const changes: Change[] = [
+        { table: "nodes", key: rowKey("nodes", before), before, after: edited },
+        { table: "nodes", key: rowKey("nodes", before), before: edited, after: null },
+        { table: "nodes", key: rowKey("nodes", before), before: null, after: restored }
+      ];
+      const result = mergeChanges(current, changes);
+      expect(result.nodes.at(-1)).toEqual(restored);
+      expect(result.nodes.filter(row => row.id === node.id)).toHaveLength(1);
+      expect(current).toEqual(original);
+    } finally { db.close(); }
+  });
+
+  it("keeps composite relation keys distinct in a mixed batch", () => {
+    const { db } = fixture();
+    try {
+      const current = snapshot(db);
+      current.node_tags = [{ node_id: "a", tag_id: "one" }, { node_id: "a", tag_id: "two" }];
+      current.field_values = [{ node_id: "a", field_id: "one", value: "old", updated_at: "before" }];
+      const desired = structuredClone(current);
+      desired.node_tags = [current.node_tags[1], { node_id: "b", tag_id: "one" }];
+      desired.field_values[0].value = "new";
+      const changes = changesBetween(current, desired);
+      expect(mergeChanges(current, changes)).toEqual(desired);
+      expect(mergeChanges(desired, changes)).toEqual(desired);
+    } finally { db.close(); }
+  });
+
+  it("validates a table schema once per push instead of once per changed row", () => {
+    const { db, service, workspace } = fixture();
+    try {
+      service.createNode({ parentId: workspace.rootNodeId, title: "Second" });
+      service.createNode({ parentId: workspace.rootNodeId, title: "Third" });
+      const base = snapshot(db), local = structuredClone(base);
+      for (const row of local.nodes) if (row.parent_id) row.title = `Changed ${row.title}`;
+      let schemaReads = 0;
+      const sql: SqlDatabase = { exec: text => db.exec(text), prepare: text => {
+        if (text === "PRAGMA table_info(nodes)") schemaReads += 1;
+        return db.prepare(text);
+      } };
+      const response = new SyncService(sql).push({ changes: changesBetween(base, local) });
+      expect(response.data).toEqual(local);
+      // One validation read and one snapshot replacement read.
+      expect(schemaReads).toBe(2);
+    } finally { db.close(); }
+  });
+
+  it("rejects workspace cycles even after validating a separate branch", () => {
+    const { db, service } = fixture();
+    try {
+      const a = service.createWorkspace("A"), b = service.createWorkspace("B");
+      const before = snapshot(db), invalid = structuredClone(before);
+      invalid.workspaces.find(row => row.id === a.id)!.parent_workspace_id = b.id;
+      invalid.workspaces.find(row => row.id === b.id)!.parent_workspace_id = a.id;
+      expect(() => replaceSnapshot(db, invalid)).toThrow("循环");
+      expect(snapshot(db)).toEqual(before);
+    } finally { db.close(); }
+  });
+
   it("syncs an emptied recycle bin and rejects a stale restore without resurrecting content", () => {
     const { db, service, node, sync } = fixture();
     const replica = openDatabase(":memory:");
