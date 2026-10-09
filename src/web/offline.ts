@@ -304,7 +304,10 @@ export async function downloadRecovery() {
   try {
     const blob = new Blob([JSON.stringify({ format: "openoutliner-recovery-v1", local: snapshot(sql), base: state.base, conflict: state.conflict, backups: state.backups, editorDrafts: journal.list() }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob), anchor = document.createElement("a");
-    anchor.href = url; anchor.download = `openoutliner-recovery-${Date.now()}.json`; anchor.click();
+    const now = new Date();
+    const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(value => String(value).padStart(2, "0")).join("-");
+    const time = [now.getHours(), now.getMinutes(), now.getSeconds()].map(value => String(value).padStart(2, "0")).join("-");
+    anchor.href = url; anchor.download = `openoutliner-backup-${date}_${time}.json`; anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } finally { db.close(); }
 }

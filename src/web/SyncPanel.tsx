@@ -1,28 +1,67 @@
-import { Database, CircleAlert, FileDown, Upload } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { downloadRecovery, downloadBackup, downloadEditorDrafts, pendingEditorDrafts, archivedEditorDrafts, recoverArchivedEditorDraft, resolveEditorDraft, recoveryVersions, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync, synchronize } from "./offline";
-export function SyncPanel({ embedded = false, compact = false, onImport, onExport }: {
+import { CircleAlert, Database, FileDown, Upload, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { downloadRecovery, pendingEditorDrafts, resolveEditorDraft, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync } from "./offline";
+
+export function SyncPanel({ embedded = false, compact = false }: {
   embedded?: boolean;
   compact?: boolean;
-  onImport?: () => void;
-  onExport?: (format: "markdown" | "opml") => Promise<void>;
 }) {
   const status = useSyncExternalStore(subscribeSync, getSyncStatus);
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [versions, setVersions] = useState<string[]>([]);
-  const [version, setVersion] = useState("0");
+  const [position, setPosition] = useState<CSSProperties>({});
+  const panelId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { if (open) void recoveryVersions().then(setVersions).catch(() => {}); }, [open, status.conflict]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const detailsRef = useRef<HTMLElement | null>(null);
+  const recoveryInputRef = useRef<HTMLInputElement | null>(null);
+  const attention = status.localSaveError ? "保存失败" : status.draftConflicts?.length ? "编辑冲突" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : "";
+  const forcedOpen = Boolean(status.needsLogin || !status.ready);
+  const detailsVisible = open || forcedOpen;
+  const closePanel = () => { setOpen(false); triggerRef.current?.focus({ preventScroll: true }); };
+
+  useLayoutEffect(() => {
+    if (!detailsVisible) return;
+    const placePanel = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const viewportLeft = viewport?.offsetLeft ?? 0;
+      const viewportTop = viewport?.offsetTop ?? 0;
+      const viewportWidth = viewport?.width ?? window.innerWidth;
+      const viewportHeight = viewport?.height ?? window.innerHeight;
+      const width = Math.min(240, viewportWidth - 24);
+      const bottomEdge = Math.min(Math.max(rect.top - 8, viewportTop + 80), viewportTop + viewportHeight - 12);
+      setPosition({
+        left: Math.max(viewportLeft + 12, Math.min(rect.left, viewportLeft + viewportWidth - width - 12)),
+        bottom: window.innerHeight - bottomEdge,
+        width,
+        maxHeight: Math.min(560, bottomEdge - viewportTop - 12)
+      });
+    };
+    placePanel();
+    if (open) detailsRef.current?.focus({ preventScroll: true });
+    window.addEventListener("resize", placePanel);
+    window.visualViewport?.addEventListener("resize", placePanel);
+    window.visualViewport?.addEventListener("scroll", placePanel);
+    return () => {
+      window.removeEventListener("resize", placePanel);
+      window.visualViewport?.removeEventListener("resize", placePanel);
+      window.visualViewport?.removeEventListener("scroll", placePanel);
+    };
+  }, [detailsVisible, open, compact]);
+
   useEffect(() => {
     if (!open) return;
     const closeOutside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !panelRef.current?.contains(event.target)) setOpen(false);
+      if (event.target instanceof Node && !panelRef.current?.contains(event.target) && !detailsRef.current?.contains(event.target)) setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus({ preventScroll: true }); }
     };
     window.addEventListener("pointerdown", closeOutside);
     window.addEventListener("keydown", closeOnEscape);
@@ -31,77 +70,88 @@ export function SyncPanel({ embedded = false, compact = false, onImport, onExpor
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [open]);
-  const act = async (fn: () => Promise<unknown>) => { setBusy(true); setError(""); try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : "操作失败"); } finally { setBusy(false); } };
-  const attention = status.localSaveError ? "保存失败" : status.draftConflicts?.length ? "编辑冲突" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : "";
-  const detailsVisible = open || status.needsLogin || !status.ready;
+
+  const act = async (fn: () => Promise<unknown>, closeAfter = false) => {
+    setBusy(true); setError("");
+    try { await fn(); if (closeAfter) closePanel(); }
+    catch (e) { setError(e instanceof Error ? e.message : "操作失败"); }
+    finally { setBusy(false); }
+  };
+
   return <div ref={panelRef} className={`syncPanel${embedded ? " syncPanelEmbedded" : ""}`}>
     <button
+      ref={triggerRef}
+      type="button"
       className={`syncIndicator${attention ? " syncIndicatorAttention" : ""}`}
-      onClick={() => setOpen(!open)}
-      aria-expanded={Boolean(detailsVisible)}
-      aria-label={attention ? `导入、导出与备份：${attention}` : "导入、导出与备份"}
-      title={attention ? `导入、导出与备份 · ${attention}` : "导入、导出与备份"}
+      onClick={() => { setError(""); setOpen(current => !current); }}
+      aria-expanded={detailsVisible}
+      aria-controls={panelId}
+      aria-haspopup="dialog"
+      aria-label={attention ? `备份与恢复：${attention}` : "备份与恢复"}
+      title={attention ? `备份与恢复 · ${attention}` : "备份与恢复"}
     >
       {attention ? <CircleAlert size={15} aria-hidden="true" /> : <Database size={15} aria-hidden="true" />}
       {attention && !compact && <span>{attention}</span>}
     </button>
-    {detailsVisible && <section className="syncDetails" aria-label="导入、导出与备份">
-      {(onImport || onExport) && <div className="syncFileSection">
-        <strong>导入与导出</strong>
-        <div className="syncFileActions">
-          {onImport && <button type="button" onClick={onImport}><Upload size={15} />Import Markdown / OPML</button>}
-          {onExport && <>
-            <button type="button" disabled={busy} onClick={() => void act(() => onExport("opml"))}><FileDown size={15} />Export OPML</button>
-            <button type="button" disabled={busy} onClick={() => void act(() => onExport("markdown"))}><FileDown size={15} />Export Markdown</button>
-          </>}
-        </div>
-      </div>}
-      <strong>备份与同步</strong>
-      <p role="status">{status.text}</p>
+    <input
+      ref={recoveryInputRef}
+      type="file"
+      accept="application/json,.json"
+      aria-label="恢复备份文件"
+      hidden
+      onChange={event => {
+        const file = event.target.files?.[0]; event.target.value = "";
+        if (file) void act(() => restoreRecovery(file));
+      }}
+    />
+    {detailsVisible && createPortal(<section
+      ref={detailsRef}
+      id={panelId}
+      className="syncDetails"
+      role="dialog"
+      aria-label="备份与恢复"
+      tabIndex={-1}
+      style={position}
+      onKeyDown={event => {
+        if (event.key === "Escape") closePanel();
+        event.stopPropagation();
+      }}
+    >
+      <header className="syncDetailsHeader">
+        <strong>备份与恢复</strong>
+        {!forcedOpen && <button className="syncIconButton syncClose" type="button" aria-label="关闭备份与恢复" onClick={closePanel}><X size={16} /></button>}
+      </header>
       {(error || status.localSaveError || status.error) && <p role="alert">{error || status.localSaveError || status.error}</p>}
-      {status.needsLogin && <form onSubmit={event => { event.preventDefault(); void act(async () => { await signIn(password); setPassword(""); }); }}>
-        <label>访问密码<input aria-label="访问密码" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} /></label>
-        <button disabled={busy || !password}>登录并同步</button>
-      </form>}
-      {status.conflict && <div>
-        <p>其他设备也修改了数据。选择后，另一版本会保留在本机恢复备份中。选择“本机”将以当前整套本机数据替换此次云端版本。</p>
-        <ul>{status.conflict.slice(0,10).map((text, i) => <li key={i}>{text}</li>)}</ul>
-        <button disabled={busy} onClick={() => void act(() => resolveConflict("cloud"))}>采用云端，备份本机</button>
-        <button disabled={busy} onClick={() => void act(() => resolveConflict("local"))}>采用本机，备份云端</button>
+      {status.ready && <div>
+        <button className="syncActionRow" type="button" disabled={busy} onClick={() => void act(downloadRecovery, true)}><FileDown size={16} /><span>下载备份</span><small>全部工作区</small></button>
+        <button className="syncActionRow" type="button" disabled={busy} onClick={() => recoveryInputRef.current?.click()}><Upload size={16} /><span>恢复备份</span><small>JSON</small></button>
       </div>}
-      {Boolean(status.drafts) && <div>
-        <strong>保留的编辑草稿</strong>
-        <p>原页面的草稿会继续保存；从备份恢复的草稿请在这里选择采用。发生冲突时，请比较后选择；另一份仍保留在恢复备份中。</p>
-        {pendingEditorDrafts().map(draft => <details key={draft.id}>
-          <summary>{draft.field === "title" ? "标题" : "备注"} · {draft.conflict ? "需要选择版本" : "等待保存"} · {new Date(draft.updatedAt).toLocaleTimeString()}</summary>
-          <p>编辑草稿</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 160, overflow: "auto" }}>{draft.value || "（空内容）"}</pre>
-          {draft.conflict && <><p>当前内容</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 160, overflow: "auto" }}>{draft.conflict.current === null ? "节点已删除，可下载草稿后恢复内容" : draft.conflict.current || "（空内容）"}</pre></>}
-          {draft.conflict?.current !== null && <button disabled={busy} onClick={() => void act(() => resolveEditorDraft(draft.id, "draft"))}>采用此草稿</button>}
-          <button disabled={busy} onClick={() => void act(() => resolveEditorDraft(draft.id, "current"))}>保留当前，归档草稿</button>
-        </details>)}
-        <button onClick={downloadEditorDrafts}>下载全部编辑草稿</button>
-      </div>}
-      {Boolean(status.archivedDrafts) && <details>
-        <summary>已归档的编辑草稿（{status.archivedDrafts}）</summary>
-        {archivedEditorDrafts().map(draft => <details key={draft.id}>
-          <summary>{draft.field === "title" ? "标题" : "备注"} · {new Date(draft.updatedAt).toLocaleString()}</summary>
-          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 160, overflow: "auto" }}>{draft.value || "（空内容）"}</pre>
-          <button disabled={busy} onClick={() => void act(async () => recoverArchivedEditorDraft(draft.id))}>恢复为待处理草稿</button>
-        </details>)}
-        <button onClick={downloadEditorDrafts}>下载全部编辑草稿</button>
-      </details>}
-      {versions.length > 0 && <div><label>保留的版本<select aria-label="保留的版本" value={version} onChange={event => setVersion(event.target.value)}>{versions.map((date, index) => <option key={index} value={index}>{new Date(date).toLocaleString()}</option>)}</select></label><button onClick={() => void act(() => downloadBackup(Number(version)))}>下载此版本</button></div>}
-      <div className="syncActions">
-        <button disabled={busy} onClick={() => void act(synchronize)}>立即同步</button>
-        {status.ready && <button disabled={busy} onClick={() => void act(downloadRecovery)}>下载恢复备份</button>}
-        {status.ready && <label className="recoveryImport">恢复备份<input type="file" accept="application/json,.json" aria-label="恢复备份" onChange={event => {
-          const file = event.target.files?.[0]; event.target.value = "";
-          if (file) void act(() => restoreRecovery(file));
-        }} /></label>}
-        {status.ready && <button onClick={() => setOpen(false)}>收起</button>}
+      <div className="syncAttentionDetails">
+        {status.needsLogin && <form onSubmit={event => { event.preventDefault(); void act(async () => { await signIn(password); setPassword(""); }); }}>
+          <label>访问密码<input aria-label="访问密码" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} /></label>
+          <button disabled={busy || !password}>登录并同步</button>
+        </form>}
+        {status.conflict && <div>
+          <p>其他设备也修改了数据。选择后，另一版本会保留在本机恢复备份中。选择“本机”将以当前整套本机数据替换此次云端版本。</p>
+          <ul>{status.conflict.slice(0,10).map((text, i) => <li key={i}>{text}</li>)}</ul>
+          <button disabled={busy} onClick={() => void act(() => resolveConflict("cloud"))}>采用云端，备份本机</button>
+          <button disabled={busy} onClick={() => void act(() => resolveConflict("local"))}>采用本机，备份云端</button>
+        </div>}
+        {Boolean(status.drafts) && <div>
+          <strong>保留的编辑草稿</strong>
+          <p>草稿与当前内容均会保留，请选择要采用的版本。</p>
+          {pendingEditorDrafts().map(draft => <details key={draft.id}>
+            <summary>{draft.field === "title" ? "标题" : "备注"} · {draft.conflict ? "需要选择版本" : "等待保存"} · {new Date(draft.updatedAt).toLocaleTimeString()}</summary>
+            <p>编辑草稿</p><pre>{draft.value || "（空内容）"}</pre>
+            {draft.conflict && <><p>当前内容</p><pre>{draft.conflict.current === null ? "节点已删除，可下载备份保留草稿内容" : draft.conflict.current || "（空内容）"}</pre></>}
+            {draft.conflict?.current !== null && <button disabled={busy} onClick={() => void act(() => resolveEditorDraft(draft.id, "draft"))}>采用此草稿</button>}
+            <button disabled={busy} onClick={() => void act(() => resolveEditorDraft(draft.id, "current"))}>保留当前，归档草稿</button>
+          </details>)}
+        </div>}
       </div>
-      <p><a href="/api/app-recovery">检查应用版本 / 修复缓存</a></p>
-      <small>修改先保存到此浏览器，再同步至云端。清除网站数据会移除未同步内容。离线仅包含笔记数据及应用资源，外部链接和远程图片需要网络。</small>
-    </section>}
+      <footer className="syncStatusRow">
+        <span role="status" title={status.text}>{status.text}</span>
+      </footer>
+    </section>, document.body)}
   </div>;
 }

@@ -57,7 +57,6 @@ import {
   apiGet,
   apiPatch,
   apiPost,
-  apiText,
   type OutlineHistoryResult,
   type OutlineHistoryState,
   type OutlineNode,
@@ -401,7 +400,6 @@ export function App() {
   const nodeSelectionDragRef = useRef<NodeSelectionDrag | null>(null);
   const suppressSelectionClickRef = useRef(false);
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const resolvedTempNodeIdsRef = useRef(new Map<string, string>());
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
   const virtualListRef = useRef<HTMLDivElement | null>(null);
@@ -2217,38 +2215,6 @@ export function App() {
     await Promise.all([loadTags(workspaceIdRef.current), loadSystemTagGroups()]);
   };
 
-  const exportFile = async (format: "markdown" | "opml") => {
-    const extension = format === "markdown" ? "md" : "opml";
-    const content = await apiText(`/api/export/${format}`);
-    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    const date = new Date().toISOString().slice(0, 10);
-    link.download = `${date}.${extension}`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const importFile = async (file: File) => {
-    setError("");
-    const content = await file.text();
-    const format = /\.(opml|xml)$/i.test(file.name) || /^\s*(?:<\?xml[^>]*>\s*)?<opml\b/i.test(content) ? "opml" : "markdown";
-    const result = await apiPost<{ workspaceId?: string; workspaceIds?: string[] }>(`/api/import/${format}`, { content });
-    const nextWorkspaces = await loadWorkspaces();
-    const nextId =
-      result.workspaceId && nextWorkspaces.some(workspace => workspace.id === result.workspaceId)
-        ? result.workspaceId
-        : nextWorkspaces[0]?.id || "";
-    workspaceIdRef.current = nextId;
-    tagResultsRequestRef.current += 1;
-    setWorkspaceId(nextId);
-    setActiveTagFilter("");
-    setTagResults([]);
-    await loadTree(nextId);
-    await loadTags(nextId);
-  };
-
   const renderWorkspaceItem = (workspace: Workspace, depth = 0): React.ReactNode => {
     const children = workspacesByParent.get(workspace.id) ?? [];
     const isCollapsed = collapsedWorkspaceIds.has(workspace.id);
@@ -2531,7 +2497,7 @@ export function App() {
           )}
         </div>
         <div className="sidebarFooter">
-          <SyncPanel embedded compact={sidebarCompact} onImport={() => fileInputRef.current?.click()} onExport={exportFile} />
+          <SyncPanel embedded compact={sidebarCompact} />
           <button
             className="sidebarIconButton"
             type="button"
@@ -2593,18 +2559,6 @@ export function App() {
         >
           <PanelLeft size={18} />
         </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".md,.markdown,.opml,.xml,text/markdown,text/xml"
-          hidden
-          onChange={event => {
-            const file = event.target.files?.[0];
-            if (file) importFile(file).catch(toError(setError));
-            event.currentTarget.value = "";
-          }}
-        />
-
         {isMarkdownHelpOpen && (
           <div className="modalBackdrop" role="presentation" onClick={() => setIsMarkdownHelpOpen(false)}>
             <div
