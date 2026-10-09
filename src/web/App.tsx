@@ -34,7 +34,7 @@ import {
   Undo2,
   X
 } from "lucide-react";
-import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
+import { WorkspaceIcon, randomWorkspaceIcon } from "./workspaceIcons";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import ReactMarkdown from "react-markdown";
 import { createPortal } from "react-dom";
@@ -315,7 +315,6 @@ const EMPTY_OUTLINE_HISTORY: OutlineHistoryState = {
   redoLabel: null
 };
 
-const iconNameSet = new Set<string>(iconNames);
 const markdownTextColorIds = new Set<string>(MARKDOWN_TEXT_COLORS.map(color => color.id));
 const markdownTextColorClassNames = MARKDOWN_TEXT_COLORS.map(color => `markdownTextColor-${color.id}`);
 const markdownSanitizeSchema = {
@@ -2295,9 +2294,8 @@ export function App() {
             title={sidebarCompact ? workspace.name : "Drag workspace"}
             onPointerDown={event => startWorkspaceDrag(workspace, event)}
           >
-            <DynamicIcon
-              name={workspaceIconName(workspace.icon)}
-              fallback={() => <FolderTree size={15} />}
+            <WorkspaceIcon
+              name={workspace.icon}
               size={15}
               strokeWidth={2.2}
             />
@@ -5177,10 +5175,6 @@ function themeLabel(theme: Theme): string {
   return "System";
 }
 
-function randomWorkspaceIcon(): IconName {
-  return iconNames[Math.floor(Math.random() * iconNames.length)] ?? "folder-tree";
-}
-
 export function createWorkspaceRequestBody(
   selectedWorkspace: Pick<Workspace, "folderId" | "parentWorkspaceId"> | null | undefined,
   folderId?: string | null,
@@ -5225,10 +5219,6 @@ export function nextCollapsedWorkspaceIds(current: Set<string>, workspaceId: str
     next.add(workspaceId);
   }
   return next;
-}
-
-function workspaceIconName(icon: string): IconName {
-  return iconNameSet.has(icon) ? (icon as IconName) : "folder-tree";
 }
 
 function isEditableElement(target: EventTarget | null): boolean {
