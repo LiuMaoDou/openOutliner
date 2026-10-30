@@ -2752,6 +2752,7 @@ export function App() {
           ref={contentGridRef}
           style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
         >
+          <div className="outlineArtwork" aria-hidden="true" />
           <div className="outlineSurface" ref={outlineSurfaceRef} tabIndex={-1}
             onPointerDown={event => {
               if (event.target === event.currentTarget || event.target === virtualListRef.current

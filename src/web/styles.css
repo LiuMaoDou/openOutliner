@@ -77,6 +77,7 @@
   --topbar-background: rgba(255, 255, 255, 0.88);
   --surface: #fcfcfc;
   --content-surface: #ffffff;
+  --content-art: #d0d5c9;
   --outline-grid-line: rgba(95, 99, 180, 0.075);
   --content-shadow:
     0 4px 14px rgba(24, 24, 27, 0.045),
@@ -151,6 +152,7 @@
   --topbar-background: rgba(9, 9, 11, 0.86);
   --surface: #0f0f12;
   --content-surface: #111115;
+  --content-art: #49534b;
   --outline-grid-line: rgba(146, 149, 255, 0.08);
   --content-shadow:
     0 12px 36px rgba(0, 0, 0, 0.34),
@@ -1336,13 +1338,19 @@ body.isResizingPanel .appShell {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.outlineArtwork,
 .outlineSurface {
-  --outline-grid-surface: var(--content-surface);
-  scrollbar-color: color-mix(in srgb, var(--scrollbar-thumb) 50%, transparent) transparent;
+  grid-area: 1 / 1;
   min-width: 0;
   margin: 26px var(--content-edge-gap);
-  padding: 20px var(--content-gutter);
-  overflow: auto;
+  border-radius: 18px;
+}
+
+.outlineArtwork {
+  --outline-grid-surface: var(--content-surface);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   background-color: var(--outline-grid-surface);
   background-image:
     linear-gradient(to bottom, color-mix(in srgb, var(--outline-grid-surface) 25%, transparent) 15%, var(--outline-grid-surface) 100%),
@@ -1350,8 +1358,26 @@ body.isResizingPanel .appShell {
     linear-gradient(90deg, var(--outline-grid-line) 1px, transparent 1px);
   background-size: 100% 100%, 32px 32px, 32px 32px;
   background-attachment: fixed;
-  border-radius: 18px;
   box-shadow: var(--content-shadow);
+}
+
+.outlineArtwork::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: "";
+  pointer-events: none;
+  background: var(--content-art);
+  -webkit-mask: url("./assets/tiger-line.png") no-repeat right bottom / min(100%, 700px) auto;
+  mask: url("./assets/tiger-line.png") no-repeat right bottom / min(100%, 700px) auto;
+}
+
+.outlineSurface {
+  position: relative;
+  min-height: 0;
+  padding: 20px var(--content-gutter);
+  overflow: auto;
+  scrollbar-color: color-mix(in srgb, var(--scrollbar-thumb) 50%, transparent) transparent;
 }
 
 .outlineSurface::-webkit-scrollbar-thumb {
@@ -3527,13 +3553,24 @@ body.isSelectingNodes .nodeTitlePreview {
     border-left: 0;
   }
 
+  .outlineArtwork,
   .outlineSurface {
-    --outline-grid-surface: var(--background);
-    overflow: visible;
     margin: 0;
-    padding: 20px 12px 8px;
     border-radius: 0;
+  }
+
+  .outlineArtwork {
+    --outline-grid-surface: var(--background);
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100dvh;
     box-shadow: none;
+  }
+
+  .outlineSurface {
+    overflow: visible;
+    padding: 20px 12px 8px;
   }
 
   .outlineHeader {
