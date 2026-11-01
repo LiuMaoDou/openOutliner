@@ -792,6 +792,13 @@ body.isResizingPanel .appShell {
   box-shadow: var(--shadow-sm);
 }
 
+.workspaceItem.outlineDropTarget {
+  color: var(--foreground);
+  background: var(--selected);
+  border-color: var(--drop-indicator);
+  box-shadow: inset 0 0 0 1px var(--drop-indicator);
+}
+
 .workspaceIcon {
   display: inline-flex;
   align-items: center;
@@ -1269,28 +1276,6 @@ body.isResizingPanel .appShell {
   color: var(--muted-foreground);
   font-size: 0.76rem;
   line-height: 1.45;
-}
-
-.moveWorkspaceField {
-  display: grid;
-  gap: 6px;
-  margin-top: 14px;
-}
-
-.moveWorkspaceField span {
-  color: var(--foreground);
-  font-size: 0.76rem;
-  font-weight: 680;
-}
-
-.moveWorkspaceField select {
-  width: 100%;
-  height: 36px;
-  padding: 0 10px;
-  color: var(--foreground);
-  background: var(--background);
-  border: 1px solid var(--input);
-  border-radius: 8px;
 }
 
 .convertWorkspaceActions {

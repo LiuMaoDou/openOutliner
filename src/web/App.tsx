@@ -10,7 +10,6 @@ import {
   ChevronRight,
   Code2,
   FolderClosed,
-  FolderInput,
   FolderOpen,
   FolderPlus,
   FolderTree,
@@ -215,7 +214,12 @@ interface DragState {
   y: number;
   overId?: string;
   placement?: DropPlacement;
+  overWorkspaceId?: string;
 }
+
+type NodeDragTarget =
+  | { kind: "node"; overId: string; placement: DropPlacement }
+  | { kind: "workspace"; workspaceId: string };
 
 interface NodeSelectionDrag {
   pointerId: number;
@@ -281,13 +285,6 @@ interface PendingDelete {
 interface ConvertWorkspaceCandidate {
   id: string;
   title: string;
-}
-
-interface MoveWorkspaceCandidate {
-  ids: string[];
-  selectedCount: number;
-  title: string;
-  sourceWorkspaceId: string;
 }
 
 type ResizablePanel = "sidebar" | "inspector";
@@ -377,8 +374,6 @@ export function App() {
   const [outlineHistory, setOutlineHistory] = useState<OutlineHistoryState>(EMPTY_OUTLINE_HISTORY);
   const [convertWorkspaceCandidate, setConvertWorkspaceCandidate] = useState<ConvertWorkspaceCandidate | null>(null);
   const [isConvertingWorkspace, setIsConvertingWorkspace] = useState(false);
-  const [moveWorkspaceCandidate, setMoveWorkspaceCandidate] = useState<MoveWorkspaceCandidate | null>(null);
-  const [moveWorkspaceTargetId, setMoveWorkspaceTargetId] = useState("");
   const [isMovingToWorkspace, setIsMovingToWorkspace] = useState(false);
   const workspaceIdRef = useRef("");
   const pendingWorkspaceFocusIdRef = useRef("");
@@ -388,7 +383,7 @@ export function App() {
   const systemTagGroupsRequestRef = useRef(0);
   const recycleBinRequestRef = useRef(0);
   const outlineHistoryRequestRef = useRef(0);
-  const dragTargetRef = useRef<{ overId?: string; placement?: DropPlacement } | null>(null);
+  const dragTargetRef = useRef<NodeDragTarget | null>(null);
   const workspaceDragTargetRef = useRef<WorkspaceDragTarget | null>(null);
   const selectedIdRef = useRef("");
   const selectedNodeIdsRef = useRef(new Set<string>());
@@ -413,6 +408,7 @@ export function App() {
   const localNodeTitlesRef = useRef(new Map<string, string>());
   const reconcilingNodeIdsRef = useRef(new Set<string>());
   const pendingNodeCreateCountRef = useRef(0);
+  const nodeCreateWaitersRef = useRef(new Set<() => void>());
   const nodeCreateQueueRef = useRef<Promise<void>>(Promise.resolve());
   const nodePatchQueuesRef = useRef(new Map<string, Promise<void>>());
   const nodeCompositionTrackerRef = useRef<NodeCompositionTracker | null>(null);
@@ -787,15 +783,6 @@ export function App() {
   }, [convertWorkspaceCandidate, isConvertingWorkspace]);
 
   useEffect(() => {
-    if (!moveWorkspaceCandidate || isMovingToWorkspace) return;
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setMoveWorkspaceCandidate(null);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [isMovingToWorkspace, moveWorkspaceCandidate]);
-
-  useEffect(() => {
     if (!pendingDelete) return;
     const timer = window.setTimeout(() => setPendingDelete(current =>
       current?.createdAt === pendingDelete.createdAt ? null : current
@@ -863,6 +850,7 @@ export function App() {
     [flatState, dueReminderCutoff, allDueReminderNodes]
   );
   const draggingNodeIds = useMemo(() => new Set(dragState?.draggingIds ?? []), [dragState?.draggingIds]);
+  const outlineDropWorkspace = workspaces.find(workspace => workspace.id === dragState?.overWorkspaceId);
   const rootWorkspaces = useMemo(
     () => workspaces.filter(workspace => !workspace.folderId && !workspace.parentWorkspaceId),
     [workspaces]
@@ -887,17 +875,6 @@ export function App() {
     }
     return map;
   }, [workspaces]);
-  const moveWorkspaceOptions = useMemo(() => {
-    const sourceWorkspaceId = moveWorkspaceCandidate?.sourceWorkspaceId ?? workspaceId;
-    const workspacesById = new Map(workspaces.map(workspace => [workspace.id, workspace]));
-    const foldersById = new Map(workspaceFolders.map(folder => [folder.id, folder]));
-    return workspaces
-      .filter(workspace => workspace.id !== sourceWorkspaceId)
-      .map(workspace => ({
-        workspace,
-        label: getWorkspacePathLabel(workspace, workspacesById, foldersById)
-      }));
-  }, [moveWorkspaceCandidate?.sourceWorkspaceId, workspaceFolders, workspaceId, workspaces]);
   const isSearching = search.trim().length > 0;
   const isTagFiltering = activeTagFilter.length > 0;
   const filteredNodes = useMemo(() => isSearching && flatState
@@ -1327,6 +1304,8 @@ export function App() {
       if (pendingNodeCreateCountRef.current === 0) {
         for (const id of reconcilingNodeIdsRef.current) localNodeTitlesRef.current.delete(id);
         reconcilingNodeIdsRef.current.clear();
+        for (const resolve of nodeCreateWaitersRef.current) resolve();
+        nodeCreateWaitersRef.current.clear();
       }
     }
   };
@@ -1671,7 +1650,7 @@ export function App() {
   const cycleTheme = () => setTheme(nextTheme(theme));
 
   const startNodeDrag = (node: FlatNodeData, event: PointerEvent<HTMLButtonElement>) => {
-    if (isSearching || isTagFiltering) return;
+    if (isTagFiltering || isMovingToWorkspace || event.button !== 0) return;
     const currentState = flatStateRef.current;
     if (!currentState) return;
     const draggingIds = selectedNodeIdsRef.current.has(node.id)
@@ -1681,18 +1660,28 @@ export function App() {
     if (movingIds.length === 0) return;
 
     event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    const dragHandle = event.currentTarget;
+    const pointerId = event.pointerId;
+    dragHandle.setPointerCapture(pointerId);
+    let openedMobileSidebar = false;
     dragTargetRef.current = null;
     if (draggingIds.length > 1) {
       setNodeSelection(draggingIds, node.id, selectionAnchorIdRef.current || node.id);
     } else {
       setSingleSelectedId(node.id);
     }
-    const title = draggingIds.length > 1 ? `${draggingIds.length} nodes` : node.title;
+    const title = draggingIds.length > 1
+      ? `${draggingIds.length} nodes`
+      : readNodeDraft(node.id, "title") ?? localNodeTitlesRef.current.get(node.id) ?? node.title;
     setDragState({ draggingIds, movingIds, title, x: event.clientX, y: event.clientY });
     document.body.classList.add("isDraggingNode");
 
     const move = (pointerEvent: globalThis.PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) return;
+      if (compactLayout && !mobileSidebarOpen && pointerEvent.clientX <= 32) {
+        openedMobileSidebar = true;
+        setMobileSidebarOpen(true);
+      }
       const nextDragState = {
         draggingIds,
         movingIds,
@@ -1700,9 +1689,21 @@ export function App() {
         x: pointerEvent.clientX,
         y: pointerEvent.clientY
       };
-      const targetElement = document
-        .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
-        ?.closest<HTMLElement>("[data-node-id]");
+      const element = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY);
+      const workspaceElement = element?.closest<HTMLElement>("[data-workspace-drop-id]");
+      const targetWorkspaceId = workspaceElement?.dataset.workspaceDropId;
+      if (targetWorkspaceId && targetWorkspaceId !== node.workspaceId
+        && workspaces.some(workspace => workspace.id === targetWorkspaceId)) {
+        dragTargetRef.current = { kind: "workspace", workspaceId: targetWorkspaceId };
+        setDragState({ ...nextDragState, overWorkspaceId: targetWorkspaceId });
+        return;
+      }
+      if (isSearching) {
+        dragTargetRef.current = null;
+        setDragState(nextDragState);
+        return;
+      }
+      const targetElement = element?.closest<HTMLElement>("[data-node-id]");
       const targetId = targetElement?.dataset.nodeId;
       const target = targetId ? getNode(currentState, targetId) : undefined;
 
@@ -1717,28 +1718,45 @@ export function App() {
       }
 
       const placement = getDropPlacement(targetElement, pointerEvent.clientY);
-      dragTargetRef.current = { overId: target.id, placement };
+      dragTargetRef.current = { kind: "node", overId: target.id, placement };
       setDragState({ ...nextDragState, overId: target.id, placement });
     };
 
-    const end = () => {
+    const cleanup = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-      const latestState = flatStateRef.current;
-      const target = dragTargetRef.current?.overId && latestState
-        ? getNode(latestState, dragTargetRef.current.overId)
-        : undefined;
-      const placement = dragTargetRef.current?.placement;
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", keydown);
+      if (dragHandle.hasPointerCapture(pointerId)) dragHandle.releasePointerCapture(pointerId);
+      if (openedMobileSidebar) setMobileSidebarOpen(false);
       finishNodeDrag();
-      if (target && placement) {
-        moveNodesToTarget(movingIds, target, placement).catch(toError(setError));
+    };
+    const end = (pointerEvent: globalThis.PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) return;
+      move(pointerEvent);
+      const dropTarget = dragTargetRef.current;
+      cleanup();
+      if (dropTarget?.kind === "workspace") {
+        moveOutlinesToWorkspace(movingIds, dropTarget.workspaceId, node.workspaceId).catch(toError(setError));
+      } else if (dropTarget?.kind === "node") {
+        const latestState = flatStateRef.current;
+        const target = latestState ? getNode(latestState, dropTarget.overId) : undefined;
+        if (target) moveNodesToTarget(movingIds, target, dropTarget.placement).catch(toError(setError));
       }
+    };
+    const cancel = (pointerEvent: globalThis.PointerEvent) => {
+      if (pointerEvent.pointerId === pointerId) cleanup();
+    };
+    const keydown = (keyboardEvent: globalThis.KeyboardEvent) => {
+      if (keyboardEvent.key !== "Escape") return;
+      keyboardEvent.preventDefault();
+      cleanup();
     };
 
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", keydown);
   };
 
   const finishNodeDrag = () => {
@@ -1923,36 +1941,28 @@ export function App() {
     }
   };
 
-  const prepareMoveToWorkspace = async (nodeId: string, title: string) => {
-    await nodeCreateQueueRef.current;
-    const current = flatStateRef.current;
-    if (!current || !hasNode(current, nodeId)) return;
-    const selectableIds = isSearching ? searchNodeIds(current, search) : computeVisibleIds(current);
-    const selectedIds = selectedNodeIdsRef.current.has(nodeId)
-      ? selectableIds.filter(id => selectedNodeIdsRef.current.has(id))
-      : [nodeId];
-    const ids = getTopLevelNodeIds(current, selectedIds);
-    if (!ids.length) return;
-    setMoveWorkspaceTargetId(moveWorkspaceOptions[0]?.workspace.id ?? "");
-    setMoveWorkspaceCandidate({ ids, selectedCount: selectedIds.length, title, sourceWorkspaceId: current.nodes[nodeId].workspaceId });
-  };
-
-  const moveNodeToWorkspace = async () => {
-    const candidate = moveWorkspaceCandidate;
-    const targetWorkspaceId = moveWorkspaceTargetId;
-    if (!candidate || !targetWorkspaceId || isMovingToWorkspace) return;
-
+  const moveOutlinesToWorkspace = async (ids: string[], targetWorkspaceId: string, sourceWorkspaceId: string) => {
+    if (!ids.length || sourceWorkspaceId === targetWorkspaceId || isMovingToWorkspace) return;
     setIsMovingToWorkspace(true);
     try {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      if (pendingNodeCreateCountRef.current > 0) {
+        await new Promise<void>(resolve => nodeCreateWaitersRef.current.add(resolve));
+      }
       await Promise.all([...nodePatchQueuesRef.current.values()]);
+      const persistedIds = ids.map(id => resolvedTempNodeIdsRef.current.get(id) ?? id);
+      if (persistedIds.some(id => id.startsWith("temp-"))) {
+        throw new Error("The outline could not be saved. Please try moving it again.");
+      }
       await apiPost("/api/nodes/move-to-workspace", {
-        ids: candidate.ids,
+        ids: persistedIds,
         workspaceId: targetWorkspaceId
       });
-      setMoveWorkspaceCandidate(null);
-      setSearch("");
-      selectWorkspace(targetWorkspaceId);
-      pendingNodeRevealRef.current = { workspaceId: targetWorkspaceId, nodeId: candidate.ids[0] };
+      if (workspaceIdRef.current === sourceWorkspaceId) {
+        setSearch("");
+        selectWorkspace(targetWorkspaceId);
+        pendingNodeRevealRef.current = { workspaceId: targetWorkspaceId, nodeId: persistedIds[0] };
+      }
     } finally {
       setIsMovingToWorkspace(false);
     }
@@ -2124,15 +2134,17 @@ export function App() {
   };
 
   const deleteWorkspace = async (workspace: Workspace) => {
-    if (!window.confirm(`Delete workspace "${workspace.name}"?`)) return;
-    const wasSelected = workspace.id === workspaceIdRef.current;
+    if (!window.confirm(`Delete workspace "${workspace.name}" and all its sub-workspaces? All outlines in these workspaces will be permanently deleted. This cannot be undone.`)) return;
+    const selectedWorkspaceId = workspaceIdRef.current;
+    const wasSelected = workspace.id === selectedWorkspaceId
+      || isWorkspaceDescendant(workspaces, selectedWorkspaceId, workspace.id);
     if (wasSelected) {
       treeRequestRef.current += 1;
       tagsRequestRef.current += 1;
       tagResultsRequestRef.current += 1;
     }
     await apiDelete(`/api/workspaces/${workspace.id}`);
-    if (wasSelected) {
+    if (wasSelected && workspaceIdRef.current === selectedWorkspaceId) {
       selectWorkspace(nextWorkspaceIdAfterDelete(workspaces, workspace.id));
       setError("");
     }
@@ -2225,6 +2237,7 @@ export function App() {
           className={[
             "workspaceItem",
             workspace.id === workspaceId && "active",
+            dragState?.overWorkspaceId === workspace.id && "outlineDropTarget",
             workspaceDragTarget?.overWorkspaceId === workspace.id &&
               workspaceDragTarget.placement &&
               `drop-${workspaceDragTarget.placement}`
@@ -2661,71 +2674,6 @@ export function App() {
           </div>
         )}
 
-        {moveWorkspaceCandidate && (
-          <div
-            className="modalBackdrop"
-            role="presentation"
-            onClick={() => {
-              if (!isMovingToWorkspace) setMoveWorkspaceCandidate(null);
-            }}
-          >
-            <div
-              className="convertWorkspaceDialog"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="move-workspace-title"
-              onClick={event => event.stopPropagation()}
-            >
-              <div className="convertWorkspaceIcon" aria-hidden="true">
-                <FolderInput size={20} />
-              </div>
-              <div className="convertWorkspaceCopy">
-                <h2 id="move-workspace-title">Move to workspace</h2>
-                <p>
-                  Move <strong>{moveWorkspaceCandidate.selectedCount > 1
-                    ? `${moveWorkspaceCandidate.selectedCount} selected outlines`
-                    : moveWorkspaceCandidate.title || "Untitled"}</strong> and all nested outlines to another workspace.
-                </p>
-                <label className="moveWorkspaceField">
-                  <span>Destination</span>
-                  <select
-                    aria-label="Destination workspace"
-                    value={moveWorkspaceTargetId}
-                    disabled={isMovingToWorkspace || moveWorkspaceOptions.length === 0}
-                    onChange={event => setMoveWorkspaceTargetId(event.target.value)}
-                  >
-                    {moveWorkspaceOptions.length === 0 ? (
-                      <option value="">No other workspace</option>
-                    ) : (
-                      moveWorkspaceOptions.map(option => (
-                        <option key={option.workspace.id} value={option.workspace.id}>{option.label}</option>
-                      ))
-                    )}
-                  </select>
-                </label>
-                <small>Tags, custom fields, notes, dates, and nested outlines will be preserved.</small>
-              </div>
-              <div className="convertWorkspaceActions">
-                <button
-                  type="button"
-                  disabled={isMovingToWorkspace}
-                  onClick={() => setMoveWorkspaceCandidate(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="primary"
-                  type="button"
-                  disabled={isMovingToWorkspace || !moveWorkspaceTargetId}
-                  onClick={() => moveNodeToWorkspace().catch(toError(setError))}
-                >
-                  {isMovingToWorkspace ? "Moving…" : "Move"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {error && (
           <div className="errorBar">
             <span>{error}</span>
@@ -2928,7 +2876,7 @@ export function App() {
                           selected={selectedNodeIds.has(node.id)}
                           selectionPosition={selectionPosition}
                           active={selectedId === node.id}
-                          canDrag={!isSearching && !isTagFiltering}
+                          canDrag={!isTagFiltering && !isMovingToWorkspace}
                           dragging={draggingNodeIds.has(node.id)}
                           dropPlacement={dragState?.overId === node.id ? dragState.placement ?? null : null}
                           registerInput={element => {
@@ -2991,7 +2939,6 @@ export function App() {
                           onTagAdd={name => addTag(node.id, name)}
                           onTagError={toError(setError)}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
-                          onMoveToWorkspace={title => { void prepareMoveToWorkspace(node.id, title).catch(toError(setError)); }}
                           onSplitLines={title => splitNodeByLineBreaks(node, title)}
                           onComplete={() => deleteNodeOptimistically(node, "complete")}
                           onDelete={() => deleteNodeOptimistically(node)}
@@ -3093,7 +3040,7 @@ export function App() {
           style={{ transform: `translate3d(${dragState.x + 12}px, ${dragState.y + 12}px, 0)` }}
         >
           <span className="nodeDot" />
-          <span>{dragState.title || "Untitled"}</span>
+          <span>{dragState.title || "Untitled"}{outlineDropWorkspace ? ` → ${outlineDropWorkspace.name}` : ""}</span>
         </div>
       )}
     </div>
@@ -3206,7 +3153,6 @@ function NodeRow({
   onTagAdd,
   onTagError,
   onConvertToWorkspace,
-  onMoveToWorkspace,
   onSplitLines,
   onComplete,
   onDelete
@@ -3243,7 +3189,6 @@ function NodeRow({
   onTagAdd: (name: string) => Promise<void>;
   onTagError: (error: unknown) => void;
   onConvertToWorkspace: (title: string) => void;
-  onMoveToWorkspace: (title: string) => void;
   onSplitLines: (title: string) => Promise<void>;
   onComplete: () => Promise<void>;
   onDelete: () => Promise<void>;
@@ -3579,7 +3524,7 @@ function NodeRow({
           hasComments && "hasComments"
         ].filter(Boolean).join(" ")}
         type="button"
-        title={canDrag ? "Move node" : "Move disabled while searching"}
+        title={canDrag ? "Drag to move an outline or drop onto a workspace" : "Move unavailable"}
         aria-label={hasComments ? "Move node; has comments" : "Move node"}
         disabled={!canDrag}
         onPointerDown={onMoveStart}
@@ -4044,19 +3989,6 @@ function NodeRow({
               flushTitle(localTitle);
               if (!node.id.startsWith("temp-")) void flushNodeDraft(node.id, "title").catch(() => {});
               setNodeContextMenu(null);
-              onMoveToWorkspace(localTitle);
-            }}
-          >
-            <FolderInput size={16} />
-            <span>Move to workspace</span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              flushTitle(localTitle);
-              if (!node.id.startsWith("temp-")) void flushNodeDraft(node.id, "title").catch(() => {});
-              setNodeContextMenu(null);
               onConvertToWorkspace(localTitle);
             }}
           >
@@ -4361,28 +4293,6 @@ function isWorkspaceDescendant(workspaces: Workspace[], workspaceId: string, anc
     current = workspaces.find(workspace => workspace.id === current?.parentWorkspaceId);
   }
   return false;
-}
-
-function getWorkspacePathLabel(
-  workspace: Workspace,
-  workspacesById: ReadonlyMap<string, Workspace>,
-  foldersById: ReadonlyMap<string, WorkspaceFolder>
-): string {
-  const parts = [workspace.name];
-  const visited = new Set([workspace.id]);
-  let current = workspace;
-  while (current.parentWorkspaceId && !visited.has(current.parentWorkspaceId)) {
-    const parent = workspacesById.get(current.parentWorkspaceId);
-    if (!parent) break;
-    visited.add(parent.id);
-    parts.unshift(parent.name);
-    current = parent;
-  }
-  if (current.folderId) {
-    const folder = foldersById.get(current.folderId);
-    if (folder) parts.unshift(folder.name);
-  }
-  return parts.join(" / ");
 }
 
 function handleMarkdownShortcut(
@@ -5153,7 +5063,9 @@ export function createWorkspaceRequestBody(
 }
 
 export function nextWorkspaceIdAfterDelete(workspaces: Workspace[], deletedWorkspaceId: string): string {
-  return workspaces.find(workspace => workspace.id !== deletedWorkspaceId)?.id ?? "";
+  return workspaces.find(workspace =>
+    workspace.id !== deletedWorkspaceId && !isWorkspaceDescendant(workspaces, workspace.id, deletedWorkspaceId)
+  )?.id ?? "";
 }
 
 export function nextCollapsedWorkspaceFolderIds(current: Set<string>, folderId: string): Set<string> {

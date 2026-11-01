@@ -12,7 +12,7 @@ OpenOutliner is a local-first outline notes app inspired by Tana and Mubu. It co
 - A compact formatting toolbar appears when title text is selected; pasting a URL over selected text creates a Markdown link automatically.
 - Markdown keyboard shortcuts for bold, italic, strike, inline code, highlight, and clipboard links.
 - Dot-based node dragging with before/inside/after drop targets and a live multi-node drag preview.
-- Per-node actions for moving an outline subtree to another workspace or converting it into a workspace.
+- Drag outline subtrees directly onto a workspace in the sidebar, or use the node action to convert an outline into a workspace.
 - Nested workspaces and workspace folders with drag reordering and persistent collapse/expand state.
 - Cross-workspace tag results, including opening matching nodes in their source workspace.
 - Responsive web UI with resizable desktop panels, a mobile workspace switcher, and a collapsible comments panel.
@@ -41,7 +41,8 @@ npm run dev
 - Use `Tab` and `Shift+Tab` to indent and outdent a single node.
 - Use `ArrowUp` and `ArrowDown` to move focus through the outline.
 - Use the dot next to a node title to drag it before, inside, or after another node.
-- Use the row's `…` menu to move an outline subtree to another workspace or convert it into a workspace. The menu appears when the row is hovered.
+- Drag a node's dot onto a workspace in the left sidebar to move its complete subtree there. Selected nodes move together, and the destination is highlighted before dropping.
+- Use the row's `…` menu to convert an outline into a workspace. The menu appears when the row is hovered.
 - Use the toolbar undo/redo buttons or `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` (`Ctrl+Y` is also supported for redo).
 - Click a tag pill to view matching nodes across all workspaces.
 
@@ -73,7 +74,9 @@ npm run dev
 - Create folders and nested workspaces from the sidebar.
 - Drag workspaces before, inside, or after another workspace or folder to reorganize them.
 - Workspace and folder collapse states persist after reload.
+- Deleting a workspace permanently deletes all nested sub-workspaces and their outlines.
 - Moving an outline to another workspace preserves its subtree and opens the destination workspace with the moved outline selected.
+- On mobile, drag an outline to the left edge to reveal the workspace sidebar, then drop it onto the destination workspace.
 
 ## Development
 

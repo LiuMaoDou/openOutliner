@@ -478,12 +478,17 @@ export class OutlinerService {
     const workspace = this.getWorkspace(id);
     const now = timestamp();
     this.transaction(() => {
-      const children = this.db
-        .prepare("SELECT id FROM workspaces WHERE parent_workspace_id = ? ORDER BY position ASC, created_at ASC")
-        .all(id) as Array<{ id: string }>;
-      const childParentWorkspaceId = workspace.parentWorkspaceId;
-      const childFolderId = childParentWorkspaceId ? null : workspace.folderId;
-      this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
+      this.db
+        .prepare(
+          `WITH RECURSIVE workspace_subtree(id) AS (
+             SELECT id FROM workspaces WHERE id = ?
+             UNION
+             SELECT child.id FROM workspaces child
+             JOIN workspace_subtree parent ON child.parent_workspace_id = parent.id
+           )
+           DELETE FROM workspaces WHERE id IN (SELECT id FROM workspace_subtree)`
+        )
+        .run(id);
       this.db
         .prepare(
           `UPDATE workspaces
@@ -491,21 +496,6 @@ export class OutlinerService {
            WHERE folder_id IS ? AND parent_workspace_id IS ? AND position > ?`
         )
         .run(now, workspace.folderId, workspace.parentWorkspaceId, workspace.position);
-      if (children.length > 0) {
-        this.db
-          .prepare(
-            `UPDATE workspaces
-             SET position = position + ?, updated_at = ?
-             WHERE folder_id IS ? AND parent_workspace_id IS ? AND position >= ?`
-          )
-          .run(children.length, now, childFolderId, childParentWorkspaceId, workspace.position);
-        const promote = this.db.prepare(
-          "UPDATE workspaces SET folder_id = ?, parent_workspace_id = ?, position = ?, updated_at = ? WHERE id = ?"
-        );
-        children.forEach((child, index) =>
-          promote.run(childFolderId, childParentWorkspaceId, workspace.position + index, now, child.id)
-        );
-      }
     });
     return { deleted: id };
   }

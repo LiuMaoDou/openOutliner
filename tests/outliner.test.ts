@@ -583,7 +583,7 @@ describe("OutlinerService", () => {
     expect(service.getWorkspace(workspace.id).folderId).toBeNull();
   });
 
-  it("nests workspaces, prevents cycles, and promotes children when deleting a parent", () => {
+  it("nests workspaces, prevents cycles, and deletes children with their parent", () => {
     const before = service.createWorkspace("Before");
     const parent = service.createWorkspace("Parent");
     const child = service.createWorkspace("Child");
@@ -593,13 +593,61 @@ describe("OutlinerService", () => {
     expect((nested as typeof nested & { parentWorkspaceId: string | null }).parentWorkspaceId).toBe(parent.id);
     expect(nested.folderId).toBeNull();
     expect(() => service.moveWorkspace(parent.id, null, 0, child.id)).toThrow("cannot be moved into its descendant");
+    const grandchild = service.createWorkspace("Grandchild", undefined, undefined, child.id);
 
     service.deleteWorkspace(parent.id);
 
     const workspaces = service.listWorkspaces();
-    expect(workspaces.map(workspace => workspace.name)).toEqual([before.name, child.name, after.name]);
-    expect(workspaces.map(workspace => workspace.position)).toEqual([0, 1, 2]);
-    expect(service.getWorkspace(child.id).parentWorkspaceId).toBeNull();
+    expect(workspaces.map(workspace => workspace.name)).toEqual([before.name, after.name]);
+    expect(workspaces.map(workspace => workspace.position)).toEqual([0, 1]);
+    expect(() => service.getWorkspace(child.id)).toThrow("Workspace not found");
+    expect(() => service.getWorkspace(grandchild.id)).toThrow("Workspace not found");
+  });
+
+  it.each(["root", "folder", "workspace"] as const)("deletes a workspace subtree and its related data from a %s container", container => {
+    const folder = service.createWorkspaceFolder("Projects");
+    const ancestor = service.createWorkspace("Ancestor");
+    const folderId = container === "folder" ? folder.id : null;
+    const parentWorkspaceId = container === "workspace" ? ancestor.id : null;
+    const before = service.createWorkspace("Before", undefined, folderId, parentWorkspaceId);
+    const parent = service.createWorkspace("Parent", undefined, folderId, parentWorkspaceId);
+    const after = service.createWorkspace("After", undefined, folderId, parentWorkspaceId);
+    const child = service.createWorkspace("Child", undefined, undefined, parent.id);
+    const otherChild = service.createWorkspace("Other child", undefined, undefined, parent.id);
+    const grandchild = service.createWorkspace("Grandchild", undefined, undefined, child.id);
+    const removed = [parent, child, otherChild, grandchild];
+    const survivor = service.createNode({ parentId: before.rootNodeId, title: "Keep outline" });
+    const survivorTag = service.setNodeTag(survivor.id, "Keep tag");
+
+    for (const workspace of removed) {
+      const node = service.createNode({ parentId: workspace.rootNodeId, title: "Remove outline" });
+      const tag = service.setNodeTag(node.id, "Remove tag");
+      const field = service.createFieldDefinition({ workspaceId: workspace.id, tagId: tag.id, name: "Note", type: "text" });
+      service.setFieldValue(node.id, field.id, "Remove value");
+      const deleted = service.createNode({ parentId: node.id, title: "Remove recycled outline" });
+      service.deleteNode(deleted.id);
+    }
+
+    expect(dispatch(service, "DELETE", `/api/workspaces/${parent.id}`)).toEqual({ deleted: parent.id });
+
+    for (const workspace of removed) {
+      expect(() => service.getWorkspace(workspace.id)).toThrow("Workspace not found");
+      for (const table of ["nodes", "outline_history", "tags", "field_definitions"]) {
+        expect(db.prepare(`SELECT * FROM ${table} WHERE workspace_id = ?`).all(workspace.id)).toEqual([]);
+      }
+    }
+    expect(service.listWorkspaces().filter(workspace =>
+      workspace.folderId === folderId && workspace.parentWorkspaceId === parentWorkspaceId
+    ).map(workspace => [workspace.id, workspace.position])).toEqual(
+      container === "root" ? [[ancestor.id, 0], [before.id, 1], [after.id, 2]] : [[before.id, 0], [after.id, 1]]
+    );
+    expect(service.getWorkspace(ancestor.id)).toEqual(ancestor);
+    expect(service.getWorkspaceFolder(folder.id)).toEqual(folder);
+    expect(service.getNode(survivor.id).title).toBe("Keep outline");
+    expect(service.getOutlineHistoryState(before.id).canUndo).toBe(true);
+    expect(db.prepare("SELECT * FROM field_values").all()).toEqual([]);
+    expect(db.prepare("SELECT * FROM node_tags").all()).toEqual([{ node_id: survivor.id, tag_id: survivorTag.id }]);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 
   it("moves workspaces within the root workspace list", () => {
@@ -1396,6 +1444,23 @@ describe("workspace selection after deletion", () => {
 
   it("clears the selection when the final workspace is deleted", () => {
     expect(nextWorkspaceIdAfterDelete([{ id: "deleted" }] as never, "deleted")).toBe("");
+  });
+
+  it("skips all descendants even when they appear before their parent", () => {
+    expect(nextWorkspaceIdAfterDelete([
+      { id: "grandchild", parentWorkspaceId: "child" },
+      { id: "child", parentWorkspaceId: "deleted" },
+      { id: "deleted", parentWorkspaceId: null },
+      { id: "next", parentWorkspaceId: null }
+    ] as never, "deleted")).toBe("next");
+  });
+
+  it("clears the selection when the deleted subtree contains every workspace", () => {
+    expect(nextWorkspaceIdAfterDelete([
+      { id: "child", parentWorkspaceId: "deleted" },
+      { id: "deleted", parentWorkspaceId: null },
+      { id: "grandchild", parentWorkspaceId: "child" }
+    ] as never, "deleted")).toBe("");
   });
 });
 
