@@ -373,6 +373,8 @@ export function App() {
   );
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [copyNotice, setCopyNotice] = useState(false);
+  const copyNoticeTimerRef = useRef<number | undefined>(undefined);
   const [outlineHistory, setOutlineHistory] = useState<OutlineHistoryState>(EMPTY_OUTLINE_HISTORY);
   const [convertWorkspaceCandidate, setConvertWorkspaceCandidate] = useState<ConvertWorkspaceCandidate | null>(null);
   const [isConvertingWorkspace, setIsConvertingWorkspace] = useState(false);
@@ -1375,6 +1377,14 @@ export function App() {
   };
   deleteSelectionRef.current = deleteNodeOptimistically;
 
+  const showCopyNotice = useCallback(() => {
+    window.clearTimeout(copyNoticeTimerRef.current);
+    setCopyNotice(true);
+    copyNoticeTimerRef.current = window.setTimeout(() => setCopyNotice(false), 2200);
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(copyNoticeTimerRef.current), []);
+
   useEffect(() => {
     const handleCopy = (event: ClipboardEvent) => {
       const state = flatStateRef.current;
@@ -1386,10 +1396,11 @@ export function App() {
           target.selectionStart !== target.selectionEnd) || window.getSelection()?.toString()) return;
       event.clipboardData.setData("text/plain", selectedNodeText(state, selectedNodeIdsRef.current));
       event.preventDefault();
+      showCopyNotice();
     };
     window.addEventListener("copy", handleCopy);
     return () => window.removeEventListener("copy", handleCopy);
-  }, []);
+  }, [showCopyNotice]);
 
   useEffect(() => {
     const handleMultiSelectionDelete = (event: globalThis.KeyboardEvent) => {
@@ -1589,7 +1600,6 @@ export function App() {
     if (event.button !== 0 || event.pointerType !== "mouse" || isTagFiltering) return;
     const target = event.target as HTMLElement;
     if (
-      target.closest(".nodeTitle") ||
       target.closest(".nodeTitleLink") ||
       target.closest(".nodeMenuButton") ||
       target.closest(".disclosureButton") ||
@@ -1598,6 +1608,7 @@ export function App() {
       target.closest(".nodeDateControl") ||
       target.closest(".nodeTags")
     ) return;
+    const titleInput = target instanceof HTMLTextAreaElement && target.matches(".nodeTitle") ? target : null;
 
     const anchorId = event.shiftKey
       ? selectionAnchorIdRef.current || selectedIdRef.current || node.id
@@ -1614,7 +1625,7 @@ export function App() {
       moved: false
     };
     nodeSelectionDragRef.current = drag;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    if (!titleInput) event.currentTarget.setPointerCapture(event.pointerId);
 
     const move = (pointerEvent: globalThis.PointerEvent) => {
       const current = nodeSelectionDragRef.current;
@@ -1622,15 +1633,17 @@ export function App() {
       const distance = Math.hypot(pointerEvent.clientX - current.startX, pointerEvent.clientY - current.startY);
       if (!current.moved && distance < 5) return;
 
-      current.moved = true;
-      pointerEvent.preventDefault();
-      document.body.classList.add("isSelectingNodes");
-      window.getSelection()?.removeAllRanges();
-
       const targetElement = document
         .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
         ?.closest<HTMLElement>("[data-node-id]");
       const targetId = targetElement?.dataset.nodeId;
+      if (!current.moved && titleInput && (!targetId || targetId === current.anchorId)) return;
+
+      current.moved = true;
+      pointerEvent.preventDefault();
+      document.body.classList.add("isSelectingNodes");
+      window.getSelection()?.removeAllRanges();
+      if (titleInput) titleInput.setSelectionRange(titleInput.selectionStart, titleInput.selectionStart);
       if (!targetId || !filteredNodes.includes(targetId)) return;
 
       const range = getNodeSelectionRange(filteredNodes, current.anchorId, targetId);
@@ -2701,6 +2714,13 @@ export function App() {
           </div>
         )}
 
+        {copyNotice && (
+          <div className="copyNotice" role="status" aria-live="polite">
+            <Check size={16} />
+            <span>Copied to clipboard</span>
+          </div>
+        )}
+
         {pendingDelete && pendingDelete.workspaceId === workspaceId && outlineHistory.undoLabel === "Delete outline" && (
           <div className="undoBar" role="status" aria-live="polite">
             <span>{pendingDelete.action === "complete"
@@ -2958,11 +2978,12 @@ export function App() {
                           onTagError={toError(setError)}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
                           onSplitLines={title => splitNodeByLineBreaks(node, title)}
-                          onCopy={() => {
+                          onCopy={async () => {
                             const state = flatStateRef.current;
-                            if (!state) return Promise.resolve();
+                            if (!state) return;
                             const ids = selectedNodeIdsRef.current.has(node.id) ? selectedNodeIdsRef.current : [node.id];
-                            return navigator.clipboard.writeText(selectedNodeText(state, ids));
+                            await navigator.clipboard.writeText(selectedNodeText(state, ids));
+                            showCopyNotice();
                           }}
                           onComplete={() => deleteNodeOptimistically(node, "complete")}
                           onDelete={() => deleteNodeOptimistically(node)}
