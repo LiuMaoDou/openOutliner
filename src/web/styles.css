@@ -85,6 +85,9 @@
     6px 0 14px -12px rgba(24, 24, 27, 0.1);
   --selected: rgba(255, 255, 255, 0.58);
   --selected-border: rgba(212, 212, 216, 0.68);
+  --outline-selection-background: color-mix(in srgb, var(--foreground) 9%, var(--content-surface));
+  --outline-selection-border: color-mix(in srgb, var(--foreground) 20%, transparent);
+  --title-selection-strength: 22%;
   --body-wash-start: rgba(250, 250, 250, 0.72);
   --body-wash-end: rgba(255, 255, 255, 0);
   --placeholder: #a1a1aa;
@@ -159,6 +162,9 @@
     0 0 0 1px rgba(192, 204, 223, 0.05);
   --selected: rgba(83, 96, 116, 0.34);
   --selected-border: rgba(145, 165, 192, 0.65);
+  --outline-selection-background: color-mix(in srgb, var(--foreground) 13%, var(--content-surface));
+  --outline-selection-border: color-mix(in srgb, var(--foreground) 30%, transparent);
+  --title-selection-strength: 28%;
   --body-wash-start: rgba(65, 73, 88, 0.25);
   --body-wash-end: rgba(37, 40, 48, 0);
   --placeholder: #a5afbe;
@@ -1954,8 +1960,8 @@ body.isResizingPanel .appShell {
 }
 
 :where(.outlineList.hasMultiSelection) .nodeRow.selected {
-  background: color-mix(in srgb, var(--ring) 16%, var(--content-surface));
-  border-color: var(--selected-border);
+  background: var(--outline-selection-background);
+  border-color: var(--outline-selection-border);
 }
 
 .nodeRow.selection-start {
@@ -2191,6 +2197,14 @@ body.isSelectingNodes .nodeTitlePreview {
   line-height: 1.35;
   overflow-wrap: anywhere;
   cursor: text;
+}
+
+/* Keep title selections in the same color family as the selected text, including inline colors. */
+.nodeTitle::selection,
+.nodeTitlePreview::selection,
+.nodeTitlePreview *::selection {
+  color: inherit;
+  background-color: color-mix(in srgb, currentColor var(--title-selection-strength), transparent);
 }
 
 .nodeTitleMeasure {
