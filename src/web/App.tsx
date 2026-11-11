@@ -3,6 +3,7 @@ import {
   Check,
   CircleHelp,
   CircleCheck,
+  Copy,
   CalendarPlus,
   CalendarX2,
   ChevronDown,
@@ -78,6 +79,7 @@ import {
   type FlatNodeData,
   fromNestedTree,
   computeVisibleIds,
+  selectedNodeText,
   searchNodeIds,
   updateNode,
   insertNode,
@@ -1372,6 +1374,22 @@ export function App() {
     }
   };
   deleteSelectionRef.current = deleteNodeOptimistically;
+
+  useEffect(() => {
+    const handleCopy = (event: ClipboardEvent) => {
+      const state = flatStateRef.current;
+      const target = event.target;
+      if (!state || !event.clipboardData || event.defaultPrevented ||
+        selectedNodeIdsRef.current.size < 2 || !multiSelectionKeyboardActiveRef.current ||
+        (isEditableElement(target) && !isOutlineEditableElement(target)) ||
+        ((target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) &&
+          target.selectionStart !== target.selectionEnd) || window.getSelection()?.toString()) return;
+      event.clipboardData.setData("text/plain", selectedNodeText(state, selectedNodeIdsRef.current));
+      event.preventDefault();
+    };
+    window.addEventListener("copy", handleCopy);
+    return () => window.removeEventListener("copy", handleCopy);
+  }, []);
 
   useEffect(() => {
     const handleMultiSelectionDelete = (event: globalThis.KeyboardEvent) => {
@@ -2940,6 +2958,12 @@ export function App() {
                           onTagError={toError(setError)}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
                           onSplitLines={title => splitNodeByLineBreaks(node, title)}
+                          onCopy={() => {
+                            const state = flatStateRef.current;
+                            if (!state) return Promise.resolve();
+                            const ids = selectedNodeIdsRef.current.has(node.id) ? selectedNodeIdsRef.current : [node.id];
+                            return navigator.clipboard.writeText(selectedNodeText(state, ids));
+                          }}
                           onComplete={() => deleteNodeOptimistically(node, "complete")}
                           onDelete={() => deleteNodeOptimistically(node)}
                         />
@@ -3154,6 +3178,7 @@ function NodeRow({
   onTagError,
   onConvertToWorkspace,
   onSplitLines,
+  onCopy,
   onComplete,
   onDelete
 }: {
@@ -3190,6 +3215,7 @@ function NodeRow({
   onTagError: (error: unknown) => void;
   onConvertToWorkspace: (title: string) => void;
   onSplitLines: (title: string) => Promise<void>;
+  onCopy: () => Promise<void>;
   onComplete: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
@@ -3404,7 +3430,7 @@ function NodeRow({
 
   const openNodeContextMenu = (clientX: number, clientY: number) => {
     const menuWidth = 220;
-    const menuHeight = 184;
+    const menuHeight = 230;
     setMarkdownMenu(null);
     setNodeContextMenu({
       x: Math.max(12, Math.min(clientX, window.innerWidth - menuWidth - 12)),
@@ -3949,6 +3975,17 @@ function NodeRow({
             event.stopPropagation();
           }}
         >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setNodeContextMenu(null);
+              void onCopy().catch(onTagError);
+            }}
+          >
+            <Copy size={16} />
+            <span>Copy</span>
+          </button>
           <button
             type="button"
             role="menuitem"

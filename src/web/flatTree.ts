@@ -77,6 +77,15 @@ export function computeVisibleIds(state: FlatTreeState): string[] {
   return ids;
 }
 
+/** Copy only selected, visible rows in their outline order. */
+export function selectedNodeText(state: FlatTreeState, selectedIds: Iterable<string>): string {
+  const selected = new Set(selectedIds);
+  return computeVisibleIds(state)
+    .filter(id => selected.has(id) && state.nodes[id])
+    .map(id => state.nodes[id].title)
+    .join("\n");
+}
+
 /** Search the entire outline in document order, including collapsed branches. */
 export function searchNodeIds(state: FlatTreeState, query: string): string[] {
   const normalized = query.trim().toLowerCase();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeVisibleIds, fromNestedTree, isDescendant, removeNodes, searchNodeIds } from "../src/web/flatTree.js";
+import { computeVisibleIds, fromNestedTree, isDescendant, removeNodes, searchNodeIds, selectedNodeText } from "../src/web/flatTree.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import { getDueReminderCutoff, getDueReminderNodes } from "../src/web/dueTasks.js";
 
@@ -72,6 +72,15 @@ describe("outline search", () => {
 });
 
 describe("large outline operations", () => {
+  it("copies selected visible titles in outline order without including collapsed children", () => {
+    const { state } = fromNestedTree(node("root", "Root", [
+      node("first", "First", [node("hidden", "Hidden")], { collapsed: true }),
+      node("second", "Second\ncontinued"),
+      node("third", "Third")
+    ]));
+    expect(selectedNodeText(state, ["third", "hidden", "first", "second", "missing"]))
+      .toBe("First\nSecond\ncontinued\nThird");
+  });
   it("deletes overlapping selections across parents without mutating the original tree", () => {
     const { state } = fromNestedTree(node("root", "Root", [
       node("keep", "Keep"),
