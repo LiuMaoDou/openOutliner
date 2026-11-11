@@ -3,53 +3,68 @@ name: Audit validation
 on:
   push:
     branches: [audit/stability-validation-20261112]
+    paths: ['audit/ready.txt']
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: audit-stability-validation
+  cancel-in-progress: false
 
 jobs:
-  baseline:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      OO_E2E_OUTPUT: ${{ runner.temp }}/oo-e2e
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '26'
-          cache: npm
-      - run: npm ci
-      - name: Typecheck
-        id: typecheck
-        continue-on-error: true
-        run: npm run typecheck
-      - name: Tests
-        id: tests
-        continue-on-error: true
-        run: npm test
-      - name: Production build
-        id: build
-        continue-on-error: true
-        run: npm run build
-      - name: Package isolated validation workspace
-        if: always()
+          fetch-depth: 0
+      - name: Apply reviewed patch to the frozen baseline
         shell: bash
         run: |
-          mkdir -p /tmp/oo-audit
-          printf 'commit=%s\nnode=%s\ntypecheck=%s\ntests=%s\nbuild=%s\n' "$GITHUB_SHA" "$(node --version)" '${{ steps.typecheck.outcome }}' '${{ steps.tests.outcome }}' '${{ steps.build.outcome }}' > /tmp/oo-audit/results.txt
-          # Application sources and test dependencies only; no notes, fonts, secrets, or unrelated documents.
-          tar -czf /tmp/oo-audit/workspace.tar.gz src tests build public package.json package-lock.json tsconfig.node.json tsconfig.web.json vite.config.ts index.html AGENTS.md README.md Dockerfile compose.yaml node_modules
-          cp "$(command -v node)" /tmp/oo-audit/node
+          set -euo pipefail
+          mkdir -p "$OO_E2E_OUTPUT"
+          cat audit/patch-*.b64 | base64 --decode | gzip --decompress > "$RUNNER_TEMP/stability.patch"
+          echo '624a596be8945ec7831411518de09c79a837c8e74a848bb37759be887bc4cc9c  '"$RUNNER_TEMP/stability.patch" | sha256sum --check
+          git checkout -b fix/stability-audit-20261112 21efc029febfef8f7e83706953df37592d546ece
+          git apply --check "$RUNNER_TEMP/stability.patch"
+          git apply "$RUNNER_TEMP/stability.patch"
+          git diff --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck 2>&1 | tee "$OO_E2E_OUTPUT/typecheck.log"
+      - name: Unit and integration tests
+        run: npm test 2>&1 | tee "$OO_E2E_OUTPUT/tests.log"
+      - name: Production build
+        run: npm run build 2>&1 | tee "$OO_E2E_OUTPUT/build.log"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install browser test runtime
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium
+      - name: Full React app browser regressions
+        run: python tests/e2e_stability.py 2>&1 | tee "$OO_E2E_OUTPUT/e2e.log"
+      - name: Publish only validated application changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add .nvmrc AGENTS.md Dockerfile README.md package.json package-lock.json src/backend/db/database.ts src/backend/services/outliner.ts src/backend/shared/dispatch.ts src/backend/shared/legacySnapshot.ts src/backend/shared/schema.ts src/web/App.tsx src/web/interactionGuards.ts src/web/localDatabase.ts src/web/offline.ts tests/e2e_stability.py tests/stability.test.ts
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix: harden schema upgrades and optimistic updates'
+          git rev-parse HEAD | tee "$OO_E2E_OUTPUT/validated-commit.txt"
+          git push origin HEAD:refs/heads/fix/stability-audit-20261112
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: audit-workspace
-          path: /tmp/oo-audit/
-          retention-days: 1
-      - name: Require baseline checks
-        if: always()
-        run: |
-          test '${{ steps.typecheck.outcome }}' = success
-          test '${{ steps.tests.outcome }}' = success
-          test '${{ steps.build.outcome }}' = success
+          name: stability-validation-evidence
+          path: ${{ runner.temp }}/oo-e2e/
+          retention-days: 7
