@@ -12,6 +12,10 @@ concurrency:
   group: audit-stability-validation
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -23,12 +27,8 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply reviewed patch to the frozen baseline
-        shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p "$OO_E2E_OUTPUT"
-          cat audit/patch-*.b64 | base64 --decode | gzip --decompress > "$RUNNER_TEMP/stability.patch"
-          echo '624a596be8945ec7831411518de09c79a837c8e74a848bb37759be887bc4cc9c  '"$RUNNER_TEMP/stability.patch" | sha256sum --check
+          python audit/prepare.py
           git checkout -b fix/stability-audit-20261112 21efc029febfef8f7e83706953df37592d546ece
           git apply --check "$RUNNER_TEMP/stability.patch"
           git apply "$RUNNER_TEMP/stability.patch"
@@ -55,9 +55,7 @@ jobs:
       - name: Full React app browser regressions
         run: python tests/e2e_stability.py 2>&1 | tee "$OO_E2E_OUTPUT/e2e.log"
       - name: Publish only validated application changes
-        shell: bash
         run: |
-          set -euo pipefail
           git add .nvmrc AGENTS.md Dockerfile README.md package.json package-lock.json src/backend/db/database.ts src/backend/services/outliner.ts src/backend/shared/dispatch.ts src/backend/shared/legacySnapshot.ts src/backend/shared/schema.ts src/web/App.tsx src/web/interactionGuards.ts src/web/localDatabase.ts src/web/offline.ts tests/e2e_stability.py tests/stability.test.ts
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix: harden schema upgrades and optimistic updates'
           git rev-parse HEAD | tee "$OO_E2E_OUTPUT/validated-commit.txt"
