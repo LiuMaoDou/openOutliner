@@ -3822,6 +3822,9 @@ function NodeRow({
             };
             onFocusSelect();
             input.focus({ preventScroll: true });
+            // The preview becomes pointer-events:none on focus. Keep receiving
+            // drag/up events even when the pointer leaves the textarea.
+            if (event.pointerType === "mouse") input.setPointerCapture(event.pointerId);
             input.setSelectionRange(selectionStart, selectionStart);
             window.requestAnimationFrame(() => {
               if (document.activeElement !== input || input.selectionStart !== input.selectionEnd) return;
