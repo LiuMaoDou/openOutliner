@@ -17,6 +17,7 @@ export function dispatch(service: OutlinerService, method: string, address: stri
   if (method === "GET" && path === "/api/due-reminders") {
     return service.listDueReminderNodes(url.searchParams.get("cutoff") ?? "");
   }
+  if (method === "GET" && path === "/api/calendar") return service.listScheduledNodes();
 
   if (method === "GET" && path === "/api/recycle-bin") {
     return service.listRecycleBin();

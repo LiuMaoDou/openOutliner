@@ -5,6 +5,7 @@ import {
   CircleCheck,
   Copy,
   CalendarPlus,
+  CalendarDays,
   CalendarX2,
   ChevronDown,
   ChevronLeft,
@@ -70,6 +71,7 @@ import {
 } from "./api";
 import { useTheme, type Theme } from "./theme";
 import { getDueReminderCutoff, getDueReminderNodes } from "./dueTasks";
+import { Calendar } from "./Calendar";
 import { SyncPanel } from "./SyncPanel";
 import { activatePrivacyScreen } from "./PrivacyScreen";
 import { useInlineTagInput } from "./InlineTagInput";
@@ -304,6 +306,7 @@ const COLLAPSED_WORKSPACES_STORAGE_KEY = "openoutliner.collapsed-workspaces:v1";
 const COLLAPSED_SYSTEM_TAGS_STORAGE_KEY = "openoutliner.collapsed-system-tags:v1";
 const SIDEBAR_WIDTH_STORAGE_KEY = "openoutliner.sidebar-width";
 const INSPECTOR_WIDTH_STORAGE_KEY = "openoutliner.inspector-width";
+export const SYSTEM_CALENDAR_WORKSPACE_ID = "system:calendar";
 export const SYSTEM_TAGS_WORKSPACE_ID = "system:tags";
 export const SYSTEM_RECYCLE_BIN_WORKSPACE_ID = "system:recycle-bin";
 const EMPTY_OUTLINE_HISTORY: OutlineHistoryState = {
@@ -551,7 +554,8 @@ export function App() {
   const loadWorkspaces = useCallback(async () => {
     const next = await apiGet<Workspace[]>("/api/workspaces");
     const currentId = workspaceIdRef.current;
-    const nextId = currentId === SYSTEM_TAGS_WORKSPACE_ID
+    const nextId = currentId === SYSTEM_CALENDAR_WORKSPACE_ID
+      || currentId === SYSTEM_TAGS_WORKSPACE_ID
       || currentId === SYSTEM_RECYCLE_BIN_WORKSPACE_ID
       || next.some(workspace => workspace.id === currentId)
       ? currentId
@@ -570,7 +574,7 @@ export function App() {
 
   const loadTree = useCallback(async (id: string, options: LoadTreeOptions = {}) => {
     const requestId = ++treeRequestRef.current;
-    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID || id === SYSTEM_RECYCLE_BIN_WORKSPACE_ID) {
+    if (!id || id === SYSTEM_CALENDAR_WORKSPACE_ID || id === SYSTEM_TAGS_WORKSPACE_ID || id === SYSTEM_RECYCLE_BIN_WORKSPACE_ID) {
       setFlatState(null);
       setVisibleIds([]);
       setSingleSelectedId("");
@@ -619,7 +623,7 @@ export function App() {
 
   const loadOutlineHistory = useCallback(async (id: string) => {
     const requestId = ++outlineHistoryRequestRef.current;
-    if (!id || id === SYSTEM_TAGS_WORKSPACE_ID || id === SYSTEM_RECYCLE_BIN_WORKSPACE_ID) {
+    if (!id || id === SYSTEM_CALENDAR_WORKSPACE_ID || id === SYSTEM_TAGS_WORKSPACE_ID || id === SYSTEM_RECYCLE_BIN_WORKSPACE_ID) {
       setOutlineHistory(EMPTY_OUTLINE_HISTORY);
       return;
     }
@@ -810,6 +814,7 @@ export function App() {
 
   const selectedNode = selectedId && flatState ? getNode(flatState, selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
+  const isCalendarWorkspace = workspaceId === SYSTEM_CALENDAR_WORKSPACE_ID;
   const isSystemTagsWorkspace = workspaceId === SYSTEM_TAGS_WORKSPACE_ID;
   const isRecycleBinWorkspace = workspaceId === SYSTEM_RECYCLE_BIN_WORKSPACE_ID;
   const [dueReminderCutoff, setDueReminderCutoff] = useState(() => getDueReminderCutoff());
@@ -2267,6 +2272,7 @@ export function App() {
         <div
           className={[
             "workspaceItem",
+            children.length > 0 && "hasChildren",
             workspace.id === workspaceId && "active",
             dragState?.overWorkspaceId === workspace.id && "outlineDropTarget",
             workspaceDragTarget?.overWorkspaceId === workspace.id &&
@@ -2283,7 +2289,7 @@ export function App() {
           style={{ "--workspace-depth": depth } as CSSProperties}
           onClick={() => selectWorkspace(workspace.id)}
         >
-          {!sidebarCompact && (
+          {!sidebarCompact && children.length > 0 && (
             <button
               className="workspaceDisclosure"
               type="button"
@@ -2427,6 +2433,16 @@ export function App() {
         )}
 
         <div className="workspaceGroup">
+          <button
+            className={isCalendarWorkspace ? "systemWorkspaceItem active" : "systemWorkspaceItem"}
+            type="button"
+            title="Calendar"
+            aria-label="Calendar"
+            onClick={() => selectWorkspace(SYSTEM_CALENDAR_WORKSPACE_ID)}
+          >
+            <span className="workspaceIcon" aria-hidden="true"><CalendarDays size={15} strokeWidth={2.2} /></span>
+            {!sidebarCompact && <span className="systemWorkspaceLabel"><span>Calendar</span><small className="systemWorkspaceBadge">System</small></span>}
+          </button>
           <button
             className={isSystemTagsWorkspace ? "systemWorkspaceItem active" : "systemWorkspaceItem"}
             type="button"
@@ -2733,7 +2749,7 @@ export function App() {
           </div>
         )}
 
-        <section
+        {isCalendarWorkspace ? <Calendar workspaces={workspaces} search={search} onOpen={openOverdueNode} /> : <section
           className={isInspectorOpen && !isSystemTagsWorkspace && !isRecycleBinWorkspace ? "contentGrid" : "contentGrid commentsClosed"}
           ref={contentGridRef}
           style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
@@ -3077,7 +3093,7 @@ export function App() {
               <span>Comments</span>
             </button>
           )}
-        </section>
+        </section>}
       </main>
       {dragState && (
         <div

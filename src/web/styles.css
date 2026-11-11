@@ -128,69 +128,68 @@
 }
 
 .dark {
-  --background: #09090b;
-  --foreground: #fafafa;
-  --primary: #fafafa;
-  --primary-foreground: #18181b;
-  --primary-hover: #e4e4e7;
-  --secondary: #27272a;
-  --secondary-foreground: #fafafa;
-  --muted: #27272a;
-  --muted-foreground: #a1a1aa;
-  --accent: #27272a;
-  --accent-foreground: #fafafa;
-  --destructive: #f87171;
-  --destructive-foreground: #450a0a;
-  --success: #22c55e;
-  --success-foreground: #052e16;
-  --border: #27272a;
-  --input: #3f3f46;
-  --ring: #71717a;
-  --sidebar: #09090b;
-  --sidebar-foreground: #fafafa;
-  --sidebar-accent: #18181b;
-  --topbar-background: rgba(9, 9, 11, 0.86);
-  --surface: #0f0f12;
-  --content-surface: #111115;
-  --content-art: #2c322e;
-  --outline-grid-line: rgba(146, 149, 255, 0.08);
+  --background: #252830;
+  --foreground: #e9ecf1;
+  --primary: #e2e7ef;
+  --primary-foreground: #292e37;
+  --primary-hover: #f0f3f7;
+  --secondary: #3b414c;
+  --secondary-foreground: #e9ecf1;
+  --muted: #373d47;
+  --muted-foreground: #bbc2ce;
+  --accent: #414956;
+  --accent-foreground: #f0f3f7;
+  --destructive: #f29b9b;
+  --destructive-foreground: #3d262b;
+  --success: #87d5a2;
+  --success-foreground: #263a30;
+  --border: #4a515e;
+  --input: #596272;
+  --ring: #91a5c0;
+  --sidebar: #2a2e36;
+  --sidebar-foreground: #e9ecf1;
+  --sidebar-accent: #393f4a;
+  --topbar-background: rgba(42, 46, 54, 0.92);
+  --surface: #373c46;
+  --content-surface: #30353e;
+  --content-art: #505b55;
+  --outline-grid-line: rgba(171, 184, 210, 0.075);
   --content-shadow:
-    0 12px 36px rgba(0, 0, 0, 0.34),
-    -12px 0 28px -18px rgba(0, 0, 0, 0.62),
-    12px 0 28px -18px rgba(0, 0, 0, 0.62);
-  --selected: rgba(39, 39, 42, 0.58);
-  --selected-border: rgba(82, 82, 91, 0.72);
-  --body-wash-start: rgba(39, 39, 42, 0.5);
-  --body-wash-end: rgba(9, 9, 11, 0);
-  --placeholder: #71717a;
-  --danger-foreground: #fecaca;
-  --danger-surface: #450a0a;
-  --danger-border: #7f1d1d;
-  --tag-foreground: #e4e4e7;
-  --tag-background: #18181b;
-  --tag-border: #3f3f46;
-  --node-date-foreground: #a1a1aa;
-  --node-date-background: #27272a;
-  --node-date-border: #3f3f46;
-  --node-date-hover: #3f3f46;
-  --node-count-foreground: #d4d4d8;
-  --node-count-background: #27272a;
-  --node-count-border: #3f3f46;
-  --soft-foreground: #d4d4d8;
-  --drop-indicator: #fafafa;
-  --highlight-background: #713f12;
-  --highlight-foreground: #fef3c7;
-  --text-color-red: #f87171;
-  --text-color-orange: #fb923c;
-  --text-color-yellow: #facc15;
-  --text-color-green: #4ade80;
-  --text-color-blue: #60a5fa;
-  --text-color-purple: #c084fc;
-  --text-color-gray: #d4d4d8;
-  --floating-background: rgba(24, 24, 27, 0.96);
-  --scrollbar-thumb: rgba(250, 250, 250, 0.12);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 1px 10px rgba(0, 0, 0, 0.28);
+    0 6px 20px rgba(12, 16, 24, 0.15),
+    0 0 0 1px rgba(192, 204, 223, 0.05);
+  --selected: rgba(83, 96, 116, 0.34);
+  --selected-border: rgba(145, 165, 192, 0.65);
+  --body-wash-start: rgba(65, 73, 88, 0.25);
+  --body-wash-end: rgba(37, 40, 48, 0);
+  --placeholder: #a5afbe;
+  --danger-foreground: #ffd0d0;
+  --danger-surface: #51383f;
+  --danger-border: #8c5e68;
+  --tag-foreground: #dce3ed;
+  --tag-background: #3b424e;
+  --tag-border: #5a6474;
+  --node-date-foreground: #c5cddb;
+  --node-date-background: #3c4350;
+  --node-date-border: #596475;
+  --node-date-hover: #4b5667;
+  --node-count-foreground: #d9e1ed;
+  --node-count-background: #3b4350;
+  --node-count-border: #596475;
+  --soft-foreground: #d3dae5;
+  --drop-indicator: #b7cef0;
+  --highlight-background: #695535;
+  --highlight-foreground: #fff0bd;
+  --text-color-red: #f29b9b;
+  --text-color-orange: #edb780;
+  --text-color-yellow: #e5d295;
+  --text-color-green: #87d5a2;
+  --text-color-blue: #91bdf5;
+  --text-color-purple: #ccb0ee;
+  --text-color-gray: #d3dae5;
+  --floating-background: rgba(59, 65, 76, 0.98);
+  --scrollbar-thumb: rgba(211, 222, 239, 0.25);
+  --shadow-sm: 0 1px 3px rgba(12, 16, 24, 0.15);
+  --shadow-md: 0 3px 12px rgba(12, 16, 24, 0.18);
 }
 
 * {
@@ -330,6 +329,7 @@ select:focus-visible {
 
 .appShell.sidebarCollapsed .workspaceItem {
   grid-template-columns: 1fr;
+  grid-template-areas: "icon";
   padding: 0;
   justify-items: center;
 }
@@ -414,7 +414,7 @@ body.isResizingPanel .appShell {
   min-height: 36px;
   padding: 0 2px;
   font-family: "OpenOutlinerSerif", "OpenOutlinerSans", "OpenOutlinerCJK", serif;
-  font-size: 0.94rem;
+  font-size: 20px;
   font-weight: 650;
 }
 
@@ -490,17 +490,17 @@ body.isResizingPanel .appShell {
 .dark .commandButton,
 .dark .sidebarCollapsedAdd {
   color: var(--foreground);
-  background: rgba(39, 39, 42, 0.48);
-  border-color: rgba(82, 82, 91, 0.58);
-  box-shadow: 0 1px 10px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  background: var(--secondary);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(12px) saturate(1.08);
   -webkit-backdrop-filter: blur(12px) saturate(1.08);
 }
 
 .dark .commandButton:hover,
 .dark .sidebarCollapsedAdd:hover {
-  background: rgba(63, 63, 70, 0.58);
-  border-color: rgba(113, 113, 122, 0.62);
+  background: var(--accent);
+  border-color: var(--input);
 }
 
 .workspaceGroup {
@@ -720,18 +720,30 @@ body.isResizingPanel .appShell {
 
 .workspaceItem {
   display: grid;
-  grid-template-columns: 18px 24px minmax(0, 1fr) 22px 28px;
+  grid-template-columns: 24px minmax(0, 1fr) 22px 28px;
+  grid-template-areas: "icon title add delete";
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   justify-content: flex-start;
   width: 100%;
   min-height: 28px;
-  padding: 0 4px 0 calc(10px + var(--workspace-depth, 0) * 16px);
+  padding: 0 4px 0 calc(8px + var(--workspace-depth, 0) * 16px);
   color: var(--soft-foreground);
   text-align: left;
   background: transparent;
   position: relative;
 }
+
+.workspaceItem.hasChildren {
+  grid-template-columns: 24px minmax(0, 1fr) 18px 22px 28px;
+  grid-template-areas: "icon title disclosure add delete";
+}
+
+.workspaceItem > .workspaceIcon { grid-area: icon; }
+.workspaceItem > input { grid-area: title; }
+.workspaceItem > .workspaceDisclosure { grid-area: disclosure; }
+.workspaceItem > .workspaceAddChildButton { grid-area: add; }
+.workspaceItem > .workspaceDeleteButton { grid-area: delete; }
 
 .workspaceItem::before {
   position: absolute;
@@ -839,7 +851,7 @@ body.isResizingPanel .appShell {
 }
 
 .workspaceFolder .workspaceItem {
-  padding-left: calc(10px + var(--workspace-depth, 0) * 16px);
+  padding-left: calc(8px + var(--workspace-depth, 0) * 16px);
 }
 
 .workspaceDisclosure,
@@ -3182,7 +3194,7 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .dark .tagSuggestionList {
-  background: #18181b;
+  background: var(--floating-background);
 }
 
 .tagSuggestionItem {
@@ -3339,7 +3351,7 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .dark .tagManagerList {
-  background: #18181b;
+  background: var(--floating-background);
 }
 
 .tagManagerRow {

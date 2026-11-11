@@ -88,6 +88,28 @@ afterEach(() => {
 });
 
 describe("OutlinerService", () => {
+  it("lists calendar items across workspaces and all dates, including collapsed children and completed nodes", () => {
+    const first = service.createWorkspace("Calendar one");
+    const second = service.createWorkspace("Calendar two");
+    const parent = service.createNode({ parentId: first.rootNodeId, title: "Collapsed" });
+    service.updateNode(parent.id, { collapsed: true });
+    const past = service.createNode({ parentId: parent.id, title: "Past" });
+    const future = service.createNode({ parentId: second.rootNodeId, title: "Future" });
+    service.updateNode(past.id, { dueDate: "2020-02-29", done: true });
+    service.updateNode(future.id, { dueDate: "2030-01-01" });
+    service.updateNode(first.rootNodeId, { dueDate: "2026-01-01" });
+    const query = () => dispatch(service, "GET", "/api/calendar") as { id: string; dueDate: string }[];
+    expect(query().map(item => item.id)).toEqual([past.id, future.id]);
+    service.deleteNode(parent.id);
+    expect(query().map(item => item.id)).toEqual([future.id]);
+    service.restoreNode(parent.id);
+    service.updateNode(past.id, { dueDate: "2031-01-01" });
+    expect(query().map(item => item.id)).toEqual([future.id, past.id]);
+    service.updateNode(future.id, { dueDate: null });
+    service.deleteWorkspace(first.id);
+    expect(query()).toEqual([]);
+  });
+
   it("selects outline rows with either platform shortcut while preserving other editors and IME", () => {
     expect(shouldHandleOutlineSelectAll({ key: "a", ctrlKey: true }, false, false)).toBe(true);
     expect(shouldHandleOutlineSelectAll({ key: "A", metaKey: true }, true, true)).toBe(true);
