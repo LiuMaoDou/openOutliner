@@ -1605,6 +1605,8 @@ export function App() {
     if (event.button !== 0 || event.pointerType !== "mouse" || isTagFiltering) return;
     const target = event.target as HTMLElement;
     if (
+      // Text editing and outline-row range selection are separate gestures.
+      target.closest(".nodeTitleCell") ||
       target.closest(".nodeTitleLink") ||
       target.closest(".nodeMenuButton") ||
       target.closest(".disclosureButton") ||
@@ -1613,12 +1615,6 @@ export function App() {
       target.closest(".nodeDateControl") ||
       target.closest(".nodeTags")
     ) return;
-    const titleInput = target instanceof HTMLTextAreaElement && target.matches(".nodeTitle")
-      ? target
-      : target.closest(".nodeTitlePreview")
-        ? inputRefs.current.get(node.id) ?? null
-        : null;
-
     const anchorId = event.shiftKey
       ? selectionAnchorIdRef.current || selectedIdRef.current || node.id
       : node.id;
@@ -1634,11 +1630,15 @@ export function App() {
       moved: false
     };
     nodeSelectionDragRef.current = drag;
-    if (!titleInput) event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.setPointerCapture(event.pointerId);
 
     const move = (pointerEvent: globalThis.PointerEvent) => {
       const current = nodeSelectionDragRef.current;
       if (!current || current.pointerId !== pointerEvent.pointerId) return;
+      if (pointerEvent.pointerType === "mouse" && !(pointerEvent.buttons & 1)) {
+        end(pointerEvent);
+        return;
+      }
       const distance = Math.hypot(pointerEvent.clientX - current.startX, pointerEvent.clientY - current.startY);
       if (!current.moved && distance < 5) return;
 
@@ -1646,13 +1646,10 @@ export function App() {
         .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
         ?.closest<HTMLElement>("[data-node-id]");
       const targetId = targetElement?.dataset.nodeId;
-      if (!current.moved && titleInput && (!targetId || targetId === current.anchorId)) return;
-
       current.moved = true;
       pointerEvent.preventDefault();
       document.body.classList.add("isSelectingNodes");
       window.getSelection()?.removeAllRanges();
-      if (titleInput) titleInput.setSelectionRange(titleInput.selectionStart, titleInput.selectionStart);
       if (!targetId || !filteredNodes.includes(targetId)) return;
 
       const range = getNodeSelectionRange(filteredNodes, current.anchorId, targetId);
@@ -3284,13 +3281,7 @@ function NodeRow({
     window.addEventListener("outliner-draft-resolved", resolved);
     return () => window.removeEventListener("outliner-draft-resolved", resolved);
   }, [node.id]);
-  const textSelectionPointerRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    startOffset: number;
-    fromPreview: boolean;
-  } | null>(null);
+  const previewSelectionCleanupRef = useRef<(() => void) | null>(null);
 
   // Sync external title changes (drag, undo, etc.) into local state
   useEffect(() => {
@@ -3351,6 +3342,7 @@ function NodeRow({
   useEffect(() => {
     return () => {
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      previewSelectionCleanupRef.current?.();
       onCompositionChangeRef.current(false);
     };
   }, []);
@@ -3514,6 +3506,83 @@ function NodeRow({
     resizeTitleInput(input);
   }, [localTitle]);
 
+  const beginPreviewTextSelection = (event: PointerEvent<HTMLDivElement>) => {
+    if (
+      event.button !== 0 ||
+      event.shiftKey ||
+      event.metaKey ||
+      event.ctrlKey ||
+      (event.target as HTMLElement).closest(".nodeTitleLink")
+    ) return;
+
+    const input = titleInputRef.current;
+    if (!input) return;
+    event.preventDefault();
+    event.stopPropagation();
+    previewSelectionCleanupRef.current?.();
+
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startOffset = getPreviewSelectionStart(event.currentTarget, startX, startY, node.title);
+
+    onFocusSelect();
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(startOffset, startOffset);
+
+    // The preview is hidden as soon as the editor gains focus. Continue
+    // tracking this drag globally, independently of outline-row selection.
+    const updateRange = (clientX: number, clientY: number) => {
+      if (Math.hypot(clientX - startX, clientY - startY) < 4) return;
+      const measure = titleMeasureRef.current;
+      if (!measure) return;
+      const endOffset = getPreviewSelectionStart(measure, clientX, clientY, localTitle);
+      input.setSelectionRange(
+        Math.min(startOffset, endOffset),
+        Math.max(startOffset, endOffset),
+        endOffset < startOffset ? "backward" : "forward"
+      );
+    };
+    const move = (pointerEvent: globalThis.PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) return;
+      if (!(pointerEvent.buttons & 1)) {
+        cleanup();
+        return;
+      }
+      updateRange(pointerEvent.clientX, pointerEvent.clientY);
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("pointercancel", cancel, true);
+      previewSelectionCleanupRef.current = null;
+    };
+    const finish = (pointerEvent: globalThis.PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) return;
+      updateRange(pointerEvent.clientX, pointerEvent.clientY);
+      cleanup();
+      if (document.activeElement === input && input.selectionStart !== input.selectionEnd) {
+        openMarkdownContextMenu(input, pointerEvent.clientX, pointerEvent.clientY, "selection");
+      }
+    };
+    const cancel = (pointerEvent: globalThis.PointerEvent) => {
+      if (pointerEvent.pointerId === pointerId) cleanup();
+    };
+
+    previewSelectionCleanupRef.current = cleanup;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("pointercancel", cancel, true);
+    // Mouse capture is a fallback for pointer releases outside the editor.
+    if (event.pointerType === "mouse") {
+      try { input.setPointerCapture(pointerId); } catch { /* global listeners still track the drag */ }
+    }
+    window.requestAnimationFrame(() => {
+      if (document.activeElement !== input || input.selectionStart !== input.selectionEnd) return;
+      input.setSelectionRange(startOffset, startOffset);
+    });
+  };
+
   return (
     <div
       className={rowClassName}
@@ -3532,7 +3601,7 @@ function NodeRow({
       onClick={event => {
         const target = event.target as HTMLElement;
         if (
-          target.closest(".nodeTitle") ||
+          target.closest(".nodeTitleCell") ||
           target.closest(".nodeMenuButton") ||
           target.closest(".disclosureButton") ||
           target.closest(".dragHandle") ||
@@ -3675,65 +3744,15 @@ function NodeRow({
             onBlurFocus();
           }}
           onPointerDown={event => {
-            if (event.button === 0) {
-              const measure = titleMeasureRef.current;
-              if (!measure) return;
-              textSelectionPointerRef.current = {
-                pointerId: event.pointerId,
-                startX: event.clientX,
-                startY: event.clientY,
-                startOffset: getPreviewSelectionStart(measure, event.clientX, event.clientY, localTitle),
-                fromPreview: false
-              };
-              return;
-            }
             if (event.button === 2 && openMarkdownContextMenu(event.currentTarget, event.clientX, event.clientY)) {
               event.preventDefault();
               event.stopPropagation();
             }
           }}
-          onPointerMove={event => {
-            const pointer = textSelectionPointerRef.current;
-            if (
-              !pointer?.fromPreview ||
-              pointer.pointerId !== event.pointerId ||
-              !event.buttons ||
-              document.body.classList.contains("isSelectingNodes") ||
-              Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 4
-            ) return;
-            const measure = titleMeasureRef.current;
-            if (!measure) return;
-            const endOffset = getPreviewSelectionStart(measure, event.clientX, event.clientY, localTitle);
-            event.currentTarget.setSelectionRange(
-              Math.min(pointer.startOffset, endOffset),
-              Math.max(pointer.startOffset, endOffset),
-              endOffset < pointer.startOffset ? "backward" : "forward"
-            );
-          }}
-          onPointerCancel={() => {
-            textSelectionPointerRef.current = null;
-          }}
           onPointerUp={event => {
             if (event.button !== 0) return;
-            if (document.body.classList.contains("isSelectingNodes")) {
-              textSelectionPointerRef.current = null;
-              return;
-            }
+            // Do not override a native textarea text selection on mouse release.
             const input = event.currentTarget;
-            const pointer = textSelectionPointerRef.current;
-            textSelectionPointerRef.current = null;
-            const measure = titleMeasureRef.current;
-            if (
-              pointer?.pointerId === event.pointerId &&
-              measure &&
-              Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 4
-            ) {
-              const endOffset = getPreviewSelectionStart(measure, event.clientX, event.clientY, localTitle);
-              input.setSelectionRange(
-                Math.min(pointer.startOffset, endOffset),
-                Math.max(pointer.startOffset, endOffset)
-              );
-            }
             if (input.selectionStart === input.selectionEnd) return;
             event.stopPropagation();
             openMarkdownContextMenu(input, event.clientX, event.clientY, "selection");
@@ -3796,41 +3815,7 @@ function NodeRow({
         />
         <div
           className="nodeTitlePreview"
-          onPointerDown={event => {
-            if (
-              event.button !== 0 ||
-              event.shiftKey ||
-              event.metaKey ||
-              event.ctrlKey ||
-              (event.target as HTMLElement).closest(".nodeTitleLink")
-            ) return;
-            event.preventDefault();
-            const input = titleInputRef.current;
-            if (!input) return;
-            const selectionStart = getPreviewSelectionStart(
-              event.currentTarget,
-              event.clientX,
-              event.clientY,
-              node.title
-            );
-            textSelectionPointerRef.current = {
-              pointerId: event.pointerId,
-              startX: event.clientX,
-              startY: event.clientY,
-              startOffset: selectionStart,
-              fromPreview: true
-            };
-            onFocusSelect();
-            input.focus({ preventScroll: true });
-            // The preview becomes pointer-events:none on focus. Keep receiving
-            // drag/up events even when the pointer leaves the textarea.
-            if (event.pointerType === "mouse") input.setPointerCapture(event.pointerId);
-            input.setSelectionRange(selectionStart, selectionStart);
-            window.requestAnimationFrame(() => {
-              if (document.activeElement !== input || input.selectionStart !== input.selectionEnd) return;
-              input.setSelectionRange(selectionStart, selectionStart);
-            });
-          }}
+          onPointerDown={beginPreviewTextSelection}
           onClick={event => {
             event.stopPropagation();
             if ((event.target as HTMLElement).closest(".nodeTitleLink")) return
