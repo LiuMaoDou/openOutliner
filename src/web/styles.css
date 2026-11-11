@@ -2207,6 +2207,21 @@ body.isSelectingNodes .nodeTitlePreview {
   background-color: var(--title-selection-colored-background);
 }
 
+/* Multi-row selection paints only the inline title text, never the node row. */
+:where(.outlineList.hasMultiSelection) .nodeRow.selected .nodeTitleInlineText {
+  background-color: var(--title-selection-background);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  border-radius: 2px;
+}
+
+:where(.outlineList.hasMultiSelection) .nodeRow.selected .nodeTitleInlineText [class^="markdownTextColor-"],
+:where(.outlineList.hasMultiSelection) .nodeRow.selected .nodeTitleInlineText [class*=" markdownTextColor-"] {
+  background-color: var(--title-selection-colored-background);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 .nodeTitleMeasure {
   position: absolute;
   inset: 0;
