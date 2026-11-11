@@ -1613,7 +1613,11 @@ export function App() {
       target.closest(".nodeDateControl") ||
       target.closest(".nodeTags")
     ) return;
-    const titleInput = target instanceof HTMLTextAreaElement && target.matches(".nodeTitle") ? target : null;
+    const titleInput = target instanceof HTMLTextAreaElement && target.matches(".nodeTitle")
+      ? target
+      : target.closest(".nodeTitlePreview")
+        ? inputRefs.current.get(node.id) ?? null
+        : null;
 
     const anchorId = event.shiftKey
       ? selectionAnchorIdRef.current || selectedIdRef.current || node.id
@@ -3285,6 +3289,7 @@ function NodeRow({
     startX: number;
     startY: number;
     startOffset: number;
+    fromPreview: boolean;
   } | null>(null);
 
   // Sync external title changes (drag, undo, etc.) into local state
@@ -3677,7 +3682,8 @@ function NodeRow({
                 pointerId: event.pointerId,
                 startX: event.clientX,
                 startY: event.clientY,
-                startOffset: getPreviewSelectionStart(measure, event.clientX, event.clientY, localTitle)
+                startOffset: getPreviewSelectionStart(measure, event.clientX, event.clientY, localTitle),
+                fromPreview: false
               };
               return;
             }
@@ -3686,8 +3692,33 @@ function NodeRow({
               event.stopPropagation();
             }
           }}
+          onPointerMove={event => {
+            const pointer = textSelectionPointerRef.current;
+            if (
+              !pointer?.fromPreview ||
+              pointer.pointerId !== event.pointerId ||
+              !event.buttons ||
+              document.body.classList.contains("isSelectingNodes") ||
+              Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 4
+            ) return;
+            const measure = titleMeasureRef.current;
+            if (!measure) return;
+            const endOffset = getPreviewSelectionStart(measure, event.clientX, event.clientY, localTitle);
+            event.currentTarget.setSelectionRange(
+              Math.min(pointer.startOffset, endOffset),
+              Math.max(pointer.startOffset, endOffset),
+              endOffset < pointer.startOffset ? "backward" : "forward"
+            );
+          }}
+          onPointerCancel={() => {
+            textSelectionPointerRef.current = null;
+          }}
           onPointerUp={event => {
             if (event.button !== 0) return;
+            if (document.body.classList.contains("isSelectingNodes")) {
+              textSelectionPointerRef.current = null;
+              return;
+            }
             const input = event.currentTarget;
             const pointer = textSelectionPointerRef.current;
             textSelectionPointerRef.current = null;
@@ -3782,11 +3813,18 @@ function NodeRow({
               event.clientY,
               node.title
             );
+            textSelectionPointerRef.current = {
+              pointerId: event.pointerId,
+              startX: event.clientX,
+              startY: event.clientY,
+              startOffset: selectionStart,
+              fromPreview: true
+            };
             onFocusSelect();
             input.focus({ preventScroll: true });
             input.setSelectionRange(selectionStart, selectionStart);
             window.requestAnimationFrame(() => {
-              if (document.activeElement !== input) return;
+              if (document.activeElement !== input || input.selectionStart !== input.selectionEnd) return;
               input.setSelectionRange(selectionStart, selectionStart);
             });
           }}
