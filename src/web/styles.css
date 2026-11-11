@@ -85,9 +85,9 @@
     6px 0 14px -12px rgba(24, 24, 27, 0.1);
   --selected: rgba(255, 255, 255, 0.58);
   --selected-border: rgba(212, 212, 216, 0.68);
-  --outline-selection-background: color-mix(in srgb, var(--foreground) 9%, var(--content-surface));
-  --outline-selection-border: color-mix(in srgb, var(--foreground) 20%, transparent);
-  --title-selection-strength: 22%;
+  --outline-selection-background: color-mix(in srgb, var(--foreground) 6%, var(--content-surface));
+  --outline-selection-border: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --title-selection-strength: 16%;
   --body-wash-start: rgba(250, 250, 250, 0.72);
   --body-wash-end: rgba(255, 255, 255, 0);
   --placeholder: #a1a1aa;
