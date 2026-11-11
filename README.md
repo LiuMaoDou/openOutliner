@@ -1,10 +1,17 @@
 # OpenOutliner
 
-OpenOutliner is a local-first outline notes app inspired by Tana and Mubu. It combines a keyboard-first outline editor, SQLite storage, Markdown/OPML import-export, a CLI, and an MCP server for LLM clients.
+OpenOutliner is a local-first outliner for notes, tasks, and schedules, inspired by Tana and Mubu. Organize nested outlines, work offline, and optionally sync your notes across devices through a self-hosted server. It includes a calendar with Chinese holidays and lunar dates, Markdown/OPML import-export, an Android client, a CLI, and an MCP server for LLM clients.
 
 ## Features
 
+- Calendar month and schedule views for dated outlines across workspaces, with workspace filtering, search, and links back to the original nodes.
+- Chinese lunar dates, public holidays, and adjusted working days from cached calendar feeds.
+- Global in-app reminders for unfinished items due tomorrow or earlier, including overdue tasks across workspaces.
+- Browser-local SQLite persisted in IndexedDB, offline editing, and optional authenticated self-hosted synchronization across devices.
+- Conflict handling, preserved editing drafts, and downloadable/restorable JSON recovery backups.
+- Android WebView client with theme-aware indent/outdent controls and system file import.
 - Keyboard-first outline editing with nested nodes, collapse/expand, completion state, due dates, tags, and typed fields.
+- Select-all and copy actions for outline rows, with clipboard confirmation.
 - Range, additive, and drag selection for working with multiple outline nodes as one group.
 - Batch indentation, dragging, deletion, and one-step undo for selected nodes while preserving their subtrees and order.
 - Workspace-scoped undo/redo for outline creation, editing, movement, indentation, and deletion.
@@ -34,6 +41,15 @@ npm run dev
 - Default database: `./data/openoutliner.sqlite`
 - Required Node version: `>=25.0.0`
 
+Development mode does not register the offline Service Worker. To test offline reopening, use a production build:
+
+```bash
+npm run build
+npm start
+```
+
+Open `http://127.0.0.1:4317` while online first and let the app finish caching. For access from other devices, use HTTPS and follow the [deployment guide](deploy/README.md).
+
 ## Web Usage
 
 - Use `Enter` on an empty row to create and focus the next row.
@@ -48,6 +64,8 @@ npm run dev
 
 ### Multi-Selection
 
+- Use `Ctrl/Cmd+A` to select outline rows; inside a text editor it retains normal text-selection behavior.
+- Use the row menu's **Copy** action, or `Ctrl/Cmd+C` when outline rows rather than title text are selected, to copy the selection as text.
 - `Shift+click` selects a continuous range.
 - `Ctrl/Cmd+click` adds or removes individual nodes from the selection.
 - Drag across the empty area of outline rows to select a range with the mouse.
@@ -78,6 +96,36 @@ npm run dev
 - Moving an outline to another workspace preserves its subtree and opens the destination workspace with the moved outline selected.
 - On mobile, drag an outline to the left edge to reveal the workspace sidebar, then drop it onto the destination workspace.
 
+## Calendar And Reminders
+
+- Assign a due date to an outline to include it in the calendar.
+- Switch between **Month** and **Schedule**, filter by workspace, or search scheduled titles, notes, and workspace names.
+- Click a scheduled item to open its source outline. Completed items remain visible with a completed style.
+- The global reminders list gathers unfinished items due tomorrow or earlier across workspaces. These are in-app reminders, not guaranteed background push notifications.
+- Lunar dates, holidays, and make-up working days come from [ChinaCalendar](https://github.com/yangh9/ChinaCalendar) feeds. Existing cached data remains available if a feed cannot refresh; initial retrieval requires a network connection.
+
+## Offline, Sync, And Backups
+
+The web app runs outline operations against a local SQLite database saved in IndexedDB. After the first successful load and production app-cache setup, supported browsers can reopen and edit offline.
+
+Optional self-hosting adds password-protected access and synchronization between your devices. Independent record/field changes merge automatically; conflicting edits pause synchronization for review. The **备份与恢复** (Backup and recovery) panel lets you download all workspaces as a JSON recovery backup, restore a backup, review retained editing drafts, and choose between local and server versions when conflicts occur.
+
+- This is a personal, single-dataset service, not a multi-user workspace with isolated accounts.
+- Sync is not guaranteed while the page is closed or the device is asleep.
+- Undo history is local to each device and is reset when remote changes are applied.
+- Clearing browser/app data can remove unsynced notes. Download a recovery backup before clearing data, and back up the server database separately.
+- External links and remote images are not downloaded for offline use.
+
+See the [deployment, synchronization, and recovery guide](deploy/README.md) for Docker Compose, HTTPS, storage requirements, and troubleshooting.
+
+## Android Client
+
+The repository includes an Android 8.0+ WebView client with keyboard-friendly indent/outdent controls, theme-aware system bars, persistent login, system file import, and external-browser links. The current release build targets the project's configured personal deployment, rather than an arbitrary server picker.
+
+It shares the web app's local storage and sync behavior. First use needs a network connection; offline startup depends on the website cache and WebView support. Blob-based export downloads are not currently supported in the Android shell, so export synced content from a desktop browser.
+
+See [Android setup, build instructions, and limitations](android/README.md).
+
 ## Development
 
 ```bash
@@ -87,7 +135,7 @@ npm run build
 ```
 
 - `npm run typecheck` validates backend and web TypeScript projects.
-- `npm test` runs Vitest service and import/export tests.
+- `npm test` runs the Vitest suite, including outline services, import/export, sync, authentication, offline caching, calendar behavior, and frontend regressions.
 - `npm run build` compiles the backend and production web bundle.
 - `npm run server` runs only the backend API.
 - `npm run mcp` starts the MCP server.
@@ -133,4 +181,4 @@ See `AGENTS.md` for repository structure, coding conventions, test expectations,
 
 ## Data Model
 
-OpenOutliner uses a single-parent tree with lightweight tags and typed fields. Full graph references, cloud sync, and rich attachments are intentionally deferred.
+OpenOutliner uses a single-parent tree with lightweight tags and typed fields. Optional self-hosted sync is implemented; full graph references and rich attachments remain outside the current scope.
