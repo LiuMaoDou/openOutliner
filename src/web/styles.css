@@ -85,6 +85,8 @@
     6px 0 14px -12px rgba(24, 24, 27, 0.1);
   --selected: rgba(255, 255, 255, 0.58);
   --selected-border: rgba(212, 212, 216, 0.68);
+  --title-selection-background: #dde5dc;
+  --title-selection-colored-background: #e7d7d8;
   --body-wash-start: rgba(250, 250, 250, 0.72);
   --body-wash-end: rgba(255, 255, 255, 0);
   --placeholder: #a1a1aa;
@@ -159,6 +161,8 @@
     0 0 0 1px rgba(192, 204, 223, 0.05);
   --selected: rgba(83, 96, 116, 0.34);
   --selected-border: rgba(145, 165, 192, 0.65);
+  --title-selection-background: #394b43;
+  --title-selection-colored-background: #5b424c;
   --body-wash-start: rgba(65, 73, 88, 0.25);
   --body-wash-end: rgba(37, 40, 48, 0);
   --placeholder: #a5afbe;
@@ -1953,11 +1957,6 @@ body.isResizingPanel .appShell {
   background: transparent;
 }
 
-:where(.outlineList.hasMultiSelection) .nodeRow.selected {
-  background: color-mix(in srgb, var(--ring) 16%, var(--content-surface));
-  border-color: var(--selected-border);
-}
-
 .nodeRow.selection-start {
   border-bottom-color: transparent;
   border-radius: var(--radius) var(--radius) 0 0;
@@ -2191,6 +2190,21 @@ body.isSelectingNodes .nodeTitlePreview {
   line-height: 1.35;
   overflow-wrap: anywhere;
   cursor: text;
+}
+
+/* Muted Morandi text selections; outline node rows remain unhighlighted. */
+.nodeTitle::selection,
+.nodeTitlePreview::selection,
+.nodeTitlePreview *::selection {
+  color: inherit;
+  background-color: var(--title-selection-background);
+}
+
+/* Colored Markdown title runs use the soft complementary Morandi accent. */
+.nodeTitlePreview [class^="markdownTextColor-"]::selection,
+.nodeTitlePreview [class*=" markdownTextColor-"]::selection {
+  color: inherit;
+  background-color: var(--title-selection-colored-background);
 }
 
 .nodeTitleMeasure {
