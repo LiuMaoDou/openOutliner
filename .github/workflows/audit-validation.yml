@@ -1,0 +1,55 @@
+name: Audit validation
+
+on:
+  push:
+    branches: [audit/stability-validation-20261112]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck
+      - name: Tests
+        id: tests
+        continue-on-error: true
+        run: npm test
+      - name: Production build
+        id: build
+        continue-on-error: true
+        run: npm run build
+      - name: Package isolated validation workspace
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p /tmp/oo-audit
+          printf 'commit=%s\nnode=%s\ntypecheck=%s\ntests=%s\nbuild=%s\n' "$GITHUB_SHA" "$(node --version)" '${{ steps.typecheck.outcome }}' '${{ steps.tests.outcome }}' '${{ steps.build.outcome }}' > /tmp/oo-audit/results.txt
+          # Application sources and test dependencies only; no notes, fonts, secrets, or unrelated documents.
+          tar -czf /tmp/oo-audit/workspace.tar.gz src tests build public package.json package-lock.json tsconfig.node.json tsconfig.web.json vite.config.ts index.html AGENTS.md README.md Dockerfile compose.yaml node_modules
+          cp "$(command -v node)" /tmp/oo-audit/node
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audit-workspace
+          path: /tmp/oo-audit/
+          retention-days: 1
+      - name: Require baseline checks
+        if: always()
+        run: |
+          test '${{ steps.typecheck.outcome }}' = success
+          test '${{ steps.tests.outcome }}' = success
+          test '${{ steps.build.outcome }}' = success
