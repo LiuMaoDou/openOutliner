@@ -3894,7 +3894,7 @@ function NodeRow({
         >
           {node.title.trim() ? (
             renderTitleLiterally ? (
-              <span>{node.title}</span>
+              <span><span className="nodeTitleInlineText">{node.title}</span></span>
             ) : (
               <ReactMarkdown
                 allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark", "span"]}
@@ -3919,7 +3919,7 @@ function NodeRow({
                       </a>
                     )
                   },
-                  p: ({ children }) => <span>{children}</span>
+                  p: ({ children }) => <span><span className="nodeTitleInlineText">{children}</span></span>
                 }}
               >
                 {node.title}
