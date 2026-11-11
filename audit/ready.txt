@@ -1,0 +1,1 @@
+Validation attempt 1: checksum gate, typecheck, 238 tests, production build, and full-app Chromium regressions.
