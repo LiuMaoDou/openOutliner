@@ -64,7 +64,7 @@ Open `http://127.0.0.1:4317` while online first and let the app finish caching. 
 
 ### Multi-Selection
 
-- Use `Ctrl/Cmd+A` to select outline rows; inside a text editor it retains normal text-selection behavior.
+- Use `Ctrl/Cmd+A` to select outline rows, including when an outline title is focused.
 - Use the row menu's **Copy** action, or `Ctrl/Cmd+C` when outline rows rather than title text are selected, to copy the selection as text.
 - `Shift+click` selects a continuous range.
 - `Ctrl/Cmd+click` adds or removes individual nodes from the selection.
