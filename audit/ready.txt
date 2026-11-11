@@ -1,1 +1,1 @@
-Validation attempt 1: checksum gate, typecheck, 238 tests, production build, and full-app Chromium regressions.
+Validation attempt 2: verified original patch bytes; full Node 26 checks and seven full-app Chromium scenarios.
