@@ -3,7 +3,7 @@ name: Audit validation
 on:
   push:
     branches: [audit/stability-validation-20261112]
-    paths: ['audit/ready.txt']
+    paths: ['audit/ready.txt', '.github/workflows/audit-validation.yml']
 
 permissions:
   contents: write
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      OO_E2E_OUTPUT: ${{ runner.temp }}/oo-e2e
+      OO_E2E_OUTPUT: /tmp/oo-e2e
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,5 +64,5 @@ jobs:
         if: always()
         with:
           name: stability-validation-evidence
-          path: ${{ runner.temp }}/oo-e2e/
+          path: /tmp/oo-e2e/
           retention-days: 7
