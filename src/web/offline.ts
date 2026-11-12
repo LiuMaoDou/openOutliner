@@ -1,3 +1,4 @@
+import { encodeRecovery, decodeRecovery } from "./recoveryFile";
 import { openLocal } from "./localDatabase";
 import { migrate, SCHEMA_VERSION } from "../backend/shared/schema.js";
 import { needsStoredUpgrade, upgradeStoredState } from "../backend/shared/storedState.js";
@@ -196,24 +197,31 @@ async function refreshStatus() {
 async function network(method: string, body?: unknown): Promise<Response> {
   return fetch("/api/sync", { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined, cache: "no-store", signal: AbortSignal.timeout(12000) });
 }
+let pendingLocalWrites = 0;
 export async function localRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  if (method !== "GET") await flushAllNodeDrafts();
-  const result = await locked(async () => {
-    const state = await read();
-    if (!state) throw new Error("首次使用需要联网并登录，完成数据下载后即可离线编辑。");
-    const { db, sql } = await openLocal(state.bytes);
-    try {
-      const result = dispatch(new OutlinerService(sql), method, path, body);
-      if (method !== "GET") {
-        state.bytes = db.export();
-        await save(state); // Resolve only after the IndexedDB transaction commits.
-        changed();
-      }
-      return result as T;
-    } finally { db.close(); }
-  });
-  if (method !== "GET") { await refreshStatus(); schedule(); }
-  return result;
+  const writing = method !== "GET";
+  if (writing) pendingLocalWrites += 1;
+  try {
+    if (method !== "GET") await flushAllNodeDrafts();
+    const result = await locked(async () => {
+      const state = await read();
+      if (!state) throw new Error("首次使用需要联网并登录，完成数据下载后即可离线编辑。");
+      const { db, sql } = await openLocal(state.bytes);
+      try {
+        const result = dispatch(new OutlinerService(sql), method, path, body);
+        if (method !== "GET") {
+          state.bytes = db.export();
+          await save(state); // Resolve only after the IndexedDB transaction commits.
+          changed();
+        }
+        return result as T;
+      } finally { db.close(); }
+    });
+    if (method !== "GET") { await refreshStatus(); schedule(); }
+    return result;
+  } finally {
+    if (writing) pendingLocalWrites -= 1;
+  }
 }
 let timer: ReturnType<typeof setTimeout> | undefined;
 function schedule() { clearTimeout(timer); timer = setTimeout(() => void synchronize(), 700); }
@@ -323,7 +331,7 @@ export async function downloadRecovery() {
   if (!state) return;
   const { db, sql } = await openLocal(state.bytes);
   try {
-    const blob = new Blob([JSON.stringify({ format: "openoutliner-recovery-v1", local: snapshot(sql), base: state.base, conflict: state.conflict, backups: state.backups, editorDrafts: journal.list() }, null, 2)], { type: "application/json" });
+    const blob = encodeRecovery({ format: "openoutliner-recovery-v1", local: snapshot(sql), base: state.base, conflict: state.conflict, backups: state.backups, editorDrafts: journal.list() });
     const url = URL.createObjectURL(blob), anchor = document.createElement("a");
     const now = new Date();
     const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(value => String(value).padStart(2, "0")).join("-");
@@ -389,9 +397,8 @@ export function downloadEditorDrafts() {
 }
 
 export async function restoreRecovery(file: File) {
-  if (file.size > 32 * 1024 * 1024) throw new Error("恢复文件超过 32 MB。");
-  const recovery = JSON.parse(await file.text()) as { format?: string; local?: Snapshot; editorDrafts?: unknown };
-  if (recovery.format !== "openoutliner-recovery-v1" || !recovery.local) throw new Error("请选择 OpenOutliner 恢复备份文件。");
+  const recovery = await decodeRecovery(file) as { format?: string; local?: Snapshot; editorDrafts?: unknown } | null;
+  if (!recovery || recovery.format !== "openoutliner-recovery-v1" || !recovery.local) throw new Error("请选择 OpenOutliner 恢复备份文件。");
   const drafts = parseDraftBackup(recovery.editorDrafts);
   await flushAllNodeDrafts();
   await locked(async () => {
@@ -417,7 +424,25 @@ export async function recoveryVersions(): Promise<string[]> {
 export async function downloadBackup(index: number) {
   const state = await locked(read), backup = state?.backups[index];
   if (!backup) throw new Error("备份不存在");
-  const url = URL.createObjectURL(new Blob([JSON.stringify({ format: "openoutliner-recovery-v1", local: backup.data }, null, 2)], { type: "application/json" }));
+  const url = URL.createObjectURL(encodeRecovery({ format: "openoutliner-recovery-v1", local: backup.data }));
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = `openoutliner-backup-${index + 1}.json`; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+
+/** Called only after the editor/structural-operation barriers have completed. */
+export async function prepareForAppUpdate(): Promise<void> {
+  const deadline = Date.now() + 10000;
+  // Also cover writes outside the outline editor (calendar, tags and workspaces).
+  while (pendingLocalWrites) {
+    if (Date.now() > deadline) throw new Error("仍有本机操作未完成，请完成保存后再更新。");
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  await flushAllNodeDrafts();
+  await locked(async () => {
+    const state = await read();
+    if (!state) throw new Error("尚未完成本机保存，请先完成首次同步。");
+    if (status.localSaveError || journal.hasVolatileDrafts()) throw new Error("本机保存尚未成功，暂不切换版本；请先下载草稿并处理保存错误。");
+    if (journal.list().some(draft => draft.owner === journal.owner && !draft.archived)) throw new Error("请先处理当前页面的编辑草稿，再更新应用。");
+  });
 }

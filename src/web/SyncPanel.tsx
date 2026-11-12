@@ -1,24 +1,29 @@
+import { AppUpdatePanel } from "./AppUpdatePanel";
+import { getAppUpdateStatus, subscribeAppUpdates } from "./appUpdates";
+import { RECOVERY_CAPACITY_LABEL } from "./recoveryFile";
 import { CircleAlert, Database, FileDown, Upload, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
-import { downloadRecovery, pendingEditorDrafts, resolveEditorDraft, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync } from "./offline";
+import { downloadBackup, recoveryVersions, downloadRecovery, pendingEditorDrafts, resolveEditorDraft, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync } from "./offline";
 
 export function SyncPanel({ embedded = false, compact = false }: {
   embedded?: boolean;
   compact?: boolean;
 }) {
   const status = useSyncExternalStore(subscribeSync, getSyncStatus);
+  const update = useSyncExternalStore(subscribeAppUpdates, getAppUpdateStatus);
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [versions, setVersions] = useState<string[]>([]);
   const [position, setPosition] = useState<CSSProperties>({});
   const panelId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const detailsRef = useRef<HTMLElement | null>(null);
   const recoveryInputRef = useRef<HTMLInputElement | null>(null);
-  const attention = status.localSaveError ? "保存失败" : status.draftConflicts?.length ? "编辑冲突" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : "";
+  const attention = status.localSaveError ? "保存失败" : status.draftConflicts?.length ? "编辑冲突" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : update.available ? "有更新" : "";
   const forcedOpen = Boolean(status.needsLogin || !status.ready);
   const detailsVisible = open || forcedOpen;
   const closePanel = () => { setOpen(false); triggerRef.current?.focus({ preventScroll: true }); };
@@ -70,6 +75,13 @@ export function SyncPanel({ embedded = false, compact = false }: {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!detailsVisible || !status.ready) return;
+    let cancelled = false;
+    void recoveryVersions().then(values => { if (!cancelled) setVersions(values); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [detailsVisible, status.ready, busy]);
 
   const act = async (fn: () => Promise<unknown>, closeAfter = false) => {
     setBusy(true); setError("");
@@ -125,6 +137,11 @@ export function SyncPanel({ embedded = false, compact = false }: {
       {status.ready && <div>
         <button className="syncActionRow" type="button" disabled={busy} onClick={() => void act(downloadRecovery, true)}><FileDown size={16} /><span>下载备份</span><small>全部工作区</small></button>
         <button className="syncActionRow" type="button" disabled={busy} onClick={() => recoveryInputRef.current?.click()}><Upload size={16} /><span>恢复备份</span><small>JSON</small></button>
+        <p className="recoveryCapacity">导出与恢复统一上限：{RECOVERY_CAPACITY_LABEL}。超大完整备份可分别下载历史版本；不会自动删除备份。</p>
+        {versions.length > 0 && <details><summary>历史备份（{versions.length}）</summary>
+          {versions.map((date, index) => <button key={`${date}:${index}`} className="syncActionRow" type="button" disabled={busy}
+            onClick={() => void act(() => downloadBackup(index))}><FileDown size={16} /><span>{new Date(date).toLocaleString()}</span></button>)}
+        </details>}
       </div>}
       <div className="syncAttentionDetails">
         {status.needsLogin && <form onSubmit={event => { event.preventDefault(); void act(async () => { await signIn(password); setPassword(""); }); }}>
@@ -149,6 +166,7 @@ export function SyncPanel({ embedded = false, compact = false }: {
           </details>)}
         </div>}
       </div>
+      <AppUpdatePanel busy={busy} />
       <footer className="syncStatusRow">
         <span role="status" title={status.text}>{status.text}</span>
       </footer>
