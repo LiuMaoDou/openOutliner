@@ -39,4 +39,7 @@ replace('tests/browser_remaining.py', '''                            finally:
                             finally:
                                 context.tracing.stop(path=str(ARTIFACTS/f'remaining-{theme}-trace.zip'));context.close()
 ''')
-print('Applied reviewed follow-up: prevent native text drag takeover; retain failure diagnostics.')
+replace('src/web/App.tsx', '''                          onComplete={() => deleteNodeOptimistically(node, "complete")}
+                          onDelete={() => deleteNodeOptimistically(node)}''', '''                          onComplete={() => deleteNodeOptimistically(node, "complete").catch(toError(setError))}
+                          onDelete={() => deleteNodeOptimistically(node).catch(toError(setError))}''')
+print('Applied reviewed follow-up: prevent native text drag takeover, surface operation errors, retain diagnostics.')
