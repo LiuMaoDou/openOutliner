@@ -1,5 +1,6 @@
 import { openLocal } from "./localDatabase";
-import { migrate } from "../backend/shared/schema.js";
+import { migrate, SCHEMA_VERSION } from "../backend/shared/schema.js";
+import { needsStoredUpgrade, upgradeStoredState } from "../backend/shared/storedState.js";
 import { OutlinerService } from "../backend/services/outliner.js";
 import { dispatch } from "../backend/shared/dispatch.js";
 import { changesBetween, mergeChanges, replaceSnapshot, snapshot, type Snapshot } from "../backend/shared/sync.js";
@@ -7,7 +8,7 @@ import { DraftJournal, parseDraftBackup, type DraftField, type EditorDraft } fro
 
 interface Conflict { current: Snapshot; conflicts: string[] }
 interface Backup { date: string; data: Snapshot }
-interface Saved { bytes: Uint8Array; base: Snapshot; revision: string; conflict?: Conflict; backups: Backup[] }
+interface Saved { bytes: Uint8Array; base: Snapshot; revision: string; conflict?: Conflict; backups: Backup[]; schemaVersion?: number }
 interface Envelope { version: number; revision: string; data: Snapshot }
 export interface SyncStatus { text: string; pending: number; needsLogin?: boolean; conflict?: string[]; error?: string; localSaveError?: string; drafts?: number; archivedDrafts?: number; draftConflicts?: EditorDraft[]; ready: boolean }
 let status: SyncStatus = { text: "正在读取本机数据…", pending: 0, ready: false };
@@ -129,11 +130,31 @@ function store() {
   });
 }
 async function read(): Promise<Saved | undefined> {
-  const db = await store();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction("state").objectStore("state").get("current");
+  // All callers hold the existing cross-tab openoutliner-data Web Lock.
+  const storage = await store();
+  const state = await new Promise<Saved | undefined>((resolve, reject) => {
+    const request = storage.transaction("state").objectStore("state").get("current");
     request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
   });
+  if (!state || !needsStoredUpgrade(state)) return state;
+  const { db, sql } = await openLocal(state.bytes);
+  try {
+    const upgraded = upgradeStoredState(state, sql, db.export());
+    await new Promise<void>((resolve, reject) => {
+      const tx = storage.transaction("state", "readwrite");
+      const records = tx.objectStore("state");
+      const backupKey = `before-schema-${state.schemaVersion ?? 0}`;
+      const backup = records.get(backupKey);
+      backup.onsuccess = () => {
+        // Keep the first pre-upgrade envelope, including its exact original bytes.
+        if (backup.result === undefined) records.put(state, backupKey);
+        records.put(upgraded, "current");
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(new Error("本机数据库升级未完成，旧数据未改动；请检查剩余空间后重试。"));
+    });
+    return upgraded;
+  } finally { db.close(); }
 }
 async function save(value: Saved): Promise<void> {
   try {
@@ -241,7 +262,7 @@ export async function synchronize(): Promise<void> {
           remoteChanged = !current || changesBetween(current, merged).length > 0;
           if (remoteChanged) replaceSnapshot(sql, merged);
           if (!state || remoteChanged || changes.length || state.revision !== remote.revision) {
-            await save({ bytes: db.export(), base: remote.data, revision: remote.revision, backups: state?.backups ?? [] });
+            await save({ bytes: db.export(), base: remote.data, revision: remote.revision, backups: state?.backups ?? [], schemaVersion: SCHEMA_VERSION });
           }
           report({ ready: true, needsLogin: false, error: undefined });
         } finally { db.close(); }

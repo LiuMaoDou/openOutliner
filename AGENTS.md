@@ -6,7 +6,7 @@ OpenOutliner is a local-first outline notes app with a React web UI, Node backen
 
 ## Build, Test, and Development Commands
 
-- `npm install`: install dependencies; Node `>=25.0.0` is required.
+- `npm install`: install dependencies; Node `>=26.0.0` is required; use Node 26 LTS (`nvm use`).
 - `npm run dev`: run API and web dev servers together. Web defaults to `http://127.0.0.1:5173`, API to `http://127.0.0.1:4317`.
 - `npm run server`: run only the backend API with `tsx`.
 - `npm run cli -- workspace list`: run CLI commands locally.

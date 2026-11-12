@@ -1,4 +1,4 @@
-FROM node:25-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -6,7 +6,7 @@ COPY . .
 RUN npm run build
 RUN npm prune --omit=dev
 
-FROM node:25-bookworm-slim
+FROM node:26-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production OPENOUTLINER_HOST=0.0.0.0 OPENOUTLINER_PORT=4317 OPENOUTLINER_DB=/app/data/openoutliner.sqlite
 COPY --from=build /app/node_modules ./node_modules

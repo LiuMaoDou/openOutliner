@@ -20,7 +20,8 @@
     "build:server": "tsc -p tsconfig.node.json",
     "build:web": "vite build",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:reliability": "npm run build:server && node --test tests/reliability/*.check.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -50,6 +51,6 @@
     "vitest": "^4.0.14"
   },
   "engines": {
-    "node": ">=25.0.0"
+    "node": ">=26.0.0"
   }
 }
