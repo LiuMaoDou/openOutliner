@@ -20,6 +20,16 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Record dependency advisories separately from functional test results
+        run: |
+          mkdir -p "$RUNNER_TEMP/openoutliner-browser-results"
+          set +e
+          npm audit --json > "$RUNNER_TEMP/openoutliner-browser-results/npm-audit.json"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::npm audit reported advisories or could not complete; review npm-audit.json. Functional test success is not a security clearance."
+          fi
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:reliability
