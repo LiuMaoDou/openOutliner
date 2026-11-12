@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, fix/reliability-hardening-20261112]
+    branches: [main]
 permissions:
   contents: read
 concurrency:
@@ -17,33 +17,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '26'
+          node-version-file: .nvmrc
           cache: npm
-      - name: Record verification environment
-        run: |
-          node --version
-          npm --version
-          git rev-parse HEAD
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:reliability
       - run: npm run build
-      - name: Package review sources (temporary audit evidence)
-        if: always()
+      - name: Install isolated browser-test tools
         run: |
-          python3 - <<'PY'
-          import pathlib, zipfile
-          root = pathlib.Path('.')
-          roots = ['src', 'tests', 'build', 'deploy']
-          paths = [p for name in roots for p in (root / name).rglob('*') if p.is_file() and p.suffix in {'.ts', '.tsx', '.css', '.json', '.md', '.mjs', '.py', '.png'}]
-          paths += [root / name for name in ['package.json', 'package-lock.json', 'tsconfig.node.json', 'tsconfig.web.json', 'vite.config.ts', 'index.html', 'Dockerfile', 'README.md', 'AGENTS.md', '.gitignore', '.dockerignore', 'compose.yaml', 'public/manifest.webmanifest']]
-          with zipfile.ZipFile('/tmp/openoutliner-review-source.zip', 'w', zipfile.ZIP_DEFLATED) as output:
-              for path in paths:
-                  if path.is_file(): output.write(path, path.as_posix())
-          PY
+          python3 -m venv "$RUNNER_TEMP/browser-venv"
+          "$RUNNER_TEMP/browser-venv/bin/pip" install playwright==1.57.0
+          "$RUNNER_TEMP/browser-venv/bin/python" -m playwright install --with-deps chromium
+      - name: Run the real app against a disposable database
+        env:
+          OO_BROWSER_ARTIFACTS: ${{ runner.temp }}/openoutliner-browser-results
+        run: '"$RUNNER_TEMP/browser-venv/bin/python" tests/browser_smoke.py'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: review-source
-          path: /tmp/openoutliner-review-source.zip
-          retention-days: 1
+          name: browser-results
+          path: ${{ runner.temp }}/openoutliner-browser-results
+          if-no-files-found: ignore
+          retention-days: 7
