@@ -39,10 +39,14 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/browser-venv"
           "$RUNNER_TEMP/browser-venv/bin/pip" install playwright==1.57.0
           "$RUNNER_TEMP/browser-venv/bin/python" -m playwright install --with-deps chromium
-      - name: Run the real app against a disposable database
+      - name: Preserve accepted editing and selection behavior
         env:
           OO_BROWSER_ARTIFACTS: ${{ runner.temp }}/openoutliner-browser-results
         run: '"$RUNNER_TEMP/browser-venv/bin/python" tests/browser_smoke.py'
+      - name: Check rollback, source mapping, clipboard, recovery and updates in the real app
+        env:
+          OO_BROWSER_ARTIFACTS: ${{ runner.temp }}/openoutliner-browser-results
+        run: '"$RUNNER_TEMP/browser-venv/bin/python" tests/browser_remaining.py'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
