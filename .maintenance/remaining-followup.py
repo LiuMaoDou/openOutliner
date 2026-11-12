@@ -1,4 +1,5 @@
 from pathlib import Path
+import runpy
 
 def replace(path, old, new):
     file = Path(path)
@@ -33,6 +34,8 @@ replace('tests/browser_remaining.py', '''                            finally:
                                 (ARTIFACTS/f'remaining-{theme}-debug.json').write_text(json.dumps(page.evaluate("""() => ({
                                   events:window.__pointerLog, active:document.activeElement?.outerHTML,
                                   selected:[...document.querySelectorAll('.nodeRow[data-selected="true"]')].map(n=>n.dataset.nodeId),
+                                  errorBar:document.querySelector('.errorBar')?.textContent,
+                                  held:window.__held, injected:window.__injectedFailure?.message,
                                   alerts:[...document.querySelectorAll('[role="alert"]')].map(n=>n.textContent)
                                 })"""),ensure_ascii=False))
                                 raise
@@ -42,4 +45,5 @@ replace('tests/browser_remaining.py', '''                            finally:
 replace('src/web/App.tsx', '''                          onComplete={() => deleteNodeOptimistically(node, "complete")}
                           onDelete={() => deleteNodeOptimistically(node)}''', '''                          onComplete={() => deleteNodeOptimistically(node, "complete").catch(toError(setError))}
                           onDelete={() => deleteNodeOptimistically(node).catch(toError(setError))}''')
-print('Applied reviewed follow-up: prevent native text drag takeover, surface operation errors, retain diagnostics.')
+runpy.run_path('.maintenance/remaining-failure-fixture.py')
+print('Applied native-drag and rejection handling repairs, with real IndexedDB failure regression coverage.')
