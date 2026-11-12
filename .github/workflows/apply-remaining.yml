@@ -43,6 +43,7 @@ jobs:
           for item in manifest['paths']:
               if hashlib.sha256((root / item['path']).read_bytes()).hexdigest() != item['after']:
                   raise ValueError('Output differs: ' + item['path'])
+          subprocess.run(['python3', '.maintenance/remaining-followup.py'], check=True)
           pathlib.Path('/tmp/remaining-source-paths.json').write_text(json.dumps(paths))
           print('Applied and verified', len(paths), 'source/test paths. No production data accessed.')
           PY
