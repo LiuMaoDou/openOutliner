@@ -39,7 +39,7 @@ npm run dev
 - Web app: `http://127.0.0.1:5173`
 - API server: `http://127.0.0.1:4317`
 - Default database: `./data/openoutliner.sqlite`
-- Required Node version: `>=25.0.0`
+- Required Node version: `>=26.0.0`; use Node 26 LTS (`nvm use`).
 
 Development mode does not register the offline Service Worker. To test offline reopening, use a production build:
 
@@ -131,6 +131,7 @@ See [Android setup, build instructions, and limitations](android/README.md).
 ```bash
 npm run typecheck
 npm test
+npm run test:reliability
 npm run build
 ```
 

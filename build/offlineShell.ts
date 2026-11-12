@@ -44,6 +44,23 @@ self.addEventListener("activate", event => {
   })());
 });
 self.addEventListener("message", event => {
+  if (event.data?.type === "ACTIVATE_UPDATE") {
+    event.waitUntil((async () => {
+      const reply = value => event.ports?.[0]?.postMessage(value);
+      try {
+        const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        const scope = self.registration.scope;
+        const windows = clients.filter(client => client.url.startsWith(scope));
+        if (!event.source?.id || windows.length !== 1 || windows[0].id !== event.source.id) {
+          reply({ ok: false, error: "请关闭此网站的其他标签页或独立窗口后再更新；本机数据未清除。" });
+          return;
+        }
+        await self.skipWaiting();
+        reply({ ok: true });
+      } catch { reply({ ok: false, error: "无法确认其他窗口的状态，更新已取消。" }); }
+    })());
+    return;
+  }
   if (event.data?.type !== "CACHE_VISITED_ASSETS" || !Array.isArray(event.data.urls)) return;
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);

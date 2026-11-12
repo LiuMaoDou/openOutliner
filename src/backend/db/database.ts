@@ -19,6 +19,11 @@ export function openDatabase(dbPath = getDefaultDbPath()): OpenOutlinerDb {
   if (dbPath !== ":memory:") {
     db.exec("PRAGMA journal_mode = WAL;");
   }
-  migrate(db);
-  return db;
+  try {
+    migrate(db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }

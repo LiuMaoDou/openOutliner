@@ -1,3 +1,5 @@
+import { observeAppUpdates } from "./appUpdates";
+import { AppUpdateProgress } from "./AppUpdatePanel";
 import { initializeOffline, getSyncStatus, subscribeSync } from "./offline";
 import { SyncPanel } from "./SyncPanel";
 import React from "react";
@@ -45,6 +47,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
       <ThemeProvider>
         <OfflineApp />
         <PrivacyScreen />
+        <AppUpdateProgress />
       </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>
@@ -59,6 +62,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("/sw.js").then(async () => {
       const registration = await navigator.serviceWorker.ready;
+      observeAppUpdates(registration);
       const cacheVisitedAssets = () => registration.active?.postMessage({
         type: "CACHE_VISITED_ASSETS",
         urls: performance.getEntriesByType("resource").map(entry => entry.name)

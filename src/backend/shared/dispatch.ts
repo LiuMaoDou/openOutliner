@@ -1,6 +1,7 @@
 import { exportMarkdown, importMarkdown } from "../importExport/markdown.js";
 import { exportOpml, importOpml } from "../importExport/opml.js";
 import { NotFoundError, OutlinerService, ValidationError } from "../services/outliner.js";
+import { InvalidWorkspacePatch, patchWorkspace } from "./workspacePatch.js";
 
 // The same routes run against native SQLite and the browser database.
 export function dispatch(service: OutlinerService, method: string, address: string, input: any = {}): any {
@@ -79,18 +80,12 @@ export function dispatch(service: OutlinerService, method: string, address: stri
 
   const workspaceMatch = path.match(/^\/api\/workspaces\/([^/]+)$/);
   if (method === "PATCH" && workspaceMatch) {
-    const body = input;
-    if (body.folderId !== undefined || body.parentWorkspaceId !== undefined || body.position !== undefined) {
-      const current = service.getWorkspace(workspaceMatch[1]);
-      const moved = service.moveWorkspace(
-        workspaceMatch[1],
-        body.folderId !== undefined ? body.folderId : current.folderId,
-        body.position ?? Number.MAX_SAFE_INTEGER,
-        body.parentWorkspaceId !== undefined ? body.parentWorkspaceId : current.parentWorkspaceId
-      );
-      return body.name !== undefined ? service.updateWorkspace(moved.id, { name: body.name }) : moved;
+    try {
+      return patchWorkspace(service, workspaceMatch[1], input);
+    } catch (error) {
+      if (error instanceof InvalidWorkspacePatch) throw new ValidationError(error.message);
+      throw error;
     }
-    return service.updateWorkspace(workspaceMatch[1], body);
   }
   if (method === "DELETE" && workspaceMatch) {
     return service.deleteWorkspace(workspaceMatch[1]);

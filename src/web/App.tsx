@@ -1,3 +1,4 @@
+import { registerUpdateBarrier } from "./appUpdates";
 import {
   Bold,
   Check,
@@ -70,6 +71,9 @@ import {
   type WorkspaceFolder
 } from "./api";
 import { useTheme, type Theme } from "./theme";
+import { rollbackTreeMutation } from "./optimisticRollback";
+import { clearTitleNativeSelection, shouldCopyNodes } from "./selectionOwnership";
+import { rehypeTitleFormatting, sourceOffsetForText } from "./titleSourceMap";
 import { getDueReminderCutoff, getDueReminderNodes } from "./dueTasks";
 import { Calendar } from "./Calendar";
 import { SyncPanel } from "./SyncPanel";
@@ -334,7 +338,7 @@ const markdownSanitizeSchema = {
   tagNames: [...(defaultSchema.tagNames ?? []), "mark", "span"],
   attributes: {
     ...defaultSchema.attributes,
-    span: [...(defaultSchema.attributes?.span ?? []), ["className", ...markdownTextColorClassNames]]
+    span: [...(defaultSchema.attributes?.span ?? []), ["className", ...markdownTextColorClassNames], ["dataSourceOffsets", /^[0-9,]+$/]]
   }
 };
 
@@ -396,6 +400,8 @@ export function App() {
   const workspaceIdRef = useRef("");
   const pendingWorkspaceFocusIdRef = useRef("");
   const treeRequestRef = useRef(0);
+  const pendingTreeMutationsRef = useRef(0);
+  const selectionRevisionRef = useRef(0);
   const tagsRequestRef = useRef(0);
   const tagResultsRequestRef = useRef(0);
   const systemTagGroupsRequestRef = useRef(0);
@@ -481,6 +487,16 @@ export function App() {
 
   useEffect(() => () => panelResizeCleanupRef.current?.(), []);
 
+  useEffect(() => registerUpdateBarrier(async () => {
+    const started = Date.now();
+    do {
+      await Promise.resolve();
+      if (!pendingTreeMutationsRef.current && !pendingNodeCreateCountRef.current && !nodePatchQueuesRef.current.size) return;
+      if (Date.now() - started > 10000) throw new Error("仍有大纲操作正在保存，请操作完成后重试更新。");
+      await new Promise(resolve => window.setTimeout(resolve, 50));
+    } while (true);
+  }), []);
+
   useEffect(() => {
     const media = window.matchMedia("(max-width: 760px)");
     const update = () => setCompactLayout(media.matches);
@@ -548,12 +564,18 @@ export function App() {
   };
 
   const setNodeSelection = useCallback((ids: Iterable<string>, primaryId: string, anchorId = primaryId) => {
+    selectionRevisionRef.current += 1;
     const next = new Set(ids);
     if (primaryId) next.add(primaryId);
     selectedNodeIdsRef.current = next;
     selectedIdRef.current = primaryId;
     selectionAnchorIdRef.current = anchorId;
     multiSelectionKeyboardActiveRef.current = next.size > 1;
+    const editor = document.activeElement;
+    if (next.size > 1 && editor instanceof HTMLTextAreaElement && editor.matches(".nodeTitle")) {
+      clearTitleNativeSelection(editor);
+      editor.blur();
+    }
     setSelectedNodeIds(next);
     setSelectedId(primaryId);
   }, []);
@@ -585,6 +607,7 @@ export function App() {
 
   const loadTree = useCallback(async (id: string, options: LoadTreeOptions = {}) => {
     const requestId = ++treeRequestRef.current;
+    const initialState = flatStateRef.current;
     if (!id || id === SYSTEM_CALENDAR_WORKSPACE_ID || id === SYSTEM_TAGS_WORKSPACE_ID || id === SYSTEM_RECYCLE_BIN_WORKSPACE_ID) {
       setFlatState(null);
       setVisibleIds([]);
@@ -599,6 +622,11 @@ export function App() {
       throw error;
     }
     if (requestId !== treeRequestRef.current || id !== workspaceIdRef.current) return;
+    if (options.preserveSelection && (initialState !== flatStateRef.current ||
+      pendingTreeMutationsRef.current > 0 || pendingNodeCreateCountRef.current > 0)) {
+      window.setTimeout(() => window.dispatchEvent(new Event("outliner-sync")), 100);
+      return;
+    }
     const loaded = fromNestedTree(next);
     const pendingReveal = pendingNodeRevealRef.current;
     const revealed = pendingReveal?.workspaceId === id
@@ -725,6 +753,10 @@ export function App() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
       if (!pending) return;
+      if (pendingTreeMutationsRef.current > 0 || pendingNodeCreateCountRef.current > 0 || nodePatchQueuesRef.current.size > 0) {
+        clearTimeout(timer); timer = setTimeout(refresh, 100);
+        return;
+      }
       const active = document.activeElement;
       if (active instanceof HTMLElement && (active.isContentEditable || active.matches("input, textarea"))) return;
       pending = false;
@@ -1103,7 +1135,12 @@ export function App() {
 
   const focusNode = (id: string) => {
     setSingleSelectedId(id);
-    window.setTimeout(() => focusTitleInput(inputRefs.current.get(id)), 30);
+    const workspace = workspaceIdRef.current, request = treeRequestRef.current;
+    window.setTimeout(() => {
+      if (workspace === workspaceIdRef.current && request === treeRequestRef.current && selectedIdRef.current === id) {
+        focusTitleInput(inputRefs.current.get(id));
+      }
+    }, 30);
   };
 
   const selectNode = (id: string) => {
@@ -1115,8 +1152,9 @@ export function App() {
     const scrollTop = element?.scrollTop;
     if (!element || scrollTop === undefined) return () => {};
 
+    const workspace = workspaceIdRef.current, request = treeRequestRef.current;
     const restore = () => {
-      element.scrollTop = scrollTop;
+      if (workspace === workspaceIdRef.current && request === treeRequestRef.current) element.scrollTop = scrollTop;
     };
     window.requestAnimationFrame(restore);
     window.setTimeout(restore, 0);
@@ -1330,6 +1368,19 @@ export function App() {
     }
   };
 
+  const recoverTreeMutation = (before: FlatTreeState, optimistic: FlatTreeState, workspace: string, request: number) => {
+    const sameView = workspace === workspaceIdRef.current && request === treeRequestRef.current;
+    const restored = sameView ? rollbackTreeMutation(before, optimistic, flatStateRef.current) : null;
+    if (restored) {
+      flatStateRef.current = restored;
+      setFlatState(restored);
+      setVisibleIds(computeVisibleIds(restored));
+    }
+    // The sync refresh waits for other writes and active editors, preserving their drafts.
+    window.dispatchEvent(new Event("outliner-sync"));
+    return Boolean(restored);
+  };
+
   const deleteNodeOptimistically = async (node: FlatNodeData, action: PendingDelete["action"] = "delete") => {
     const before = flatStateRef.current;
     if (!before || node.id === before.rootId) return;
@@ -1344,7 +1395,8 @@ export function App() {
       return;
     }
 
-    const currentWorkspaceId = workspaceId;
+    const currentWorkspaceId = workspaceIdRef.current;
+    const request = treeRequestRef.current;
     const selectionBefore = new Set(selectedNodeIdsRef.current);
     const primaryBefore = selectedIdRef.current;
     const anchorBefore = selectionAnchorIdRef.current;
@@ -1369,8 +1421,11 @@ export function App() {
       return;
     }
 
+    const selectionAfter = selectionRevisionRef.current;
+    pendingTreeMutationsRef.current += 1;
     try {
       await apiPost("/api/nodes/delete-batch", { ids: deletingIds });
+      if (workspaceIdRef.current !== currentWorkspaceId || treeRequestRef.current !== request) return;
       loadOutlineHistory(currentWorkspaceId).catch(toError(setError));
       setPendingDelete({
         selectedIds,
@@ -1383,12 +1438,11 @@ export function App() {
         action
       });
     } catch (error) {
-      setFlatState(before);
-      setVisibleIds(computeVisibleIds(before));
-      flatStateRef.current = before;
-      setNodeSelection(selectionBefore, primaryBefore, anchorBefore);
-      window.setTimeout(() => focusTitleInput(inputRefs.current.get(primaryBefore)), 30);
+      const restored = recoverTreeMutation(before, newState, currentWorkspaceId, request);
+      if (restored && selectionAfter === selectionRevisionRef.current) setNodeSelection(selectionBefore, primaryBefore, anchorBefore);
       throw error;
+    } finally {
+      pendingTreeMutationsRef.current -= 1;
     }
   };
   deleteSelectionRef.current = deleteNodeOptimistically;
@@ -1405,11 +1459,11 @@ export function App() {
     const handleCopy = (event: ClipboardEvent) => {
       const state = flatStateRef.current;
       const target = event.target;
-      if (!state || !event.clipboardData || event.defaultPrevented ||
-        selectedNodeIdsRef.current.size < 2 || !multiSelectionKeyboardActiveRef.current ||
-        (isEditableElement(target) && !isOutlineEditableElement(target)) ||
-        ((target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) &&
-          target.selectionStart !== target.selectionEnd) || window.getSelection()?.toString()) return;
+      if (!state || !event.clipboardData || !shouldCopyNodes(
+        selectedNodeIdsRef.current.size, multiSelectionKeyboardActiveRef.current,
+        isEditableElement(document.activeElement) || (isEditableElement(target) && !isOutlineEditableElement(target)),
+        event.defaultPrevented
+      )) return;
       event.clipboardData.setData("text/plain", selectedNodeText(state, selectedNodeIdsRef.current));
       event.preventDefault();
       showCopyNotice();
@@ -1464,7 +1518,7 @@ export function App() {
         }
       }
     } catch (error) {
-      focusNode(pending.focusAfterDeleteId);
+      if (pending.workspaceId === workspaceIdRef.current) focusNode(pending.focusAfterDeleteId);
       throw error;
     }
   };
@@ -1478,6 +1532,7 @@ export function App() {
     if (!before || source.id === parentId) return;
     const currentSource = getNode(before, source.id);
     if (!currentSource) return;
+    const currentWorkspaceId = workspaceIdRef.current, request = treeRequestRef.current;
     const nextPosition =
       currentSource.parentId === parentId && currentSource.position < position ? position - 1 : position;
     if (currentSource.parentId === parentId && currentSource.position === nextPosition) return;
@@ -1490,19 +1545,18 @@ export function App() {
     restoreScroll();
     if (currentSource.id.startsWith("temp-") || parentId.startsWith("temp-")) return;
 
+    pendingTreeMutationsRef.current += 1;
     try {
       await apiPost(`/api/nodes/${currentSource.id}/move`, { parentId, position: nextPosition });
-      loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
+      if (currentWorkspaceId === workspaceIdRef.current && request === treeRequestRef.current) {
+        loadOutlineHistory(currentWorkspaceId).catch(toError(setError));
+      }
     } catch (error) {
-      setFlatState(before);
-      setVisibleIds(computeVisibleIds(before));
-      flatStateRef.current = before;
-      focusNode(currentSource.id);
+      recoverTreeMutation(before, newState, currentWorkspaceId, request);
       throw error;
     } finally {
-      window.setTimeout(() => {
-        restoreScroll();
-      }, 80);
+      pendingTreeMutationsRef.current -= 1;
+      window.setTimeout(restoreScroll, 80);
     }
   };
 
@@ -1834,6 +1888,7 @@ export function App() {
       movingIds.some(id => id === currentTarget.id || isDescendant(before, id, currentTarget.id))
     ) return;
 
+    const currentWorkspaceId = workspaceIdRef.current, request = treeRequestRef.current;
     const containsTempNode = movingIds.some(id => id.startsWith("temp-"));
     let parentId: string;
     let position: number;
@@ -1867,6 +1922,8 @@ export function App() {
     restoreScroll();
 
     if (containsTempNode || parentId.startsWith("temp-")) return;
+    const selectionAfter = selectionRevisionRef.current;
+    pendingTreeMutationsRef.current += 1;
     try {
       await apiPost("/api/nodes/move-batch", {
         ids: movingIds,
@@ -1874,15 +1931,16 @@ export function App() {
         position,
         expandParent: placement === "inside" && currentTarget.collapsed
       });
-      loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
-      restoreScroll();
+      if (currentWorkspaceId === workspaceIdRef.current && request === treeRequestRef.current) {
+        loadOutlineHistory(currentWorkspaceId).catch(toError(setError));
+        restoreScroll();
+      }
     } catch (error) {
-      setFlatState(before);
-      setVisibleIds(computeVisibleIds(before));
-      flatStateRef.current = before;
-      setNodeSelection(selectionBefore, primaryBefore, anchorBefore);
+      const restored = recoverTreeMutation(before, newState, currentWorkspaceId, request);
+      if (restored && selectionAfter === selectionRevisionRef.current) setNodeSelection(selectionBefore, primaryBefore, anchorBefore);
       throw error;
     } finally {
+      pendingTreeMutationsRef.current -= 1;
       window.setTimeout(restoreScroll, 80);
     }
   };
@@ -3027,8 +3085,8 @@ export function App() {
                             await navigator.clipboard.writeText(selectedNodeText(state, ids));
                             showCopyNotice();
                           }}
-                          onComplete={() => deleteNodeOptimistically(node, "complete")}
-                          onDelete={() => deleteNodeOptimistically(node)}
+                          onComplete={() => deleteNodeOptimistically(node, "complete").catch(toError(setError))}
+                          onDelete={() => deleteNodeOptimistically(node).catch(toError(setError))}
                         />
                       </div>
                     );
@@ -3584,6 +3642,7 @@ function NodeRow({
         mode = "nodes";
         suppressTitleClickRef.current = true;
         setMarkdownMenu(null);
+        clearTitleNativeSelection(input);
         if (document.activeElement === input) input.blur();
       }
       if (mode === "nodes") {
@@ -3735,6 +3794,11 @@ function NodeRow({
             registerInput(element);
           }}
           className="nodeTitle"
+          onDragStart={event => {
+            // A title gesture selects characters or rows. Native dragging of an
+            // existing text selection would cancel the pointer controller.
+            event.preventDefault();
+          }}
           {...inlineTags.inputProps}
           value={localTitle}
           placeholder="Untitled"
@@ -3898,7 +3962,7 @@ function NodeRow({
             ) : (
               <ReactMarkdown
                 allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark", "span"]}
-                rehypePlugins={[rehypeInlineFormatting, [rehypeSanitize, markdownSanitizeSchema]]}
+                rehypePlugins={[rehypeTitleFormatting, [rehypeSanitize, markdownSanitizeSchema]]}
                 remarkPlugins={[remarkGfm, remarkLiteralHtml]}
                 unwrapDisallowed
                 components={{
@@ -4741,14 +4805,6 @@ export function splitMarkdownTextColors(value: string) {
   return parts.length > 0 ? parts : [{ value, color: null }];
 }
 
-interface HastNode {
-  type: string;
-  value?: string;
-  tagName?: string;
-  properties?: Record<string, unknown>;
-  children?: HastNode[];
-}
-
 interface MarkdownNode {
   type: string;
   value?: string;
@@ -4767,78 +4823,6 @@ export function remarkLiteralHtml() {
 
 export function isMarkdownThematicBreak(value: string) {
   return /^[ ]{0,3}(?:(?:\*[\t ]*){3,}|(?:-[\t ]*){3,}|(?:_[\t ]*){3,})$/.test(value);
-}
-
-function toMarkdownInlineNodes(value: string): HastNode[] {
-  const nodes: HastNode[] = [];
-  let cursor = 0;
-
-  while (cursor < value.length) {
-    const colorPattern = /\{\{color:(red|orange|yellow|green|blue|purple|gray)\}\}/g;
-    colorPattern.lastIndex = cursor;
-    let colorMatch = colorPattern.exec(value);
-    while (colorMatch && value.indexOf("{{/color}}", colorMatch.index + colorMatch[0].length) < 0) {
-      colorMatch = colorPattern.exec(value);
-    }
-
-    const highlightStart = value.indexOf("==", cursor);
-    const highlightEnd = highlightStart >= 0 ? value.indexOf("==", highlightStart + 2) : -1;
-    const colorStart = colorMatch?.index ?? -1;
-    const nextColorStart = colorStart >= 0 ? colorStart : Number.POSITIVE_INFINITY;
-    const nextHighlightStart = highlightEnd >= 0 ? highlightStart : Number.POSITIVE_INFINITY;
-    const nextStart = Math.min(nextColorStart, nextHighlightStart);
-
-    if (!Number.isFinite(nextStart)) {
-      nodes.push({ type: "text", value: value.slice(cursor) });
-      break;
-    }
-    if (nextStart > cursor) nodes.push({ type: "text", value: value.slice(cursor, nextStart) });
-
-    if (nextStart === nextColorStart && colorMatch) {
-      const contentStart = colorMatch.index + colorMatch[0].length;
-      const contentEnd = value.indexOf("{{/color}}", contentStart);
-      nodes.push({
-        type: "element",
-        tagName: "span",
-        properties: { className: [`markdownTextColor-${colorMatch[1]}`] },
-        children: toMarkdownInlineNodes(value.slice(contentStart, contentEnd))
-      });
-      cursor = contentEnd + "{{/color}}".length;
-      continue;
-    }
-
-    nodes.push({
-      type: "element",
-      tagName: "mark",
-      properties: {},
-      children: toMarkdownInlineNodes(value.slice(highlightStart + 2, highlightEnd))
-    });
-    cursor = highlightEnd + 2;
-  }
-
-  return nodes;
-}
-
-function rehypeInlineFormatting() {
-  return (tree: HastNode) => {
-    const visit = (node: HastNode) => {
-      if (!node.children || node.tagName === "code" || node.tagName === "pre") return;
-      const children: HastNode[] = [];
-      for (const child of node.children) {
-        if (
-          child.type === "text" &&
-          (child.value?.includes("==") || child.value?.includes("{{color:"))
-        ) {
-          children.push(...toMarkdownInlineNodes(child.value));
-        } else {
-          visit(child);
-          children.push(child);
-        }
-      }
-      node.children = children;
-    };
-    visit(tree);
-  };
 }
 
 export function clampPanelWidth(value: number, min: number, max: number): number {
@@ -5100,55 +5084,42 @@ function isTitleCaretAtEdge(input: HTMLTextAreaElement, measure: HTMLElement | n
 }
 
 function getPreviewSelectionStart(container: HTMLElement, clientX: number, clientY: number, title: string) {
-  const measuredOffset = getMeasuredTextOffset(container, clientX, clientY);
-  if (measuredOffset !== null) return Math.max(0, Math.min(measuredOffset, title.length));
-
-  const caret = getCaretFromPoint(container.ownerDocument, clientX, clientY);
-  if (!caret || !container.contains(caret.node)) return title.length;
-  const renderedOffset = getTextOffset(container, caret.node, caret.offset);
-  if (renderedOffset === null) return title.length;
-  return Math.max(0, Math.min(renderedOffset, title.length));
+  const native = getCaretFromPoint(container.ownerDocument, clientX, clientY);
+  const caret = native && container.contains(native.node) && native.node.nodeType === Node.TEXT_NODE
+    ? native : getMeasuredTextCaret(container, clientX, clientY);
+  if (!caret) return title.length;
+  const source = sourceOffsetForText(caret.node, caret.offset);
+  const offset = source ?? getTextOffset(container, caret.node, caret.offset) ?? title.length;
+  return Math.max(0, Math.min(offset, title.length));
 }
 
-function getMeasuredTextOffset(root: Node, clientX: number, clientY: number) {
+function getMeasuredTextCaret(root: Node, clientX: number, clientY: number) {
   const document = root.ownerDocument;
   if (!document) return null;
-
-  let renderedOffset = 0;
-  let bestOffset: number | null = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  const measure = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const textLength = node.textContent?.length ?? 0;
-      for (let index = 0; index < textLength; index += 1) {
-        const range = document.createRange();
-        range.setStart(node, index);
-        range.setEnd(node, index + 1);
-        const rect = range.getBoundingClientRect();
-        range.detach();
-        if (rect.width === 0 && rect.height === 0) continue;
-
-        const midpoint = rect.left + rect.width / 2;
-        const candidateOffset = clientX <= midpoint ? renderedOffset + index : renderedOffset + index + 1;
-        const verticalDistance = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
-        const horizontalDistance =
-          clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
-        const distance = verticalDistance * 1000 + horizontalDistance;
+  let best: { node: Node; offset: number } | null = null;
+  let bestDistance = Infinity;
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  const range = document.createRange();
+  while ((node = walk.nextNode())) {
+    const value = node.textContent ?? "";
+    for (let index = 0; index < value.length;) {
+      const length = (value.codePointAt(index) ?? 0) > 0xffff ? 2 : 1;
+      range.setStart(node, index); range.setEnd(node, index + length);
+      const rect = range.getBoundingClientRect();
+      if (rect.width || rect.height) {
+        const vertical = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+        const horizontal = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
+        const distance = vertical * 1000 + horizontal;
         if (distance < bestDistance) {
           bestDistance = distance;
-          bestOffset = candidateOffset;
+          best = { node, offset: clientX <= rect.left + rect.width / 2 ? index : index + length };
         }
       }
-      renderedOffset += textLength;
-      return;
+      index += length;
     }
-
-    for (const child of Array.from(node.childNodes)) measure(child);
-  };
-
-  measure(root);
-  return bestOffset;
+  }
+  return best;
 }
 
 function getCaretFromPoint(document: Document, clientX: number, clientY: number) {

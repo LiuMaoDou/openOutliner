@@ -3928,3 +3928,10 @@ body.isSelectingNodes .nodeTitlePreview {
     padding-left: 40px;
   }
 }
+
+
+/* Version/recovery status is separate from outline selection styling. */
+.appUpdateDetails { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.appUpdateDetails small { display: block; overflow-wrap: anywhere; color: var(--muted-foreground); }
+.recoveryCapacity { font-size: 12px; color: var(--muted-foreground); }
+.appUpdateOverlay { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: var(--background); color: var(--foreground); padding: 24px; }

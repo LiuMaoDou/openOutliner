@@ -1,6 +1,30 @@
 import type { SqlDatabase } from "./sql.js";
 
-export function migrate(db: SqlDatabase): void {
+export const SCHEMA_VERSION = 1;
+
+/** Version zero is the historical, unversioned schema. Never downgrade a newer database. */
+export function migrate(db: SqlDatabase): boolean {
+  const version = Number(db.prepare("PRAGMA user_version").get()?.user_version ?? 0);
+  if (!Number.isSafeInteger(version) || version < 0 || version > SCHEMA_VERSION) {
+    throw new Error("Database schema is newer than this application. Update the app; do not clear local data.");
+  }
+  if (version === SCHEMA_VERSION) return false;
+  db.exec("SAVEPOINT upgrade_schema;");
+  try {
+    migrateUnversioned(db);
+    if (db.prepare("PRAGMA foreign_key_check").all().length) {
+      throw new Error("Schema upgrade found inconsistent references. Original data has been retained.");
+    }
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}; RELEASE upgrade_schema;`);
+    return true;
+  } catch (error) {
+    db.exec("ROLLBACK TO upgrade_schema; RELEASE upgrade_schema;");
+    throw error;
+  }
+}
+
+function migrateUnversioned(db: SqlDatabase): void {
+  const hadPosition = db.prepare("PRAGMA table_info(workspaces)").all().some(row => row.name === "position");
   db.exec(`
     CREATE TABLE IF NOT EXISTS workspace_folders (
       id TEXT PRIMARY KEY,
@@ -98,12 +122,14 @@ export function migrate(db: SqlDatabase): void {
   ensureColumn(db, "workspaces", "parent_workspace_id", "TEXT REFERENCES workspaces(id) ON DELETE SET NULL");
   ensureColumn(db, "workspaces", "position", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "nodes", "due_date", "TEXT");
-  normalizeWorkspacePositions(db);
+  ensureColumn(db, "nodes", "deleted_at", "TEXT");
+  // Existing positions are user data. Only assign positions to schemas that lacked them.
+  if (!hadPosition) normalizeWorkspacePositions(db);
 }
 
 function normalizeWorkspacePositions(db: SqlDatabase): void {
   const rows = db
-    .prepare("SELECT id, folder_id, parent_workspace_id FROM workspaces ORDER BY parent_workspace_id ASC, folder_id ASC, position ASC, created_at ASC")
+    .prepare("SELECT id, folder_id, parent_workspace_id FROM workspaces ORDER BY parent_workspace_id ASC, folder_id ASC, position ASC, created_at ASC, id ASC")
     .all() as Array<{ id: unknown; folder_id: unknown; parent_workspace_id: unknown }>;
   const positions = new Map<string, number>();
   const update = db.prepare("UPDATE workspaces SET position = ? WHERE id = ?");

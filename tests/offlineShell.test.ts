@@ -22,7 +22,7 @@ it("precaches the entry dependency graph and SQL runtime without every lazy icon
   expect(assets).not.toContain("/assets/main.js.map");
 });
 
-function workerHarness() {
+function workerHarness(clients = [{id:"one",url:"https://outline.test/"}]) {
   const handlers = new Map<string, (event: any) => void>();
   const entries = new Map<string, string>();
   const cachesByName = new Map<string, unknown>([["openoutliner-old-version", {}], ["unrelated-cache", {}]]);
@@ -36,7 +36,7 @@ function workerHarness() {
   const skipWaiting = vi.fn();
   runInContext(serviceWorkerSource("new-version", ["/", "/assets/main.js"], ["/", "/assets/main.js", "/assets/icon.js", "/assets/cjk.woff2"]), createContext({
     URL, Set, Promise, fetch,
-    self: { location: { origin: "https://outline.test" }, addEventListener: (name: string, handler: any) => handlers.set(name, handler), clients: { claim: vi.fn() }, skipWaiting },
+    self: { location: { origin: "https://outline.test" }, addEventListener: (name: string, handler: any) => handlers.set(name, handler), clients: { claim: vi.fn(), matchAll: vi.fn(async () => clients) }, registration: { scope: "https://outline.test/" }, skipWaiting },
     caches: {
       open: async (name: string) => { cachesByName.set(name, cache); return cache; },
       keys: async () => [...cachesByName.keys()],
@@ -73,4 +73,24 @@ it("keeps visited lazy assets available offline and never handles API traffic", 
   expect(await (await worker.dispatch("fetch", { request: new Request("https://outline.test/assets/icon.js") }))!.text()).toBe("downloaded");
   expect(await (await worker.dispatch("fetch", { request: new Request("https://outline.test/assets/cjk.woff2") }))!.text()).toBe("downloaded");
   expect(await worker.dispatch("fetch", { request: new Request("https://outline.test/api/sync") })).toBeUndefined();
+});
+
+
+it("never force-activates across another open client", async () => {
+  const worker = workerHarness([{id:"one",url:"https://outline.test/"},{id:"two",url:"https://outline.test/"}]);
+  const postMessage = vi.fn();
+  await worker.dispatch("message", { data:{type:"ACTIVATE_UPDATE"}, source:{id:"one"}, ports:[{postMessage}] });
+  expect(worker.skipWaiting).not.toHaveBeenCalled();
+  expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ok:false}));
+});
+it("allows explicit activation by the only remaining client", async () => {
+  const worker=workerHarness(), postMessage=vi.fn();
+  await worker.dispatch("message", {data:{type:"ACTIVATE_UPDATE"},source:{id:"one"},ports:[{postMessage}]});
+  expect(worker.skipWaiting).toHaveBeenCalledOnce();
+  expect(postMessage).toHaveBeenCalledWith({ok:true});
+});
+it("rejects activation messages without a verifiable requesting client", async () => {
+  const worker=workerHarness();
+  await worker.dispatch("message", {data:{type:"ACTIVATE_UPDATE"},ports:[{postMessage:vi.fn()}]});
+  expect(worker.skipWaiting).not.toHaveBeenCalled();
 });
