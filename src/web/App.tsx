@@ -971,6 +971,7 @@ export function App() {
     count: visibleItemCount,
     getScrollElement: getOutlineScrollElement,
     scrollMargin: listScrollMargin,
+    gap: isRecycleBinWorkspace ? 12 : 0,
     getItemKey: index =>
       isRecycleBinWorkspace
         ? filteredRecycleBinEntries[index]?.node.id ?? `recycle-bin-${index}`
