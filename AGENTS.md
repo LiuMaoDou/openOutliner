@@ -27,6 +27,12 @@ Vitest is the test runner. Add or update tests in `tests/` for service behavior,
 
 Recent history uses Conventional Commit style, for example `feat: add dark theme and node dragging` and `fix: make node moving reliable`. Keep commits focused and in English. Pull requests should include a short summary, validation commands run, linked issues when applicable, and screenshots or short recordings for UI changes.
 
+After completing and validating requested changes, commit them and push to GitHub's `main` branch automatically, without asking for separate push confirmation. Check the current remote state and integrate any necessary changes before pushing; do not force-push or overwrite others' work.
+
 ## Security & Configuration Tips
 
 Do not commit local databases, secrets, or generated runtime data from `data/`. Treat SQLite files as local state. Keep MCP and API changes local-first unless a change explicitly introduces remote access.
+
+## Release Policy
+
+Package and publish a release only when the user explicitly requests it. Routine code changes, commits, and pushes do not authorize release packaging, release tags, or GitHub Releases. Build commands used for development or validation may still run as needed.
