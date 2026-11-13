@@ -1638,6 +1638,13 @@ body.isResizingPanel .appShell {
   }
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .nodeRow .nodeMenuButton:not(:focus-visible) {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
 @media (hover: none) and (pointer: coarse) {
   .nodeRow .nodeMenuButton {
     opacity: 1;
