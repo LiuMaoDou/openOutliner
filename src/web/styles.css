@@ -645,7 +645,6 @@ body.isResizingPanel .appShell {
 
 .systemWorkspaceItem:hover {
   color: var(--foreground);
-  border-color: var(--border);
 }
 
 .systemWorkspaceItem.active {
@@ -717,7 +716,6 @@ body.isResizingPanel .appShell {
 
 .workspaceLabel button:hover {
   color: var(--foreground);
-  border-color: var(--border);
 }
 
 .workspaceItem {
@@ -879,7 +877,6 @@ body.isResizingPanel .appShell {
 .workspaceDisclosure:not(:disabled):hover,
 .workspaceAddChildButton:hover {
   color: var(--foreground);
-  border-color: var(--border);
 }
 
 .workspaceAddChildButton {
@@ -947,7 +944,6 @@ body.isResizingPanel .appShell {
 
 .workspaceFolderHeader button:hover {
   color: var(--foreground);
-  border-color: var(--border);
 }
 
 .workspaceFolderEmpty {
@@ -981,7 +977,6 @@ body.isResizingPanel .appShell {
 
 .workspaceDeleteButton:hover {
   color: var(--destructive);
-  border-color: var(--border);
 }
 
 .mainPane {
