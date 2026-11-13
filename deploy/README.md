@@ -13,9 +13,26 @@ OPENOUTLINER_PASSWORD=替换为足够长的随机密码
 
 运行 `docker compose up -d --build`，访问 `https://你的域名`，输入密码。Caddy 自动申请 HTTPS 证书。应用端口不直接公开；SQLite 使用命名卷持久保存。第一次部署前如需迁移旧数据，请停止旧应用后复制数据库，或在网页中导入原有 OPML。
 
-不使用 Docker 时：Node >=25，运行 `npm ci && npm run build`，设置 `OPENOUTLINER_HOST=0.0.0.0`、`OPENOUTLINER_PASSWORD`、`OPENOUTLINER_DB` 和 `NODE_ENV=production`，再运行 `npm start`。必须在前面配置同域 HTTPS 反向代理。
+不使用 Docker 时：Node >=26，运行 `npm ci && npm run build`，设置 `OPENOUTLINER_HOST=0.0.0.0`、`OPENOUTLINER_PASSWORD`、`OPENOUTLINER_DB` 和 `NODE_ENV=production`，再运行 `npm start`。必须在前面配置同域 HTTPS 反向代理。
 
 生产模式的登录 Cookie 仅通过 HTTPS 发送，30 天过期，密码改变后旧会话失效。浏览器已下载的数据仍可离线读取；请只在自己的设备使用。默认只监听本机且未设密码的开发服务保持免登录。
+
+## 微信到期提醒（虾推啥）
+
+在服务器项目根目录的 `.env` 中增加：
+
+```dotenv
+XTUIS_TOKEN=替换为你的虾推啥Token
+```
+
+Token 可在[虾推啥官网](https://xtuis.cn/)按说明关注公众号后获取，仅保存在服务端。Compose 会将它传给应用；修改后运行 `docker compose up -d --build`。直接运行 Node 时，将 `XTUIS_TOKEN` 设置为进程环境变量后重启，或在已构建的项目目录运行 `node --env-file=.env dist/backend/server/index.js`。`npm start` 本身不会读取 `.env`。未配置或留空时不启用微信推送。
+
+- 固定按北京时间（`Asia/Shanghai`）每天上午 9 点推送，不受服务器操作系统时区影响。服务每分钟检查一次，在 9 点后的首个检查发送。
+- 将所有工作区里截止日期在“当天 + 2 天”以内、尚未完成且未删除的任务汇总为一条微信。包含已逾期任务；没有截止日期的任务和工作区根节点不参与。
+- 例如 11 月 15 日到期的任务，从 11 月 13 日起每天提醒，逾期后继续；标记完成、删除、取消截止日期或将截止日期推迟到提醒范围之外后停止。离线完成操作需同步到服务器后生效。
+- 调度在 API 服务进程内运行，关闭网页不影响推送；服务器需保持运行并可访问 `wx.xtuis.cn`。当天 9 点后启动会补发当天尚未成功发送的提醒，不补发往日提醒。当天没有符合条件的任务就不发消息。
+- 成功发送后将当天记录保存在服务器 SQLite 的 `wechat_reminder_deliveries` 表中，重启和浏览器同步不会清除该记录。每天最多成功发送一条汇总，当天发送后新增或改期的任务在次日重新检查。消息过长时附省略数量，完整任务在应用内查看。
+- 失败后下次检查会重试；第三方已接收但响应丢失等结果不确定的情况仍可能重复。记录表只在服务端使用，不属于笔记同步、撤销或浏览器恢复备份；服务器备份请保留整个数据库。
 
 ## 离线与同步
 

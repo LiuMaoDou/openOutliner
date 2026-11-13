@@ -7,6 +7,7 @@ OpenOutliner is a local-first outliner for notes, tasks, and schedules, inspired
 - Calendar month and schedule views for dated outlines across workspaces, with workspace filtering, search, and links back to the original nodes.
 - Chinese lunar dates, public holidays, and adjusted working days from cached calendar feeds.
 - Global in-app reminders for unfinished items due tomorrow or earlier, including overdue tasks across workspaces.
+- Optional daily WeChat notifications through Xtuis at 09:00 Beijing time, starting two days before a task is due and continuing until completion.
 - Browser-local SQLite persisted in IndexedDB, offline editing, and optional authenticated self-hosted synchronization across devices.
 - Conflict handling, preserved editing drafts, and downloadable/restorable JSON recovery backups.
 - Android WebView client with theme-aware indent/outdent controls and system file import.
@@ -102,6 +103,7 @@ Open `http://127.0.0.1:4317` while online first and let the app finish caching. 
 - Switch between **Month** and **Schedule**, filter by workspace, or search scheduled titles, notes, and workspace names.
 - Click a scheduled item to open its source outline. Completed items remain visible with a completed style.
 - The global reminders list gathers unfinished items due tomorrow or earlier across workspaces. These are in-app reminders, not guaranteed background push notifications.
+- Optional WeChat reminders run on the backend independently of the browser. Set `XTUIS_TOKEN` on the server to enable one daily digest at 09:00 in `Asia/Shanghai`, including unfinished tasks due within two days and overdue tasks across all workspaces. Completed/deleted tasks and tasks without a due date are excluded. See [WeChat reminder configuration](deploy/README.md#微信到期提醒虾推啥).
 - Lunar dates, holidays, and make-up working days come from [ChinaCalendar](https://github.com/yangh9/ChinaCalendar) feeds. Existing cached data remains available if a feed cannot refresh; initial retrieval requires a network connection.
 
 ## Offline, Sync, And Backups

@@ -3,6 +3,7 @@ import { staticFile } from "./staticFiles.js";
 import { dispatch } from "../shared/dispatch.js";
 import { SyncService } from "../services/sync.js";
 import { SyncConflict } from "../shared/sync.js";
+import { startWeChatReminders } from "../services/wechatReminders.js";
 import { authorized, login } from "./auth.js";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
@@ -59,6 +60,8 @@ const server = createServer(async (req, res) => {
 server.listen(port, host, () => {
   const address = server.address();
   console.log(`OpenOutliner API listening on http://${host}:${typeof address === "object" && address ? address.port : port}`);
+  const stopReminders = startWeChatReminders(db, process.env.XTUIS_TOKEN);
+  server.once("close", stopReminders);
 });
 
 async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void> {

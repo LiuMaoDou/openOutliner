@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     environment:
       OPENOUTLINER_PASSWORD: ${OPENOUTLINER_PASSWORD:?Set a long private access password}
+      XTUIS_TOKEN: ${XTUIS_TOKEN:-}
     volumes:
       - outliner-data:/app/data
   proxy:
