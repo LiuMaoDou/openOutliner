@@ -409,6 +409,7 @@ export function App() {
   const outlineHistoryRequestRef = useRef(0);
   const dragTargetRef = useRef<NodeDragTarget | null>(null);
   const workspaceDragTargetRef = useRef<WorkspaceDragTarget | null>(null);
+  const suppressWorkspaceIconClickRef = useRef(false);
   const selectedIdRef = useRef("");
   const selectedNodeIdsRef = useRef(new Set<string>());
   const selectionAnchorIdRef = useRef("");
@@ -2135,8 +2136,9 @@ export function App() {
     }
   };
 
-  const startWorkspaceDrag = (workspace: Workspace, event: PointerEvent<HTMLSpanElement>) => {
-    if (sidebarCollapsed) return;
+  const startWorkspaceDrag = (workspace: Workspace, event: PointerEvent<HTMLButtonElement>) => {
+    suppressWorkspaceIconClickRef.current = false;
+    if (sidebarCollapsed || event.button !== 0) return;
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     workspaceDragTargetRef.current = null;
@@ -2203,7 +2205,7 @@ export function App() {
       setWorkspaceDragTarget(workspaceDragTargetRef.current);
     };
 
-    const end = () => {
+    const end = (pointerEvent: globalThis.PointerEvent) => {
       const target = workspaceDragTargetRef.current;
       workspaceDragTargetRef.current = null;
       setWorkspaceDragTarget(null);
@@ -2211,7 +2213,11 @@ export function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      if (isDragging && target) {
+      if (isDragging) {
+        suppressWorkspaceIconClickRef.current = true;
+        window.setTimeout(() => { suppressWorkspaceIconClickRef.current = false; }, 0);
+      }
+      if (isDragging && target && pointerEvent.type !== "pointercancel") {
         moveWorkspaceOptimistically(workspace, target.folderId, target.parentWorkspaceId, target.position).catch(toError(setError));
       }
     };
@@ -2370,33 +2376,34 @@ export function App() {
           style={{ "--workspace-depth": depth } as CSSProperties}
           onClick={() => selectWorkspace(workspace.id)}
         >
-          {!sidebarCompact && children.length > 0 && (
-            <button
-              className="workspaceDisclosure"
-              type="button"
-              disabled={children.length === 0}
-              title={isCollapsed ? "Expand workspace" : "Collapse workspace"}
-              aria-label={isCollapsed ? "Expand workspace" : "Collapse workspace"}
-              aria-expanded={children.length > 0 ? !isCollapsed : undefined}
-              onClick={event => {
-                event.stopPropagation();
-                if (children.length > 0) setCollapsedWorkspaceIds(current => nextCollapsedWorkspaceIds(current, workspace.id));
-              }}
-            >
-              {children.length > 0 && (isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
-            </button>
-          )}
-          <span
+          <button
             className="workspaceIcon workspaceDragHandle"
-            title={sidebarCompact ? workspace.name : "Drag workspace"}
+            type="button"
+            title={children.length > 0
+              ? `${isCollapsed ? "Expand" : "Collapse"} ${workspace.name}; drag to move`
+              : `${workspace.name}; drag to move`}
+            aria-label={children.length > 0
+              ? `${isCollapsed ? "Expand" : "Collapse"} ${workspace.name}`
+              : `Open ${workspace.name}`}
+            aria-expanded={children.length > 0 ? !isCollapsed : undefined}
             onPointerDown={event => startWorkspaceDrag(workspace, event)}
+            onClick={event => {
+              event.stopPropagation();
+              if (suppressWorkspaceIconClickRef.current) return;
+              if (children.length > 0) {
+                setCollapsedWorkspaceIds(current => nextCollapsedWorkspaceIds(current, workspace.id));
+                if (sidebarCompact) selectWorkspace(workspace.id);
+              } else {
+                selectWorkspace(workspace.id);
+              }
+            }}
           >
             <WorkspaceIcon
               name={workspace.icon}
               size={15}
               strokeWidth={2.2}
             />
-          </span>
+          </button>
           {!sidebarCompact && (
             <input
               value={workspace.name}

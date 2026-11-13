@@ -734,14 +734,8 @@ body.isResizingPanel .appShell {
   position: relative;
 }
 
-.workspaceItem.hasChildren {
-  grid-template-columns: 24px minmax(0, 1fr) 18px 22px 28px;
-  grid-template-areas: "icon title disclosure add delete";
-}
-
 .workspaceItem > .workspaceIcon { grid-area: icon; }
 .workspaceItem > input { grid-area: title; }
-.workspaceItem > .workspaceDisclosure { grid-area: disclosure; }
 .workspaceItem > .workspaceAddChildButton { grid-area: add; }
 .workspaceItem > .workspaceDeleteButton { grid-area: delete; }
 
@@ -820,6 +814,10 @@ body.isResizingPanel .appShell {
 }
 
 .workspaceDragHandle {
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
   cursor: grab;
   touch-action: none;
 }
@@ -853,7 +851,6 @@ body.isResizingPanel .appShell {
   padding-left: calc(8px + var(--workspace-depth, 0) * 16px);
 }
 
-.workspaceDisclosure,
 .workspaceAddChildButton {
   display: inline-flex;
   align-items: center;
@@ -865,16 +862,6 @@ body.isResizingPanel .appShell {
   border-radius: 6px;
 }
 
-.workspaceDisclosure {
-  width: 18px;
-  height: 22px;
-}
-
-.workspaceDisclosure:disabled {
-  cursor: default;
-}
-
-.workspaceDisclosure:not(:disabled):hover,
 .workspaceAddChildButton:hover {
   color: var(--foreground);
 }
