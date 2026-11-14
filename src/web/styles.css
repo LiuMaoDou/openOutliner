@@ -796,8 +796,8 @@ body.isResizingPanel .appShell {
   box-shadow: var(--shadow-sm);
 }
 
-/* The input sets its own weight, so emphasis must target the selected name. */
-.workspaceItem.active input {
+/* Parent workspaces are bold regardless of which workspace is active. */
+.workspaceItem.hasChildren > input {
   font-weight: 750;
 }
 

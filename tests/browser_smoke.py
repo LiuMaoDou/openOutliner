@@ -82,23 +82,32 @@ def run():
                                 page.evaluate("document.fonts.ready")
                                 assert page.title(), "Missing page title"
                                 assert page.locator("vite-error-overlay").count() == 0
-                                # Only the active workspace name gets a heavier weight.
+                                # Parent workspace names are bold; selecting a leaf alone changes no weight.
                                 weights = page.evaluate("""() => {
-                                  const active = document.querySelector('.workspaceItem.active > input');
-                                  if (!active) return null;
-                                  const inactive = active.parentElement.cloneNode(true);
-                                  inactive.classList.remove('active');
-                                  inactive.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
-                                  document.body.appendChild(inactive);
+                                  const source = document.querySelector('.workspaceItem.active > input');
+                                  if (!source) return null;
+                                  const original = source.parentElement;
+                                  const clone = original.cloneNode(true);
+                                  clone.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
+                                  document.body.appendChild(clone);
                                   try {
-                                    return {
-                                      active: getComputedStyle(active).fontWeight,
-                                      inactive: getComputedStyle(inactive.querySelector('input')).fontWeight
+                                    const weight = (isParent, isActive) => {
+                                      clone.classList.toggle('hasChildren', isParent);
+                                      clone.classList.toggle('active', isActive);
+                                      return getComputedStyle(clone.querySelector('input')).fontWeight;
                                     };
-                                  } finally { inactive.remove(); }
+                                    return {
+                                      parentActive: weight(true, true),
+                                      parentInactive: weight(true, false),
+                                      leafActive: weight(false, true),
+                                      leafInactive: weight(false, false)
+                                    };
+                                  } finally { clone.remove(); }
                                 }""")
-                                assert weights == {"active": "750", "inactive": "400"}, (
-                                    f"Workspace emphasis differs in {theme}: {weights}")
+                                assert weights == {
+                                    "parentActive": "750", "parentInactive": "750",
+                                    "leafActive": "400", "leafInactive": "400"
+                                }, f"Workspace parent/leaf weights differ in {theme}: {weights}"
                                 # Comments note height persists across selection changes and reloads.
                                 notes = page.locator('.notesAlert textarea.nodeNotes')
                                 if notes.count() == 0:
