@@ -181,6 +181,116 @@ def run():
                                 heading.hover()
                                 assert heading.evaluate("e=>getComputedStyle(e).backgroundColor") == 'rgba(0, 0, 0, 0)', (
                                     f"Content heading gained a hover background in {theme}")
+                                # Control order: title, count, date, (tags), delete.
+                                primary_row = page.locator(f'.nodeRow[data-node-id="{nodes[0]["id"]}"]')
+                                sibling_row = page.locator(f'.nodeRow[data-node-id="{nodes[1]["id"]}"]')
+                                controls = primary_row.evaluate("""row => [...row.children]
+                                  .map(element => {
+                                    if (element.matches('.nodeTitleCell')) return 'title';
+                                    if (element.matches('.nodeChildCount')) return 'count';
+                                    if (element.matches('.nodeDateControl')) return 'date';
+                                    if (element.matches('.iconButton.danger')) return 'delete';
+                                    return null;
+                                  }).filter(Boolean)""")
+                                assert controls == ["title", "count", "date", "delete"], controls
+                                preview = primary_row.locator('.nodeTitlePreview')
+                                title_editor = primary_row.locator('textarea.nodeTitle')
+                                base_color = preview.evaluate("e => getComputedStyle(e).color")
+                                calendar_color = {"light": "rgb(87, 116, 103)", "dark": "rgb(169, 199, 185)"}[theme]
+                                delete_color = {"light": "rgb(149, 94, 107)", "dark": "rgb(224, 173, 184)"}[theme]
+                                primary_row.locator('.nodeDateAddButton').hover()
+                                page.wait_for_function(
+                                    """({id, color}) => getComputedStyle(
+                                      document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
+                                    ).color === color""",
+                                    arg={"id": nodes[0]["id"], "color": calendar_color})
+                                assert preview.evaluate("e => getComputedStyle(e).color") == calendar_color
+                                assert title_editor.evaluate("e => getComputedStyle(e).color") == calendar_color
+                                assert sibling_row.locator('.nodeTitlePreview').evaluate(
+                                    "e => getComputedStyle(e).color") == base_color, "Another row's title changed"
+                                primary_row.locator('.iconButton.danger').hover()
+                                page.wait_for_function(
+                                    """({id, color}) => getComputedStyle(
+                                      document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
+                                    ).color === color""",
+                                    arg={"id": nodes[0]["id"], "color": delete_color})
+                                assert preview.evaluate("e => getComputedStyle(e).color") == delete_color
+                                assert title_editor.evaluate("e => getComputedStyle(e).color") == delete_color
+                                page.mouse.move(1350, 900)
+                                page.wait_for_function(
+                                    """({id, color}) => getComputedStyle(
+                                      document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
+                                    ).color === color""",
+                                    arg={"id": nodes[0]["id"], "color": base_color})
+                                assert preview.evaluate("e => getComputedStyle(e).color") == base_color
+
+                                # The Markdown toolbar must survive its own controls and close
+                                # on the initial outside pointerdown, even on a title preview
+                                # whose React handler stops event propagation.
+                                title_editor.focus()
+                                title_editor.press("Home")
+                                title_editor.press("Shift+ArrowRight")
+                                format_menu = page.get_by_role("dialog", name="Format selected text")
+                                format_menu.wait_for(state="visible")
+                                format_menu.get_by_role("button", name="Text color").click()
+                                format_menu.get_by_role("group", name="Text colors").wait_for(state="visible")
+                                format_menu.get_by_role("button", name="Text color").click()
+                                target_box = sibling_row.locator('.nodeTitlePreview').bounding_box()
+                                assert target_box
+                                page.mouse.move(target_box["x"] + 14, target_box["y"] + target_box["height"] / 2)
+                                page.mouse.down()
+                                assert page.locator('.markdownContextMenu').count() == 0, (
+                                    "Markdown toolbar did not dismiss on outside pointerdown")
+                                page.mouse.up()
+                                title_editor.focus()
+                                title_editor.press("Home")
+                                title_editor.press("Shift+ArrowRight")
+                                format_menu.wait_for(state="visible")
+                                page.evaluate("window.dispatchEvent(new Event('blur'))")
+                                format_menu.wait_for(state="detached")
+
+                                # Adding a child to a collapsed Workspace must reveal the new child.
+                                parent = page.locator(f'.workspaceItem[data-workspace-drop-id="{workspace["id"]}"]')
+                                children = page.locator(f'.workspaceItem[data-workspace-parent-id="{workspace["id"]}"]')
+                                add_child = parent.locator('button.workspaceAddChildButton')
+                                toggle = parent.locator('button.workspaceIcon')
+                                if children.count() == 0:
+                                    add_child.click()
+                                    page.wait_for_function(
+                                        """id => [...document.querySelectorAll('.workspaceItem')]
+                                          .some(item => item.dataset.workspaceParentId === id)""",
+                                        arg=workspace["id"])
+                                # Parent title is bold whether expanded or collapsed; a leaf stays regular.
+                                assert "hasChildren" in (parent.get_attribute("class") or "")
+                                assert parent.locator("input").evaluate(
+                                    "e => Number(getComputedStyle(e).fontWeight)") >= 600, "Parent workspace title is not bold"
+                                leaf_inputs = page.locator(
+                                    f'.workspaceItem[data-workspace-parent-id="{workspace["id"]}"]:not(.hasChildren) > input')
+                                assert leaf_inputs.count() > 0, "Missing leaf workspace for font-weight regression"
+                                assert leaf_inputs.first.evaluate(
+                                    "e => Number(getComputedStyle(e).fontWeight)") == 400, "Leaf workspace title should stay regular"
+                                if toggle.get_attribute("aria-expanded") == "false":
+                                    toggle.click()
+                                previous_child_count = children.count()
+                                toggle.click()
+                                page.wait_for_function(
+                                    """id => {
+                                      const item = [...document.querySelectorAll('.workspaceItem')]
+                                        .find(item => item.dataset.workspaceDropId === id);
+                                      return item?.querySelector('button.workspaceIcon')?.getAttribute('aria-expanded') === 'false';
+                                    }""",
+                                    arg=workspace["id"])
+                                assert children.count() == 0, "Collapsed workspace still shows children"
+                                add_child.click()
+                                page.wait_for_function(
+                                    """({id, count}) => {
+                                      const items = [...document.querySelectorAll('.workspaceItem')];
+                                      const parent = items.find(item => item.dataset.workspaceDropId === id);
+                                      return parent?.querySelector('button.workspaceIcon')?.getAttribute('aria-expanded') === 'true'
+                                        && items.filter(item => item.dataset.workspaceParentId === id).length === count;
+                                    }""",
+                                    arg={"id": workspace["id"], "count": previous_child_count + 1})
+                                parent.locator('input').click()
                                 # Force an old envelope, then verify actual app startup upgrades it atomically.
                                 page.route("**/api/sync", lambda route: route.abort())
                                 page.evaluate("""() => new Promise((resolve,reject)=>{
