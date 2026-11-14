@@ -1433,11 +1433,6 @@ body.isResizingPanel .appShell {
   outline: 0;
 }
 
-.workspaceTitleInput:hover {
-  background: var(--selected);
-  border-color: var(--selected-border);
-}
-
 .workspaceTitleInput:focus {
   background: transparent;
   border-color: var(--input);
@@ -2175,7 +2170,8 @@ body.isSelectingNodes .nodeTitlePreview {
   cursor: text;
 }
 
-/* Use the same muted text selection for workspace and outline titles. */
+/* Select only the text, with the same muted color in sidebar and content. */
+.workspaceItem input::selection,
 .workspaceTitleInput::selection,
 .nodeTitle::selection,
 .nodeTitlePreview::selection,

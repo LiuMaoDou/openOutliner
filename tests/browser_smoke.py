@@ -111,6 +111,30 @@ def run():
                                         assert selected_row.evaluate("e=>getComputedStyle(e).backgroundColor") == 'rgba(0, 0, 0, 0)'
                                 page.screenshot(path=str(ARTIFACTS / f"selection-{theme}.png"))
                                 assert not errors, errors
+                                # Sidebar workspace-name text selection matches content-title selection.
+                                selection_colors = page.evaluate("""() => {
+                                  const sidebar = document.querySelector('.workspaceItem.active > input');
+                                  const content = document.querySelector('.nodeRow .nodeTitle');
+                                  if (!sidebar || !content) return null;
+                                  sidebar.focus();
+                                  sidebar.select();
+                                  return {
+                                    selected: sidebar.selectionEnd - sidebar.selectionStart,
+                                    length: sidebar.value.length,
+                                    sidebar: getComputedStyle(sidebar, '::selection').backgroundColor,
+                                    content: getComputedStyle(content, '::selection').backgroundColor
+                                  };
+                                }""")
+                                assert selection_colors, "Active workspace name or outline title missing"
+                                assert selection_colors["length"] > 0
+                                assert selection_colors["selected"] == selection_colors["length"], "Workspace name was not selected"
+                                assert selection_colors["sidebar"] == selection_colors["content"], (
+                                    f"Sidebar and content text selection colors differ in {theme}: {selection_colors}")
+                                # Hovering the content-area workspace heading must not paint a background.
+                                heading = page.locator('.workspaceTitleInput')
+                                heading.hover()
+                                assert heading.evaluate("e=>getComputedStyle(e).backgroundColor") == 'rgba(0, 0, 0, 0)', (
+                                    f"Content heading gained a hover background in {theme}")
                                 # Force an old envelope, then verify actual app startup upgrades it atomically.
                                 page.route("**/api/sync", lambda route: route.abort())
                                 page.evaluate("""() => new Promise((resolve,reject)=>{
