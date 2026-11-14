@@ -15,6 +15,25 @@ function fixture() {
   return { db, service, workspace, node, sync: new SyncService(db) };
 }
 describe("offline sync", () => {
+  it("merges Today lists independently created offline without duplicating the list or losing tasks", () => {
+    const { db, service, sync } = fixture();
+    const replica = openDatabase(":memory:");
+    try {
+      const base = snapshot(db);
+      replaceSnapshot(replica, base);
+      const local = new OutlinerService(replica);
+      local.createWorkspace("Local workspace");
+      const localToday = local.ensureTodayWorkspace();
+      const localTask = local.createNode({ parentId: localToday.rootNodeId, title: "Local task" });
+      const remoteToday = service.ensureTodayWorkspace();
+      const remoteTask = service.createNode({ parentId: remoteToday.rootNodeId, title: "Remote task" });
+      sync.push({ changes: changesBetween(base, snapshot(replica)) });
+      expect(service.listWorkspaces().filter(workspace => workspace.id === localToday.id)).toHaveLength(1);
+      expect(service.getTree(remoteToday.rootNodeId).children.map(node => node.id).sort()).toEqual([localTask.id, remoteTask.id].sort());
+      expect(service.getNode(localTask.id).dueDate).toBeNull();
+    } finally { replica.close(); db.close(); }
+  });
+
   it("applies sequential edits, deletion and reinsertion of one key in order", () => {
     const { db, node } = fixture();
     try {

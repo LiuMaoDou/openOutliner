@@ -15,6 +15,8 @@ export function dispatch(service: OutlinerService, method: string, address: stri
     return service.listWorkspaces();
   }
 
+  if (method === "POST" && path === "/api/system/today") return service.ensureTodayWorkspace();
+
   if (method === "GET" && path === "/api/due-reminders") {
     return service.listDueReminderNodes(url.searchParams.get("cutoff") ?? "");
   }

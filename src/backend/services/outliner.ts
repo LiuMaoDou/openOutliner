@@ -1,4 +1,5 @@
 import { resolveTagColor, tagColorForName } from "../shared/tagColors.js";
+import { TODAY_ROOT_NODE_ID, TODAY_WORKSPACE_ID } from "../shared/systemWorkspaces.js";
 export { morandiTagColors, tagColorForName } from "../shared/tagColors.js";
 
 const randomUUID = () => globalThis.crypto.randomUUID();
@@ -221,13 +222,24 @@ export class OutlinerService {
   }
 
   createWorkspace(name: string, icon?: string, folderId?: string | null, parentWorkspaceId?: string | null): Workspace {
-    const now = timestamp();
-    const workspaceId = randomUUID();
-    const rootNodeId = randomUUID();
+    return this.createWorkspaceWithIds(randomUUID(), randomUUID(), name, icon, folderId, parentWorkspaceId);
+  }
+
+  ensureTodayWorkspace(): Workspace {
+    const existing = this.db.prepare("SELECT * FROM workspaces WHERE id = ?").get(TODAY_WORKSPACE_ID) as Row | undefined;
+    return existing ? rowToWorkspace(existing)
+      : this.createWorkspaceWithIds(TODAY_WORKSPACE_ID, TODAY_ROOT_NODE_ID, "Today", "sun");
+  }
+
+  private createWorkspaceWithIds(workspaceId: string, rootNodeId: string, name: string, icon?: string,
+    folderId?: string | null, parentWorkspaceId?: string | null): Workspace {
+    // Identical built-in rows can be created offline on different devices and merged without an insertion conflict.
+    const isToday = workspaceId === TODAY_WORKSPACE_ID;
+    const now = isToday ? "1970-01-01T00:00:00.000Z" : timestamp();
     const workspaceIcon = normalizeWorkspaceIcon(icon);
     const normalizedParentWorkspaceId = this.normalizeWorkspaceParentId(parentWorkspaceId);
     const normalizedFolderId = normalizedParentWorkspaceId ? null : this.normalizeWorkspaceFolderId(folderId);
-    const position = this.countWorkspacesInContainer(normalizedFolderId, normalizedParentWorkspaceId);
+    const position = isToday ? -1 : this.countWorkspacesInContainer(normalizedFolderId, normalizedParentWorkspaceId);
 
     this.transaction(() => {
       this.db
@@ -406,6 +418,7 @@ export class OutlinerService {
   }
 
   updateWorkspace(id: string, input: { name?: string; folderId?: string | null; parentWorkspaceId?: string | null }): Workspace {
+    if (id === TODAY_WORKSPACE_ID) throw new ValidationError("Today is a built-in list and cannot be renamed or moved.");
     let workspace = this.getWorkspace(id);
     const name = input.name?.trim();
     const hasName = input.name !== undefined;
@@ -438,6 +451,7 @@ export class OutlinerService {
   }
 
   moveWorkspace(id: string, folderId: string | null, position: number, parentWorkspaceId: string | null = null): Workspace {
+    if (id === TODAY_WORKSPACE_ID) throw new ValidationError("Today is a built-in list and cannot be moved.");
     const workspace = this.getWorkspace(id);
     const nextParentWorkspaceId = this.normalizeWorkspaceParentId(parentWorkspaceId, id);
     const nextFolderId = nextParentWorkspaceId ? null : this.normalizeWorkspaceFolderId(folderId);
@@ -475,6 +489,7 @@ export class OutlinerService {
   }
 
   deleteWorkspace(id: string): { deleted: string } {
+    if (id === TODAY_WORKSPACE_ID) throw new ValidationError("Today is a built-in list and cannot be deleted.");
     const workspace = this.getWorkspace(id);
     const now = timestamp();
     this.transaction(() => {

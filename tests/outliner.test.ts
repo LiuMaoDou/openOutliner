@@ -1,4 +1,5 @@
 import { dispatch } from "../src/backend/shared/dispatch.js";
+import { TODAY_WORKSPACE_ID } from "../src/backend/shared/systemWorkspaces.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -88,6 +89,48 @@ afterEach(() => {
 });
 
 describe("OutlinerService", () => {
+  it("keeps Today as a persistent independent list with undated items by default", () => {
+    const other = service.createWorkspace("Today");
+    const unrelated = service.createNode({ parentId: other.rootNodeId, title: "Other list item" });
+    const today = dispatch(service, "POST", "/api/system/today");
+    expect(today).toMatchObject({ id: TODAY_WORKSPACE_ID, name: "Today", folderId: null, parentWorkspaceId: null });
+    const task = dispatch(service, "POST", "/api/nodes", { parentId: today.rootNodeId, title: "Plan the day" });
+    expect(task.dueDate).toBeNull();
+    expect(dispatch(service, "GET", "/api/calendar")).toEqual([]);
+    expect(service.getTree(today.rootNodeId).children.map(node => node.id)).toEqual([task.id]);
+    expect(service.getTree(other.rootNodeId).children.map(node => node.id)).toEqual([unrelated.id]);
+    service.updateNode(task.id, { dueDate: "2026-11-14" });
+    expect(service.listScheduledNodes().map(node => node.id)).toEqual([task.id]);
+    service.updateNode(task.id, { dueDate: null });
+    service.deleteNode(task.id);
+    expect(service.getTree(today.rootNodeId).children).toEqual([]);
+    service.undoOutline(today.id);
+    db.close();
+    db = openDatabase(join(tempDir, "test.sqlite"));
+    service = new OutlinerService(db);
+    expect(dispatch(service, "POST", "/api/system/today")).toEqual(today);
+    expect(service.listWorkspaces().filter(workspace => workspace.id === TODAY_WORKSPACE_ID)).toHaveLength(1);
+    expect(service.getTree(today.rootNodeId).children).toMatchObject([{ id: task.id, title: "Plan the day", dueDate: null }]);
+    service.updateNode(task.id, { done: true });
+    expect(service.getNode(task.id).done).toBe(true);
+    service.deleteNode(task.id);
+    expect(service.listRecycleBin().map(entry => entry.node.id)).toContain(task.id);
+  });
+
+  it("protects the built-in Today list while allowing its tasks and child workspaces to be edited", () => {
+    const today = service.ensureTodayWorkspace();
+    const folder = service.createWorkspaceFolder("Projects");
+    expect(() => dispatch(service, "PATCH", `/api/workspaces/${today.id}`, { name: "Renamed" })).toThrow("built-in list");
+    expect(() => dispatch(service, "PATCH", `/api/workspaces/${today.id}`, { folderId: folder.id, position: 0 })).toThrow("built-in list");
+    expect(() => dispatch(service, "DELETE", `/api/workspaces/${today.id}`)).toThrow("built-in list");
+    const task = service.createNode({ parentId: today.rootNodeId, title: "Project" });
+    const child = service.convertNodeToWorkspace(task.id);
+    expect(child.parentWorkspaceId).toBe(today.id);
+    service.deleteWorkspace(child.id);
+    service.deleteWorkspaceFolder(folder.id);
+    expect(service.ensureTodayWorkspace().id).toBe(today.id);
+  });
+
   it("lists calendar items across workspaces and all dates, including collapsed children and completed nodes", () => {
     const first = service.createWorkspace("Calendar one");
     const second = service.createWorkspace("Calendar two");

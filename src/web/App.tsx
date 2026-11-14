@@ -76,6 +76,7 @@ import { clearTitleNativeSelection, shouldCopyNodes } from "./selectionOwnership
 import { rehypeTitleFormatting, sourceOffsetForText } from "./titleSourceMap";
 import { getDueReminderCutoff, getDueReminderNodes } from "./dueTasks";
 import { Calendar } from "./Calendar";
+import { TODAY_WORKSPACE_ID } from "../backend/shared/systemWorkspaces";
 import { SyncPanel } from "./SyncPanel";
 import { activatePrivacyScreen } from "./PrivacyScreen";
 import { useInlineTagInput } from "./InlineTagInput";
@@ -593,7 +594,7 @@ export function App() {
       || currentId === SYSTEM_RECYCLE_BIN_WORKSPACE_ID
       || next.some(workspace => workspace.id === currentId)
       ? currentId
-      : next[0]?.id || "";
+      : (next.find(workspace => workspace.id !== TODAY_WORKSPACE_ID) ?? next[0])?.id || "";
     workspaceIdRef.current = nextId;
     setWorkspaces(next);
     setWorkspaceId(nextId);
@@ -858,6 +859,7 @@ export function App() {
 
   const selectedNode = selectedId && flatState ? getNode(flatState, selectedId) : undefined;
   const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId);
+  const isTodayWorkspace = workspaceId === TODAY_WORKSPACE_ID;
   const isCalendarWorkspace = workspaceId === SYSTEM_CALENDAR_WORKSPACE_ID;
   const isSystemTagsWorkspace = workspaceId === SYSTEM_TAGS_WORKSPACE_ID;
   const isRecycleBinWorkspace = workspaceId === SYSTEM_RECYCLE_BIN_WORKSPACE_ID;
@@ -905,7 +907,7 @@ export function App() {
   const draggingNodeIds = useMemo(() => new Set(dragState?.draggingIds ?? []), [dragState?.draggingIds]);
   const outlineDropWorkspace = workspaces.find(workspace => workspace.id === dragState?.overWorkspaceId);
   const rootWorkspaces = useMemo(
-    () => workspaces.filter(workspace => !workspace.folderId && !workspace.parentWorkspaceId),
+    () => workspaces.filter(workspace => workspace.id !== TODAY_WORKSPACE_ID && !workspace.folderId && !workspace.parentWorkspaceId),
     [workspaces]
   );
   const workspacesByFolder = useMemo(() => {
@@ -2522,6 +2524,26 @@ export function App() {
 
         <div className="workspaceGroup">
           <button
+            className={isTodayWorkspace ? "systemWorkspaceItem active" : "systemWorkspaceItem"}
+            type="button"
+            title="Today"
+            aria-label="Today"
+            onClick={() => {
+              if (workspaces.some(workspace => workspace.id === TODAY_WORKSPACE_ID)) {
+                selectWorkspace(TODAY_WORKSPACE_ID);
+              } else {
+                void apiPost<Workspace>("/api/system/today", {}).then(async () => {
+                  await loadWorkspaces();
+                  selectWorkspace(TODAY_WORKSPACE_ID);
+                }).catch(toError(setError));
+              }
+            }}
+          >
+            <span className="workspaceIcon" aria-hidden="true"><Sun size={15} strokeWidth={2.2} /></span>
+            {!sidebarCompact && <span className="systemWorkspaceLabel"><span>Today</span><small className="systemWorkspaceBadge">System</small></span>}
+          </button>
+          {(workspacesByParent.get(TODAY_WORKSPACE_ID) ?? []).map(workspace => renderWorkspaceItem(workspace, 1))}
+          <button
             className={isCalendarWorkspace ? "systemWorkspaceItem active" : "systemWorkspaceItem"}
             type="button"
             title="Calendar"
@@ -2641,7 +2663,7 @@ export function App() {
               })}
             </>
           ) : (
-            workspaces.filter(workspace => !workspace.parentWorkspaceId).map(workspace => renderWorkspaceItem(workspace))
+            workspaces.filter(workspace => workspace.id !== TODAY_WORKSPACE_ID && !workspace.parentWorkspaceId).map(workspace => renderWorkspaceItem(workspace))
           )}
         </div>
         <div className="sidebarFooter">
@@ -2862,7 +2884,11 @@ export function App() {
               setNodeSelection(filteredNodes, primaryId, filteredNodes[0]);
             }}>
             <div className="outlineHeader">
-              {isRecycleBinWorkspace ? (
+              {isTodayWorkspace ? (
+                <div className="systemWorkspaceTitle">
+                  <div><Sun size={21} strokeWidth={2.2} /><h1>Today</h1></div>
+                </div>
+              ) : isRecycleBinWorkspace ? (
                 <div className="systemWorkspaceTitle">
                   <div>
                     <Trash2 size={21} strokeWidth={2.2} />
