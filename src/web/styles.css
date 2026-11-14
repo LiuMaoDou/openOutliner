@@ -100,6 +100,8 @@
   --node-date-background: #f4f4f5;
   --node-date-border: #e4e4e7;
   --node-date-hover: #e4e4e7;
+  --node-calendar-hover-title: #577467;
+  --node-delete-hover-title: #955e6b;
   --node-count-foreground: #71717a;
   --node-count-background: #f4f4f5;
   --node-count-border: #e4e4e7;
@@ -176,6 +178,8 @@
   --node-date-background: #3c4350;
   --node-date-border: #596475;
   --node-date-hover: #4b5667;
+  --node-calendar-hover-title: #a9c7b9;
+  --node-delete-hover-title: #e0adb8;
   --node-count-foreground: #d9e1ed;
   --node-count-background: #3b4350;
   --node-count-border: #596475;
@@ -2172,6 +2176,22 @@ body.isSelectingNodes .nodeTitlePreview {
   line-height: 1.35;
   overflow-wrap: anywhere;
   cursor: text;
+}
+
+/* Link distant actions to their outline without changing the row background. */
+.nodeTitlePreview,
+.nodeTitlePreview .nodeTitleLink {
+  transition: color 120ms ease;
+}
+
+.nodeRow:has(.nodeDateControl button:is(:hover, :focus-visible))
+  :is(.nodeTitle, .nodeTitlePreview, .nodeTitleLink) {
+  color: var(--node-calendar-hover-title);
+}
+
+.nodeRow:has(> .iconButton.danger:is(:hover, :focus-visible))
+  :is(.nodeTitle, .nodeTitlePreview, .nodeTitleLink) {
+  color: var(--node-delete-hover-title);
 }
 
 /* Select only the text, with the same muted color in sidebar and content. */
