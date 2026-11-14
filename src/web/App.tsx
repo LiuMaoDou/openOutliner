@@ -3486,10 +3486,7 @@ function NodeRow({
       setMarkdownMenu(null);
       setNodeContextMenu(null);
     };
-    const closeOnWindowBlur = () => {
-      if (markdownMenu) return;
-      closeMenus();
-    };
+    const closeOnWindowBlur = () => closeMenus();
     const closeOnScroll = (event: Event) => {
       const target = event.target;
       if (markdownMenu && target instanceof Node && markdownMenuRef.current?.contains(target)) return;
@@ -3498,13 +3495,13 @@ function NodeRow({
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") closeMenus();
     };
-    document.addEventListener("pointerdown", closeOnPointerDown);
+    document.addEventListener("pointerdown", closeOnPointerDown, true);
     window.addEventListener("blur", closeOnWindowBlur);
     window.addEventListener("resize", closeMenus);
     window.addEventListener("scroll", closeOnScroll, true);
     window.addEventListener("keydown", closeOnEscape);
     return () => {
-      document.removeEventListener("pointerdown", closeOnPointerDown);
+      document.removeEventListener("pointerdown", closeOnPointerDown, true);
       window.removeEventListener("blur", closeOnWindowBlur);
       window.removeEventListener("resize", closeMenus);
       window.removeEventListener("scroll", closeOnScroll, true);
@@ -4040,6 +4037,11 @@ function NodeRow({
         </div>
         {inlineTags.menu}
       </div>
+      {childCountLabel ? (
+        <span className="nodeChildCount">{childCountLabel}</span>
+      ) : (
+        <span className="nodeChildCount nodeChildCountPlaceholder" aria-hidden="true">0</span>
+      )}
       <div className="nodeDateControl">
         <input
           ref={dateInputRef}
@@ -4090,11 +4092,6 @@ function NodeRow({
           </button>
         )}
       </div>
-      {childCountLabel ? (
-        <span className="nodeChildCount">{childCountLabel}</span>
-      ) : (
-        <span className="nodeChildCount nodeChildCountPlaceholder" aria-hidden="true">0</span>
-      )}
       <div className="nodeTags">
         {(node.tags || []).map(tag => (
           <span className="nodeTagChip" key={tag.id}>
