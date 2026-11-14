@@ -135,6 +135,39 @@ def run():
                                 heading.hover()
                                 assert heading.evaluate("e=>getComputedStyle(e).backgroundColor") == 'rgba(0, 0, 0, 0)', (
                                     f"Content heading gained a hover background in {theme}")
+                                # Adding a child to a collapsed Workspace must reveal the new child.
+                                parent = page.locator(f'.workspaceItem[data-workspace-drop-id="{workspace["id"]}"]')
+                                children = page.locator(f'.workspaceItem[data-workspace-parent-id="{workspace["id"]}"]')
+                                add_child = parent.locator('button.workspaceAddChildButton')
+                                toggle = parent.locator('button.workspaceIcon')
+                                if children.count() == 0:
+                                    add_child.click()
+                                    page.wait_for_function(
+                                        """id => [...document.querySelectorAll('.workspaceItem')]
+                                          .some(item => item.dataset.workspaceParentId === id)""",
+                                        arg=workspace["id"])
+                                if toggle.get_attribute("aria-expanded") == "false":
+                                    toggle.click()
+                                previous_child_count = children.count()
+                                toggle.click()
+                                page.wait_for_function(
+                                    """id => {
+                                      const item = [...document.querySelectorAll('.workspaceItem')]
+                                        .find(item => item.dataset.workspaceDropId === id);
+                                      return item?.querySelector('button.workspaceIcon')?.getAttribute('aria-expanded') === 'false';
+                                    }""",
+                                    arg=workspace["id"])
+                                assert children.count() == 0, "Collapsed workspace still shows children"
+                                add_child.click()
+                                page.wait_for_function(
+                                    """({id, count}) => {
+                                      const items = [...document.querySelectorAll('.workspaceItem')];
+                                      const parent = items.find(item => item.dataset.workspaceDropId === id);
+                                      return parent?.querySelector('button.workspaceIcon')?.getAttribute('aria-expanded') === 'true'
+                                        && items.filter(item => item.dataset.workspaceParentId === id).length === count;
+                                    }""",
+                                    arg={"id": workspace["id"], "count": previous_child_count + 1})
+                                parent.locator('input').click()
                                 # Force an old envelope, then verify actual app startup upgrades it atomically.
                                 page.route("**/api/sync", lambda route: route.abort())
                                 page.evaluate("""() => new Promise((resolve,reject)=>{
