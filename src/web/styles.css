@@ -1439,7 +1439,7 @@ body.isResizingPanel .appShell {
 }
 
 .workspaceTitleInput:focus {
-  background: var(--background);
+  background: transparent;
   border-color: var(--input);
   box-shadow: none;
 }
