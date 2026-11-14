@@ -1,6 +1,4 @@
 import { registerUpdateBarrier } from "./appUpdates";
-import { resizeRuledTitle } from "./outlineGrid";
-import { useOutlineGridMetrics, useRuledNodeLayout, type OutlineGridMetrics } from "./useOutlineGridLayout";
 import {
   Bold,
   Check,
@@ -426,7 +424,6 @@ export function App() {
   const resolvedTempNodeIdsRef = useRef(new Map<string, string>());
   const outlineSurfaceRef = useRef<HTMLDivElement | null>(null);
   const virtualListRef = useRef<HTMLDivElement | null>(null);
-  const ruledListRef = useRef<HTMLDivElement | null>(null);
   const [compactLayout, setCompactLayout] = useState(() => window.matchMedia("(max-width: 760px)").matches);
   const [listScrollMargin, setListScrollMargin] = useState(0);
   const contentGridRef = useRef<HTMLElement | null>(null);
@@ -972,8 +969,6 @@ export function App() {
       : filteredNodes.findIndex(id => id === selectedId)
     : -1;
   selectedIndexRef.current = selectedIndex;
-  const isRuledOutline = !isCalendarWorkspace && !isRecycleBinWorkspace && !isSystemTagsWorkspace && !isTagFiltering;
-  const outlineGridMetrics = useOutlineGridMetrics(ruledListRef, isRuledOutline, workspaceId);
   const getOutlineScrollElement = () => compactLayout ? contentGridRef.current : outlineSurfaceRef.current;
   const rowVirtualizer = useVirtualizer({
     count: visibleItemCount,
@@ -991,23 +986,11 @@ export function App() {
     measureElement: element => Math.ceil(element.getBoundingClientRect().height),
     estimateSize: index => isRecycleBinWorkspace
       ? 92
-      : isSystemTagsWorkspace && systemTagRows[index]?.kind === "node" ? 46 : isRuledOutline ? outlineGridMetrics.step : 38,
+      : isSystemTagsWorkspace && systemTagRows[index]?.kind === "node" ? 46 : 38,
     overscan: 16,
     useAnimationFrameWithResizeObserver: true
   });
   const virtualItems = rowVirtualizer.getVirtualItems();
-
-  useLayoutEffect(() => {
-    rowVirtualizer.measure();
-    // Rebuild the estimate table before seeding sizes (the old table may still
-    // contain the previous measurements even though the size cache was cleared).
-    rowVirtualizer.getTotalSize();
-    // Resetting the cache does not retrigger ResizeObserver for unchanged boxes.
-    // Re-seed mounted rows immediately; unmounted rows keep whole-grid estimates.
-    for (const row of virtualListRef.current?.querySelectorAll<HTMLElement>(".virtualOutlineRow") ?? []) {
-      rowVirtualizer.measureElement(row);
-    }
-  }, [rowVirtualizer, isRuledOutline, outlineGridMetrics.revision, workspaceId]);
 
   useLayoutEffect(() => {
     const surface = getOutlineScrollElement();
@@ -2877,7 +2860,7 @@ export function App() {
         )}
 
         {isCalendarWorkspace ? <Calendar workspaces={workspaces} search={search} onOpen={openOverdueNode} /> : <section
-          className={`${isInspectorOpen && !isSystemTagsWorkspace && !isRecycleBinWorkspace ? "contentGrid" : "contentGrid commentsClosed"}${isRuledOutline ? " contentGrid--ruled" : ""}`}
+          className={isInspectorOpen && !isSystemTagsWorkspace && !isRecycleBinWorkspace ? "contentGrid" : "contentGrid commentsClosed"}
           ref={contentGridRef}
           style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
         >
@@ -2957,7 +2940,7 @@ export function App() {
                 </button>
               )}
             </div>
-            <div ref={ruledListRef} className={`outlineList${selectedNodeIds.size > 1 ? " hasMultiSelection" : ""}${isRuledOutline ? " outlineList--ruled" : ""}`}>
+            <div className={selectedNodeIds.size > 1 ? "outlineList hasMultiSelection" : "outlineList"}>
               {visibleItemCount > 0 ? (
                 <div
                   className="virtualOutlineList"
@@ -3056,7 +3039,6 @@ export function App() {
                         style={{ transform: `translateY(${virtualItem.start - listScrollMargin}px)` }}
                       >
                         <NodeRow
-                          gridMetrics={outlineGridMetrics}
                           node={node}
                           depth={depth}
                           selected={selectedNodeIds.has(node.id)}
@@ -3318,7 +3300,6 @@ function NodeNotes({ node, onError, onTemporaryChange }: { node: FlatNodeData; o
 }
 
 function NodeRow({
-  gridMetrics,
   node,
   depth,
   selected,
@@ -3357,7 +3338,6 @@ function NodeRow({
   onComplete,
   onDelete
 }: {
-  gridMetrics: OutlineGridMetrics;
   node: FlatNodeData;
   depth: number;
   selected: boolean;
@@ -3396,7 +3376,6 @@ function NodeRow({
   onComplete: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
-  const rowRef = useRef<HTMLDivElement | null>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const inlineTagSelectionRef = useRef<{ value: string; start: number } | null>(null);
   const titleMeasureRef = useRef<HTMLDivElement | null>(null);
@@ -3406,7 +3385,6 @@ function NodeRow({
   const onCompositionChangeRef = useRef(onCompositionChange);
   onCompositionChangeRef.current = onCompositionChange;
   const [localTitle, setLocalTitle] = useState(() => readNodeDraft(node.id, "title") ?? node.title);
-  useRuledNodeLayout(rowRef, gridMetrics, localTitle, node.tags);
   const lastStagedTitleRef = useRef(localTitle);
   const [markdownMenu, setMarkdownMenu] = useState<MarkdownContextMenuState | null>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
@@ -3760,7 +3738,6 @@ function NodeRow({
 
   return (
     <div
-      ref={rowRef}
       className={rowClassName}
       data-node-id={node.id}
       data-selected={selected ? "true" : "false"}
@@ -4112,7 +4089,7 @@ function NodeRow({
       )}
       <div className="nodeTags">
         {(node.tags || []).map(tag => (
-          <span className="nodeTagSlot" key={tag.id}><span className="nodeTagChip">
+          <span className="nodeTagChip" key={tag.id}>
             <button type="button" onClick={() => onTagClick(tag)}>{tag.name}</button>
             <button
               className="nodeTagRemove"
@@ -4127,7 +4104,7 @@ function NodeRow({
             >
               <X size={12} />
             </button>
-          </span></span>
+          </span>
         ))}
       </div>
       <button className="iconButton danger" type="button" title="Delete" onClick={() => onDelete()}>
@@ -5011,7 +4988,6 @@ function storeIdSet(key: string, values: ReadonlySet<string>) {
 }
 
 function resizeTitleInput(input: HTMLTextAreaElement) {
-  if (resizeRuledTitle(input)) return;
   const currentHeight = input.style.height;
   input.style.height = "auto";
   const nextHeight = `${input.scrollHeight}px`;
