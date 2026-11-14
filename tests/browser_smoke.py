@@ -146,6 +146,15 @@ def run():
                                         """id => [...document.querySelectorAll('.workspaceItem')]
                                           .some(item => item.dataset.workspaceParentId === id)""",
                                         arg=workspace["id"])
+                                # Parent title is bold whether expanded or collapsed; a leaf stays regular.
+                                assert "hasChildren" in (parent.get_attribute("class") or "")
+                                assert parent.locator("input").evaluate(
+                                    "e => Number(getComputedStyle(e).fontWeight)") >= 600, "Parent workspace title is not bold"
+                                leaf_inputs = page.locator(
+                                    f'.workspaceItem[data-workspace-parent-id="{workspace["id"]}"]:not(.hasChildren) > input')
+                                assert leaf_inputs.count() > 0, "Missing leaf workspace for font-weight regression"
+                                assert leaf_inputs.first.evaluate(
+                                    "e => Number(getComputedStyle(e).fontWeight)") == 400, "Leaf workspace title should stay regular"
                                 if toggle.get_attribute("aria-expanded") == "false":
                                     toggle.click()
                                 previous_child_count = children.count()
