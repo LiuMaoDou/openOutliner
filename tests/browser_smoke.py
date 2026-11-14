@@ -135,6 +135,59 @@ def run():
                                 heading.hover()
                                 assert heading.evaluate("e=>getComputedStyle(e).backgroundColor") == 'rgba(0, 0, 0, 0)', (
                                     f"Content heading gained a hover background in {theme}")
+                                # Control order: title, count, date, (tags), delete.
+                                primary_row = page.locator(f'.nodeRow[data-node-id="{nodes[0]["id"]}"]')
+                                sibling_row = page.locator(f'.nodeRow[data-node-id="{nodes[1]["id"]}"]')
+                                controls = primary_row.evaluate("""row => [...row.children]
+                                  .map(element => {
+                                    if (element.matches('.nodeTitleCell')) return 'title';
+                                    if (element.matches('.nodeChildCount')) return 'count';
+                                    if (element.matches('.nodeDateControl')) return 'date';
+                                    if (element.matches('.iconButton.danger')) return 'delete';
+                                    return null;
+                                  }).filter(Boolean)""")
+                                assert controls == ["title", "count", "date", "delete"], controls
+                                preview = primary_row.locator('.nodeTitlePreview')
+                                title_editor = primary_row.locator('textarea.nodeTitle')
+                                base_color = preview.evaluate("e => getComputedStyle(e).color")
+                                calendar_color = {"light": "rgb(87, 116, 103)", "dark": "rgb(169, 199, 185)"}[theme]
+                                delete_color = {"light": "rgb(149, 94, 107)", "dark": "rgb(224, 173, 184)"}[theme]
+                                primary_row.locator('.nodeDateAddButton').hover()
+                                assert preview.evaluate("e => getComputedStyle(e).color") == calendar_color
+                                assert title_editor.evaluate("e => getComputedStyle(e).color") == calendar_color
+                                assert sibling_row.locator('.nodeTitlePreview').evaluate(
+                                    "e => getComputedStyle(e).color") == base_color, "Another row's title changed"
+                                primary_row.locator('.iconButton.danger').hover()
+                                assert preview.evaluate("e => getComputedStyle(e).color") == delete_color
+                                assert title_editor.evaluate("e => getComputedStyle(e).color") == delete_color
+                                page.mouse.move(1350, 900)
+                                assert preview.evaluate("e => getComputedStyle(e).color") == base_color
+
+                                # The Markdown toolbar must survive its own controls and close
+                                # on the initial outside pointerdown, even on a title preview
+                                # whose React handler stops event propagation.
+                                title_editor.focus()
+                                title_editor.press("Home")
+                                title_editor.press("Shift+ArrowRight")
+                                format_menu = page.get_by_role("dialog", name="Format selected text")
+                                format_menu.wait_for(state="visible")
+                                format_menu.get_by_role("button", name="Text color").click()
+                                format_menu.get_by_role("group", name="Text colors").wait_for(state="visible")
+                                format_menu.get_by_role("button", name="Text color").click()
+                                target_box = sibling_row.locator('.nodeTitlePreview').bounding_box()
+                                assert target_box
+                                page.mouse.move(target_box["x"] + 14, target_box["y"] + target_box["height"] / 2)
+                                page.mouse.down()
+                                assert page.locator('.markdownContextMenu').count() == 0, (
+                                    "Markdown toolbar did not dismiss on outside pointerdown")
+                                page.mouse.up()
+                                title_editor.focus()
+                                title_editor.press("Home")
+                                title_editor.press("Shift+ArrowRight")
+                                format_menu.wait_for(state="visible")
+                                page.evaluate("window.dispatchEvent(new Event('blur'))")
+                                format_menu.wait_for(state="detached")
+
                                 # Adding a child to a collapsed Workspace must reveal the new child.
                                 parent = page.locator(f'.workspaceItem[data-workspace-drop-id="{workspace["id"]}"]')
                                 children = page.locator(f'.workspaceItem[data-workspace-parent-id="{workspace["id"]}"]')
