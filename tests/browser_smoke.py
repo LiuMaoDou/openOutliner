@@ -82,6 +82,23 @@ def run():
                                 page.evaluate("document.fonts.ready")
                                 assert page.title(), "Missing page title"
                                 assert page.locator("vite-error-overlay").count() == 0
+                                # Only the active workspace name gets a heavier weight.
+                                weights = page.evaluate("""() => {
+                                  const active = document.querySelector('.workspaceItem.active > input');
+                                  if (!active) return null;
+                                  const inactive = active.parentElement.cloneNode(true);
+                                  inactive.classList.remove('active');
+                                  inactive.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
+                                  document.body.appendChild(inactive);
+                                  try {
+                                    return {
+                                      active: getComputedStyle(active).fontWeight,
+                                      inactive: getComputedStyle(inactive.querySelector('input')).fontWeight
+                                    };
+                                  } finally { inactive.remove(); }
+                                }""")
+                                assert weights == {"active": "750", "inactive": "400"}, (
+                                    f"Workspace emphasis differs in {theme}: {weights}")
                                 # Comments note height persists across selection changes and reloads.
                                 notes = page.locator('.notesAlert textarea.nodeNotes')
                                 if notes.count() == 0:

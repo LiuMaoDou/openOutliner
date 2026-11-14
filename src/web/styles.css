@@ -793,8 +793,12 @@ body.isResizingPanel .appShell {
   color: var(--foreground);
   background: var(--background);
   border-color: var(--border);
-  font-weight: 650;
   box-shadow: var(--shadow-sm);
+}
+
+/* The input sets its own weight, so emphasis must target the selected name. */
+.workspaceItem.active input {
+  font-weight: 750;
 }
 
 .workspaceItem.outlineDropTarget {
