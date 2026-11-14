@@ -2036,6 +2036,14 @@ export function App() {
       "/api/workspaces",
       createWorkspaceRequestBody(selectedWorkspace, folderId, parentWorkspaceId)
     );
+    if (parentWorkspaceId) {
+      setCollapsedWorkspaceIds(current => {
+        if (!current.has(parentWorkspaceId)) return current;
+        const next = new Set(current);
+        next.delete(parentWorkspaceId);
+        return next;
+      });
+    }
     await loadWorkspaces();
     selectWorkspace(created.id);
   };
