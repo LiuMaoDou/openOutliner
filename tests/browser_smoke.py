@@ -153,14 +153,29 @@ def run():
                                 calendar_color = {"light": "rgb(87, 116, 103)", "dark": "rgb(169, 199, 185)"}[theme]
                                 delete_color = {"light": "rgb(149, 94, 107)", "dark": "rgb(224, 173, 184)"}[theme]
                                 primary_row.locator('.nodeDateAddButton').hover()
+                                page.wait_for_function(
+                                    """({id, color}) => getComputedStyle(
+                                      document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
+                                    ).color === color""",
+                                    arg={"id": nodes[0]["id"], "color": calendar_color})
                                 assert preview.evaluate("e => getComputedStyle(e).color") == calendar_color
                                 assert title_editor.evaluate("e => getComputedStyle(e).color") == calendar_color
                                 assert sibling_row.locator('.nodeTitlePreview').evaluate(
                                     "e => getComputedStyle(e).color") == base_color, "Another row's title changed"
                                 primary_row.locator('.iconButton.danger').hover()
+                                page.wait_for_function(
+                                    """({id, color}) => getComputedStyle(
+                                      document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
+                                    ).color === color""",
+                                    arg={"id": nodes[0]["id"], "color": delete_color})
                                 assert preview.evaluate("e => getComputedStyle(e).color") == delete_color
                                 assert title_editor.evaluate("e => getComputedStyle(e).color") == delete_color
                                 page.mouse.move(1350, 900)
+                                page.wait_for_function(
+                                    """({id, color}) => getComputedStyle(
+                                      document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
+                                    ).color === color""",
+                                    arg={"id": nodes[0]["id"], "color": base_color})
                                 assert preview.evaluate("e => getComputedStyle(e).color") == base_color
 
                                 # The Markdown toolbar must survive its own controls and close
