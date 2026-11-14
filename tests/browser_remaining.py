@@ -87,7 +87,7 @@ def editor_checks(page, a, b, nodes, other, mapped):
     editor=row(page,nodes[0]).locator('textarea.nodeTitle')
     editor.press('Home');editor.press('Shift+ArrowRight');editor.press('Shift+ArrowRight')
     native=editor.evaluate('e=>e.value.slice(e.selectionStart,e.selectionEnd)')
-    page.keyboard.press('Control+c')
+    page.keyboard.press('ControlOrMeta+c')
     assert page.evaluate('navigator.clipboard.readText()') == native
     page.evaluate("""() => {
       window.__pointerLog=[];
@@ -101,7 +101,7 @@ def editor_checks(page, a, b, nodes, other, mapped):
     page.mouse.move(last['x']+70,last['y']+last['height']/2,steps=15);page.mouse.up()
     page.mouse.move(1300,950)
     page.wait_for_function('ids=>ids.every(id=>document.querySelector(`[data-node-id="${id}"]`)?.dataset.selected==="true")',arg=[n['id'] for n in nodes])
-    page.keyboard.press('Control+c')
+    page.keyboard.press('ControlOrMeta+c')
     assert page.evaluate('navigator.clipboard.readText()') == '\n'.join(row(page,n).locator('textarea.nodeTitle').input_value() for n in nodes)
     print('PASS real native and multi-row keyboard copy',flush=True)
     # Keep a failed operation in flight while switching to another real workspace.

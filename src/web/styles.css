@@ -3915,3 +3915,131 @@ body.isSelectingNodes .nodeTitlePreview {
 .appUpdateDetails small { display: block; overflow-wrap: anywhere; color: var(--muted-foreground); }
 .recoveryCapacity { font-size: 12px; color: var(--muted-foreground); }
 .appUpdateOverlay { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: var(--background); color: var(--foreground); padding: 24px; }
+
+/* Ruled outlines only: sidebar, Calendar, Tags, Recycle Bin and Comments stay unchanged. */
+.contentGrid--ruled {
+  --outline-grid-step: 32px;
+  --outline-list-inset: 8px;
+  --outline-control-height: 26px;
+}
+
+.contentGrid--ruled .outlineArtwork {
+  /* Keep the surface and tiger; the list owns its scrolling grid. */
+  background-image: none;
+}
+
+.outlineList--ruled {
+  position: relative;
+  isolation: isolate;
+  padding-top: var(--outline-list-inset);
+}
+
+.outlineList--ruled::before {
+  content: "";
+  position: absolute;
+  inset: var(--outline-list-inset) 0 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to bottom, var(--outline-grid-line) 1px, transparent 1px),
+    linear-gradient(to right, color-mix(in srgb, var(--outline-grid-line) 45%, transparent) 1px, transparent 1px);
+  background-size: 100% var(--outline-grid-step), var(--outline-grid-step) 100%;
+}
+
+.outlineList--ruled .nodeRow {
+  min-height: var(--outline-row-min-height, var(--outline-grid-step));
+  border-block-width: 0;
+  row-gap: 0;
+  align-items: start;
+  align-content: start;
+}
+
+.outlineList--ruled .nodeTitleCell {
+  margin-block: 0;
+  align-self: start;
+}
+
+.outlineList--ruled .nodeTitle,
+.outlineList--ruled .nodeTitlePreview,
+.outlineList--ruled .nodeTitleMeasure {
+  min-height: var(--outline-grid-step);
+  padding-block: 0;
+  border-block-width: 0;
+  line-height: var(--outline-grid-step);
+}
+
+.outlineList--ruled .nodeTitlePreview {
+  display: block;
+}
+
+.outlineList--ruled .nodeTitlePreview > span {
+  display: block;
+}
+
+/* Mixed font metrics (especially monospace code) must not enlarge the 32px strut. */
+.outlineList--ruled .nodeTitleInlineText,
+.outlineList--ruled .nodeTitleInlineText * {
+  line-height: normal;
+}
+
+.outlineList--ruled .nodeTitle:focus + .nodeTitlePreview {
+  /* Opacity alone would let the inactive preview inflate the editing row. */
+  position: absolute;
+  inset: 0;
+}
+
+.outlineList--ruled .nodeRow > .iconButton,
+.outlineList--ruled .nodeRow > .dragHandle {
+  align-self: start;
+  margin-top: calc((var(--outline-grid-step) - var(--outline-control-height)) / 2);
+}
+
+.outlineList--ruled .nodeDateControl {
+  align-self: start;
+  height: var(--outline-grid-step);
+}
+
+.outlineList--ruled .nodeChildCount {
+  align-self: start;
+  margin-top: calc((var(--outline-grid-step) - 20px) / 2);
+}
+
+.nodeTagSlot { display: contents; }
+
+.outlineList--ruled .nodeTags {
+  align-self: start;
+  align-items: start;
+  row-gap: 0;
+}
+
+.outlineList--ruled .nodeTagSlot {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--outline-grid-step);
+  max-width: 100%;
+}
+
+.outlineList--ruled .nodeTagChip {
+  max-width: 100%;
+}
+
+.outlineList--ruled .nodeTagChip > button:first-child {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.outlineList--ruled .emptyNodeButton {
+  min-height: var(--outline-grid-step);
+  height: var(--outline-grid-step);
+  padding-block: 0;
+  border-block-width: 0;
+}
+
+@media (max-width: 640px) {
+  .contentGrid--ruled {
+    --outline-grid-step: 42px;
+    --outline-control-height: 32px;
+  }
+}
