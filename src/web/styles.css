@@ -334,7 +334,7 @@ select:focus-visible {
 .appShell.sidebarCollapsed .workspaceItem {
   grid-template-columns: 1fr;
   grid-template-areas: "icon";
-  padding: 0;
+  padding: 3px 0;
   justify-items: center;
 }
 
@@ -643,17 +643,6 @@ body.isResizingPanel .appShell {
   margin-top: -4px;
 }
 
-.systemWorkspaceItem:hover {
-  color: var(--foreground);
-}
-
-.systemWorkspaceItem.active {
-  color: var(--foreground);
-  background: var(--background);
-  border-color: var(--selected-border);
-  box-shadow: var(--shadow-sm);
-}
-
 .systemWorkspaceLabel {
   display: flex;
   align-items: center;
@@ -726,12 +715,20 @@ body.isResizingPanel .appShell {
   gap: 6px;
   justify-content: flex-start;
   width: 100%;
-  min-height: 28px;
-  padding: 0 4px 0 calc(8px + var(--workspace-depth, 0) * 16px);
+  min-height: 34px;
+  padding: 3px 8px 3px calc(8px + var(--workspace-depth, 0) * 16px);
   color: var(--soft-foreground);
   text-align: left;
   background: transparent;
   position: relative;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+/* User workspaces and system navigation share the same hover surface. */
+.systemWorkspaceItem:hover,
+.workspaceItem:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--sidebar-accent) 80%, transparent);
 }
 
 .workspaceItem > .workspaceIcon { grid-area: icon; }
@@ -785,16 +782,17 @@ body.isResizingPanel .appShell {
   box-shadow: none;
 }
 
-.workspaceItem:hover {
-  color: var(--accent-foreground);
-}
-
+/* Keep active selection identical for Today, Calendar, Tags and all workspace levels. */
+.systemWorkspaceItem.active,
 .workspaceItem.active {
   color: var(--foreground);
   background: var(--background);
-  border-color: var(--border);
-  font-weight: 650;
+  border-color: var(--selected-border);
   box-shadow: var(--shadow-sm);
+}
+
+.workspaceItem.active input {
+  font-weight: 650;
 }
 
 .workspaceItem.outlineDropTarget {
