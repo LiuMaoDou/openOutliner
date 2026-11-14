@@ -785,10 +785,6 @@ body.isResizingPanel .appShell {
   white-space: nowrap;
 }
 
-.workspaceItem.hasChildren > input {
-  font-weight: 650;
-}
-
 .workspaceItem input:focus-visible {
   box-shadow: none;
 }
