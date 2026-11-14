@@ -82,6 +82,26 @@ def run():
                                 page.evaluate("document.fonts.ready")
                                 assert page.title(), "Missing page title"
                                 assert page.locator("vite-error-overlay").count() == 0
+                                # Comments note height persists across selection changes and reloads.
+                                notes = page.locator('.notesAlert textarea.nodeNotes')
+                                if notes.count() == 0:
+                                    row.locator('.nodeTitlePreview').click()
+                                notes.wait_for(state="visible")
+                                assert notes.evaluate("e=>getComputedStyle(e).resize") == "vertical"
+                                height = 312 if theme == "light" else 348
+                                notes.evaluate("(e, height) => { e.style.height = height + 'px'; }", height)
+                                page.wait_for_function(
+                                    "height => localStorage.getItem('openoutliner.comments-notes-height:v1') === String(height)",
+                                    arg=height
+                                )
+                                other_row = page.locator(f'.nodeRow[data-node-id="{nodes[1]["id"]}"]')
+                                other_row.locator('.nodeTitlePreview').click()
+                                notes.wait_for(state="visible")
+                                assert abs(notes.evaluate("e=>e.getBoundingClientRect().height") - height) <= 1, "Comments height lost on node switch"
+                                page.reload()
+                                row.locator('.nodeTitlePreview').wait_for(state="visible")
+                                notes.wait_for(state="visible")
+                                assert abs(notes.evaluate("e=>e.getBoundingClientRect().height") - height) <= 1, "Comments height lost on reload"
                                 preview = row.locator('.nodeTitlePreview')
                                 bounds = preview.bounding_box()
                                 assert bounds

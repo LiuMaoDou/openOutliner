@@ -322,6 +322,9 @@ const COLLAPSED_WORKSPACES_STORAGE_KEY = "openoutliner.collapsed-workspaces:v1";
 const COLLAPSED_SYSTEM_TAGS_STORAGE_KEY = "openoutliner.collapsed-system-tags:v1";
 const SIDEBAR_WIDTH_STORAGE_KEY = "openoutliner.sidebar-width";
 const INSPECTOR_WIDTH_STORAGE_KEY = "openoutliner.inspector-width";
+const NOTES_HEIGHT_STORAGE_KEY = "openoutliner.comments-notes-height:v1";
+const MIN_NOTES_HEIGHT = 128;
+const MAX_NOTES_HEIGHT = 2400;
 export const SYSTEM_CALENDAR_WORKSPACE_ID = "system:calendar";
 export const SYSTEM_TAGS_WORKSPACE_ID = "system:tags";
 export const SYSTEM_RECYCLE_BIN_WORKSPACE_ID = "system:recycle-bin";
@@ -3273,6 +3276,42 @@ function OverdueTasks({ nodes, workspaces, onOpen }: {
 function NodeNotes({ node, onError, onTemporaryChange }: { node: FlatNodeData; onError: (error: unknown) => void; onTemporaryChange: (body: string) => void }) {
   const [value, setValue] = useState(() => readNodeDraft(node.id, "body") ?? node.body);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+
+    // The textarea is remounted when the selected node changes. Its height is
+    // a device-level Comments preference, not a property of the note itself.
+    try {
+      const stored = window.localStorage.getItem(NOTES_HEIGHT_STORAGE_KEY);
+      if (stored !== null) {
+        const height = Number(stored);
+        if (Number.isFinite(height) && height >= MIN_NOTES_HEIGHT && height <= MAX_NOTES_HEIGHT) {
+          input.style.height = `${Math.round(height)}px`;
+        }
+      }
+    } catch {
+      // Storage can be blocked; leave the native resize control usable.
+    }
+
+    if (typeof ResizeObserver === "undefined") return;
+    let previousHeight = Math.round(input.getBoundingClientRect().height);
+    const observer = new ResizeObserver(() => {
+      const height = Math.round(input.getBoundingClientRect().height);
+      if (height === previousHeight) return;
+      previousHeight = height;
+      if (height < MIN_NOTES_HEIGHT || height > MAX_NOTES_HEIGHT) return;
+      try {
+        window.localStorage.setItem(NOTES_HEIGHT_STORAGE_KEY, String(height));
+      } catch {
+        // Keep resizing usable even when preferences cannot be persisted.
+      }
+    });
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     const resolved = (event: Event) => {
       const detail = (event as CustomEvent<{ nodeId: string; field: string; value?: string }>).detail;
