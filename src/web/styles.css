@@ -2175,7 +2175,8 @@ body.isSelectingNodes .nodeTitlePreview {
   cursor: text;
 }
 
-/* Muted Morandi text selections; outline node rows remain unhighlighted. */
+/* Use the same muted text selection for workspace and outline titles. */
+.workspaceTitleInput::selection,
 .nodeTitle::selection,
 .nodeTitlePreview::selection,
 .nodeTitlePreview *::selection {
