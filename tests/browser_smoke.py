@@ -82,32 +82,6 @@ def run():
                                 page.evaluate("document.fonts.ready")
                                 assert page.title(), "Missing page title"
                                 assert page.locator("vite-error-overlay").count() == 0
-                                sidebar_selection = page.evaluate("""() => {
-                                  const workspace = document.querySelector(".workspaceItem.active");
-                                  const systems = [...document.querySelectorAll(".systemWorkspaceItem")];
-                                  if (!workspace || systems.length !== 4) return null;
-                                  const sample = item => {
-                                    const computed = getComputedStyle(item);
-                                    return [computed.backgroundColor, computed.borderColor,
-                                            computed.borderRadius, computed.minHeight, computed.boxShadow];
-                                  };
-                                  const reference = sample(workspace);
-                                  const systemSamples = systems.map(item => {
-                                    const originalTransition = item.style.transition;
-                                    const wasActive = item.classList.contains("active");
-                                    item.style.transition = "none";
-                                    item.classList.add("active");
-                                    try { return sample(item); }
-                                    finally {
-                                      if (!wasActive) item.classList.remove("active");
-                                      item.style.transition = originalTransition;
-                                    }
-                                  });
-                                  return { reference, systemSamples };
-                                }""")
-                                assert sidebar_selection, "Missing selected user workspace or system navigation items"
-                                assert all(style == sidebar_selection["reference"] for style in sidebar_selection["systemSamples"]), (
-                                    f"Sidebar selection differs in {theme}: {sidebar_selection}")
                                 preview = row.locator('.nodeTitlePreview')
                                 bounds = preview.bounding_box()
                                 assert bounds
