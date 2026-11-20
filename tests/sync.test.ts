@@ -34,6 +34,27 @@ describe("offline sync", () => {
     } finally { replica.close(); db.close(); }
   });
 
+  it("syncs independent conversions of the same legacy folder and retains an offline edit", () => {
+    const { db, service, sync } = fixture();
+    const replica = openDatabase(":memory:");
+    try {
+      const folder = service.createWorkspaceFolder("Projects");
+      const child = service.createWorkspace("Child", undefined, folder.id);
+      const base = snapshot(db);
+      replaceSnapshot(replica, base);
+      const local = new OutlinerService(replica);
+      local.mergeWorkspaceFolders();
+      const note = local.createNode({ parentId: child.rootNodeId, title: "Offline note" });
+      service.mergeWorkspaceFolders();
+
+      sync.push({ changes: changesBetween(base, snapshot(replica)) });
+
+      expect(service.listWorkspaces().filter(workspace => workspace.id === folder.id)).toHaveLength(1);
+      expect(service.getWorkspace(child.id).parentWorkspaceId).toBe(folder.id);
+      expect(service.getNode(note.id).title).toBe("Offline note");
+    } finally { replica.close(); db.close(); }
+  });
+
   it("applies sequential edits, deletion and reinsertion of one key in order", () => {
     const { db, node } = fixture();
     try {

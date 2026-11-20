@@ -15,6 +15,10 @@ export function dispatch(service: OutlinerService, method: string, address: stri
     return service.listWorkspaces();
   }
 
+  if (method === "POST" && path === "/api/workspaces/merge-folders") {
+    return service.mergeWorkspaceFolders();
+  }
+
   if (method === "POST" && path === "/api/system/today") return service.ensureTodayWorkspace();
 
   if (method === "GET" && path === "/api/due-reminders") {

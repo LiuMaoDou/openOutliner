@@ -21,7 +21,7 @@ OpenOutliner is a local-first outliner for notes, tasks, and schedules, inspired
 - Markdown keyboard shortcuts for bold, italic, strike, inline code, highlight, and clipboard links.
 - Dot-based node dragging with before/inside/after drop targets and a live multi-node drag preview.
 - Drag outline subtrees directly onto a workspace in the sidebar, or use the node action to convert an outline into a workspace.
-- Nested workspaces and workspace folders with drag reordering and persistent collapse/expand state.
+- A single workspace tree with drag reordering and persistent collapse and expand states.
 - Cross-workspace tag results, including opening matching nodes in their source workspace.
 - Responsive web UI with resizable desktop panels, a mobile workspace switcher, and a collapsible comments panel.
 - Virtualized outline rendering for large node lists.
@@ -90,9 +90,9 @@ Open `http://127.0.0.1:4317` while online first and let the app finish caching. 
 
 ### Workspaces
 
-- Create folders and nested workspaces from the sidebar.
-- Drag workspaces before, inside, or after another workspace or folder to reorganize them.
-- Workspace and folder collapse states persist after reload.
+- Create top-level and nested workspaces in the sidebar’s **Workspaces** tree. Existing folders become workspaces and keep their children.
+- Drag a workspace by its leading icon to move it before, inside, or after another workspace.
+- The leading icon shows a text file for a workspace without children and an open or closed folder for a workspace with children. Click the folder icon to expand or collapse the branch. The app remembers its state after reload.
 - Deleting a workspace permanently deletes all nested sub-workspaces and their outlines.
 - Moving an outline to another workspace preserves its subtree and opens the destination workspace with the moved outline selected.
 - On mobile, drag an outline to the left edge to reveal the workspace sidebar, then drop it onto the destination workspace.

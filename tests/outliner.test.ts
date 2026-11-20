@@ -27,7 +27,6 @@ import {
   applyMarkdownTextColor,
   buildSystemTagRows,
   clampPanelWidth,
-  createWorkspaceRequestBody,
   formatNodeDate,
   getChildCountLabel,
   getNodeEnterAction,
@@ -52,7 +51,6 @@ import {
   shouldHandleOutlineSelectAll,
   shouldHandleMultiSelectionDelete,
   shouldHandleMultiSelectionTab,
-  nextCollapsedWorkspaceFolderIds,
   splitMarkdownHighlights,
   splitMarkdownTextColors,
   splitTitleAtSelection,
@@ -669,6 +667,36 @@ describe("OutlinerService", () => {
     expect(() => service.getWorkspace(grandchild.id)).toThrow("Workspace not found");
   });
 
+  it("converts legacy folders into editable workspaces while preserving their hierarchy", () => {
+    const root = service.createWorkspace("Root");
+    const folder = service.createWorkspaceFolder("Projects");
+    const empty = service.createWorkspaceFolder("Empty");
+    const first = service.createWorkspace("First", undefined, folder.id);
+    const second = service.createWorkspace("Second", undefined, folder.id);
+    const nested = service.createWorkspace("Nested", undefined, null, first.id);
+    const outline = service.createNode({ parentId: nested.rootNodeId, title: "Keep this outline" });
+
+    const merged = dispatch(service, "POST", "/api/workspaces/merge-folders");
+    expect(merged.filter(workspace => workspace.parentWorkspaceId === null).map(workspace => workspace.id))
+      .toEqual([root.id, folder.id, empty.id]);
+    expect(merged.filter(workspace => workspace.parentWorkspaceId === folder.id).map(workspace => workspace.id))
+      .toEqual([first.id, second.id]);
+    expect(service.listWorkspaceFolders()).toEqual([]);
+    expect(service.getWorkspace(first.id)).toEqual({ ...first, folderId: null, parentWorkspaceId: folder.id });
+    expect(service.getWorkspace(nested.id)).toEqual(nested);
+    expect(service.getNode(outline.id)).toEqual(outline);
+    expect(service.getTree(service.getWorkspace(empty.id).rootNodeId).children).toEqual([]);
+    expect(dispatch(service, "POST", "/api/workspaces/merge-folders")).toEqual(merged);
+
+    const parent = dispatch(service, "PATCH", `/api/workspaces/${folder.id}`, {
+      name: "Active Projects", parentWorkspaceId: root.id, position: 0
+    });
+    expect(parent).toMatchObject({ id: folder.id, name: "Active Projects", parentWorkspaceId: root.id });
+    expect(service.getNode(parent.rootNodeId).title).toBe("Active Projects");
+    expect(service.getWorkspace(nested.id).parentWorkspaceId).toBe(first.id);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
   it.each(["root", "folder", "workspace"] as const)("deletes a workspace subtree and its related data from a %s container", container => {
     const folder = service.createWorkspaceFolder("Projects");
     const ancestor = service.createWorkspace("Ancestor");
@@ -727,6 +755,19 @@ describe("OutlinerService", () => {
     expect(workspaces.map(workspace => workspace.position)).toEqual([0, 1, 2]);
     expect(service.getWorkspace(alpha.id).position).toBe(1);
     expect(service.getWorkspace(beta.id).position).toBe(2);
+  });
+
+  it("uses sibling order when a legacy position has gaps and keeps Today pinned", () => {
+    const today = service.ensureTodayWorkspace();
+    const first = service.createWorkspace("First");
+    const second = service.createWorkspace("Second");
+    const third = service.createWorkspace("Third");
+    db.prepare("UPDATE workspaces SET position = 5 WHERE id = ?").run(third.id);
+
+    service.moveWorkspace(first.id, null, 2);
+
+    expect(service.listWorkspaces().map(workspace => [workspace.id, workspace.position]))
+      .toEqual([[today.id, -1], [second.id, 0], [third.id, 1], [first.id, 2]]);
   });
 
   it("moves workspaces inside folders and across folder boundaries", () => {
@@ -1475,30 +1516,6 @@ describe("import/export", () => {
   });
 });
 
-describe("workspace creation request body", () => {
-  it("uses an explicit folder id when creating a workspace for a folder", () => {
-    expect(createWorkspaceRequestBody(null, "project-folder")).toMatchObject({
-      name: "Untitled Workspace",
-      folderId: "project-folder"
-    });
-  });
-
-  it("creates a sibling of the selected workspace when no explicit container is provided", () => {
-    expect(createWorkspaceRequestBody({ folderId: "current-folder", parentWorkspaceId: "parent-workspace" }, undefined)).toMatchObject({
-      name: "Untitled Workspace",
-      folderId: null,
-      parentWorkspaceId: "parent-workspace"
-    });
-  });
-
-  it("preserves the selected workspace folder when creating a sibling", () => {
-    expect(createWorkspaceRequestBody({ folderId: "current-folder", parentWorkspaceId: null }, undefined)).toMatchObject({
-      folderId: "current-folder",
-      parentWorkspaceId: null
-    });
-  });
-});
-
 describe("workspace selection after deletion", () => {
   it("selects a remaining workspace when the current workspace is deleted", () => {
     expect(nextWorkspaceIdAfterDelete([
@@ -1526,14 +1543,6 @@ describe("workspace selection after deletion", () => {
       { id: "deleted", parentWorkspaceId: null },
       { id: "grandchild", parentWorkspaceId: "child" }
     ] as never, "deleted")).toBe("");
-  });
-});
-
-describe("workspace folder collapse state", () => {
-  it("toggles folder ids in the collapsed set", () => {
-    const collapsed = nextCollapsedWorkspaceFolderIds(new Set<string>(), "folder-a");
-    expect([...collapsed]).toEqual(["folder-a"]);
-    expect([...nextCollapsedWorkspaceFolderIds(collapsed, "folder-a")]).toEqual([]);
   });
 });
 

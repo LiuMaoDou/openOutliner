@@ -166,16 +166,48 @@ export class OutlinerService {
 
   listWorkspaces(): Workspace[] {
     return this.db
-      .prepare("SELECT * FROM workspaces ORDER BY parent_workspace_id ASC, folder_id ASC, position ASC, created_at ASC")
+      .prepare("SELECT * FROM workspaces ORDER BY parent_workspace_id ASC, folder_id ASC, position ASC, created_at ASC, id ASC")
       .all()
       .map(rowToWorkspace);
   }
 
   listWorkspaceFolders(): WorkspaceFolder[] {
     return this.db
-      .prepare("SELECT * FROM workspace_folders ORDER BY position ASC, created_at ASC")
+      .prepare("SELECT * FROM workspace_folders ORDER BY position ASC, created_at ASC, id ASC")
       .all()
       .map(rowToWorkspaceFolder);
+  }
+
+  mergeWorkspaceFolders(): Workspace[] {
+    return this.transaction(() => {
+      const folders = this.listWorkspaceFolders();
+      if (!folders.length) return this.listWorkspaces();
+
+      // Keep IDs and timestamps stable so replicas upgrading the same folders can sync.
+      const workspaceExists = this.db.prepare("SELECT 1 FROM workspaces WHERE id = ?");
+      const nodeExists = this.db.prepare("SELECT 1 FROM nodes WHERE id = ?");
+      const insertWorkspace = this.db.prepare(
+        "INSERT INTO workspaces (id, name, position, root_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      );
+      const insertRoot = this.db.prepare(
+        "INSERT INTO nodes (id, workspace_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+      );
+      const reparent = this.db.prepare(
+        "UPDATE workspaces SET parent_workspace_id = COALESCE(parent_workspace_id, ?), folder_id = NULL WHERE folder_id = ?"
+      );
+      let position = this.nextWorkspacePosition(null, null);
+      for (const folder of folders) {
+        let id = folder.id;
+        while (id === TODAY_WORKSPACE_ID || workspaceExists.get(id)) id = `folder:${id}`;
+        let rootId = `folder-root:${id}`;
+        while (nodeExists.get(rootId)) rootId = `folder-root:${rootId}`;
+        insertWorkspace.run(id, folder.name, position++, rootId, folder.createdAt, folder.updatedAt);
+        insertRoot.run(rootId, id, folder.name, folder.createdAt, folder.updatedAt);
+        reparent.run(id, folder.id);
+      }
+      this.db.exec("DELETE FROM workspace_folders;");
+      return this.listWorkspaces();
+    });
   }
 
   createWorkspaceFolder(name: string): WorkspaceFolder {
@@ -239,7 +271,7 @@ export class OutlinerService {
     const workspaceIcon = normalizeWorkspaceIcon(icon);
     const normalizedParentWorkspaceId = this.normalizeWorkspaceParentId(parentWorkspaceId);
     const normalizedFolderId = normalizedParentWorkspaceId ? null : this.normalizeWorkspaceFolderId(folderId);
-    const position = isToday ? -1 : this.countWorkspacesInContainer(normalizedFolderId, normalizedParentWorkspaceId);
+    const position = isToday ? -1 : this.nextWorkspacePosition(normalizedFolderId, normalizedParentWorkspaceId);
 
     this.transaction(() => {
       this.db
@@ -269,7 +301,7 @@ export class OutlinerService {
     const workspaceId = randomUUID();
     const workspaceName = name?.trim() || node.title.trim() || "Untitled Workspace";
     const workspaceIcon = normalizeWorkspaceIcon("layers");
-    const workspacePosition = this.countWorkspacesInContainer(null, sourceWorkspace.id);
+    const workspacePosition = this.nextWorkspacePosition(null, sourceWorkspace.id);
     const now = timestamp();
     const nodeTagRows = this.db
       .prepare(
@@ -455,34 +487,24 @@ export class OutlinerService {
     const workspace = this.getWorkspace(id);
     const nextParentWorkspaceId = this.normalizeWorkspaceParentId(parentWorkspaceId, id);
     const nextFolderId = nextParentWorkspaceId ? null : this.normalizeWorkspaceFolderId(folderId);
-    const targetCount = number(
-      (this.db
-        .prepare("SELECT COUNT(*) AS count FROM workspaces WHERE folder_id IS ? AND parent_workspace_id IS ? AND id != ?")
-        .get(nextFolderId, nextParentWorkspaceId, id) as Row).count
-    );
-    const targetPosition = clamp(position, 0, targetCount);
     const now = timestamp();
 
     this.transaction(() => {
-      this.db
-        .prepare(
-          `UPDATE workspaces
-           SET position = position - 1, updated_at = ?
-           WHERE folder_id IS ? AND parent_workspace_id IS ? AND position > ?`
-        )
-        .run(now, workspace.folderId, workspace.parentWorkspaceId, workspace.position);
-
-      this.db
-        .prepare(
-          `UPDATE workspaces
-           SET position = position + 1, updated_at = ?
-           WHERE folder_id IS ? AND parent_workspace_id IS ? AND id != ? AND position >= ?`
-        )
-        .run(now, nextFolderId, nextParentWorkspaceId, id, targetPosition);
-
-      this.db
-        .prepare("UPDATE workspaces SET folder_id = ?, parent_workspace_id = ?, position = ?, updated_at = ? WHERE id = ?")
-        .run(nextFolderId, nextParentWorkspaceId, targetPosition, now, id);
+      const siblings = this.db.prepare(
+        `SELECT id FROM workspaces WHERE folder_id IS ? AND parent_workspace_id IS ? AND id NOT IN (?, ?)
+         ORDER BY position ASC, created_at ASC, id ASC`
+      );
+      const setPosition = this.db.prepare("UPDATE workspaces SET position = ?, updated_at = ? WHERE id = ? AND position != ?");
+      const target = siblings.all(nextFolderId, nextParentWorkspaceId, id, TODAY_WORKSPACE_ID);
+      const targetPosition = clamp(position, 0, target.length);
+      target.splice(targetPosition, 0, { id });
+      if (workspace.folderId !== nextFolderId || workspace.parentWorkspaceId !== nextParentWorkspaceId) {
+        siblings.all(workspace.folderId, workspace.parentWorkspaceId, id, TODAY_WORKSPACE_ID)
+          .forEach((row, index) => setPosition.run(index, now, String(row.id), index));
+        this.db.prepare("UPDATE workspaces SET folder_id = ?, parent_workspace_id = ?, updated_at = ? WHERE id = ?")
+          .run(nextFolderId, nextParentWorkspaceId, now, id);
+      }
+      target.forEach((row, index) => setPosition.run(index, now, String(row.id), index));
     });
 
     return this.getWorkspace(id);
@@ -1843,11 +1865,11 @@ export class OutlinerService {
     return false;
   }
 
-  private countWorkspacesInContainer(folderId: string | null, parentWorkspaceId: string | null): number {
+  private nextWorkspacePosition(folderId: string | null, parentWorkspaceId: string | null): number {
     return number(
       (this.db
-        .prepare("SELECT COUNT(*) AS count FROM workspaces WHERE folder_id IS ? AND parent_workspace_id IS ?")
-        .get(folderId, parentWorkspaceId) as Row).count
+        .prepare("SELECT COALESCE(MAX(position) + 1, 0) AS next_position FROM workspaces WHERE folder_id IS ? AND parent_workspace_id IS ? AND id != ?")
+        .get(folderId, parentWorkspaceId, TODAY_WORKSPACE_ID) as Row).next_position
     );
   }
 
