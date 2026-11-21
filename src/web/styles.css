@@ -528,7 +528,7 @@ body.isResizingPanel .appShell {
 .sidebarFooter {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 3px;
   flex-shrink: 0;
   padding-top: 10px;
   border-top: 1px solid var(--border);
@@ -558,9 +558,25 @@ body.isResizingPanel .appShell {
   min-width: 30px;
 }
 
+.sidebarVersion {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .appShell.sidebarCollapsed .sidebarFooter {
   flex-direction: column;
+  gap: 8px;
   width: 100%;
+}
+
+.appShell.sidebarCollapsed .sidebarVersion {
+  font-size: 0.625rem;
 }
 
 .sidebarSearch {

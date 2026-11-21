@@ -1,4 +1,5 @@
 import { registerUpdateBarrier } from "./appUpdates";
+import { version as appVersion } from "../../package.json";
 import {
   Bold,
   Check,
@@ -2611,6 +2612,7 @@ export function App() {
           >
             {theme === "light" ? <Sun size={17} /> : theme === "dark" ? <Moon size={17} /> : <Monitor size={17} />}
           </button>
+          <span className="sidebarVersion" title={`OpenOutliner version ${appVersion}`}>v{appVersion}</span>
         </div>
         {!sidebarCompact && (
           <div
