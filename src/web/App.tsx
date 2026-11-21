@@ -15,6 +15,7 @@ import {
   FolderTree,
   Highlighter,
   Italic,
+  Languages,
   ListPlus,
   Ellipsis,
   EyeOff,
@@ -57,6 +58,7 @@ import {
   apiGet,
   apiPatch,
   apiPost,
+  requestEnglishTranslation,
   type OutlineHistoryResult,
   type OutlineHistoryState,
   type OutlineNode,
@@ -393,6 +395,8 @@ export function App() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [copyNotice, setCopyNotice] = useState(false);
   const copyNoticeTimerRef = useRef<number | undefined>(undefined);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const translatingRef = useRef(false);
   const [outlineHistory, setOutlineHistory] = useState<OutlineHistoryState>(EMPTY_OUTLINE_HISTORY);
   const [convertWorkspaceCandidate, setConvertWorkspaceCandidate] = useState<ConvertWorkspaceCandidate | null>(null);
   const [isConvertingWorkspace, setIsConvertingWorkspace] = useState(false);
@@ -2004,6 +2008,31 @@ export function App() {
     ]);
   };
 
+  const translateOutline = async (node: FlatNodeData, source: string) => {
+    if (translatingRef.current) return;
+    translatingRef.current = true;
+    setIsTranslating(true);
+    try {
+      await flushNodeDraft(node.id, "title");
+      const { text, hasDivider } = splitOutlineTitle(source);
+      const translated = await requestEnglishTranslation(text);
+      const next = formatOutlineTitle(translated, hasDivider);
+      if (next === source) return;
+
+      const state = flatStateRef.current;
+      const current = state && getNode(state, node.id);
+      if (!current || editingNodeIdRef.current === node.id || (readNodeDraft(node.id, "title") ?? current.title) !== source) {
+        throw new Error("The outline changed during translation. Open it and try again.");
+      }
+      beginNodeEdit(node.id, "title", source);
+      stageNodeDraft(node.id, "title", next, source);
+      await endNodeEdit(node.id, "title");
+    } finally {
+      translatingRef.current = false;
+      setIsTranslating(false);
+    }
+  };
+
   const expandWorkspace = (id: string) => {
     setCollapsedWorkspaceIds(current => {
       if (!current.has(id)) return current;
@@ -2663,10 +2692,10 @@ export function App() {
           </div>
         )}
 
-        {copyNotice && (
+        {(isTranslating || copyNotice) && (
           <div className="copyNotice" role="status" aria-live="polite">
-            <Check size={16} />
-            <span>Copied to clipboard</span>
+            {isTranslating ? <Languages size={16} /> : <Check size={16} />}
+            <span>{isTranslating ? "Translating into English…" : "Copied to clipboard"}</span>
           </div>
         )}
 
@@ -2935,6 +2964,8 @@ export function App() {
                           onTagError={toError(setError)}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
                           onSplitLines={title => splitNodeByLineBreaks(node, title)}
+                          onTranslate={title => translateOutline(node, title)}
+                          isTranslating={isTranslating}
                           onCopy={async () => {
                             const state = flatStateRef.current;
                             if (!state) return;
@@ -3193,6 +3224,8 @@ function NodeRow({
   onTagError,
   onConvertToWorkspace,
   onSplitLines,
+  onTranslate,
+  isTranslating,
   onCopy,
   onComplete,
   onDelete
@@ -3231,6 +3264,8 @@ function NodeRow({
   onTagError: (error: unknown) => void;
   onConvertToWorkspace: (title: string) => void;
   onSplitLines: (title: string) => Promise<void>;
+  onTranslate: (title: string) => Promise<void>;
+  isTranslating: boolean;
   onCopy: () => Promise<void>;
   onComplete: () => Promise<void>;
   onDelete: () => Promise<void>;
@@ -3348,7 +3383,7 @@ function NodeRow({
     const closeOnWindowBlur = () => closeMenus();
     const closeOnScroll = (event: Event) => {
       const target = event.target;
-      if (markdownMenu && target instanceof Node && markdownMenuRef.current?.contains(target)) return;
+      if (target instanceof Node && (markdownMenuRef.current?.contains(target) || nodeContextMenuRef.current?.contains(target))) return;
       closeMenus();
     };
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
@@ -3448,7 +3483,7 @@ function NodeRow({
 
   const openNodeContextMenu = (clientX: number, clientY: number) => {
     const menuWidth = 220;
-    const menuHeight = 230;
+    const menuHeight = 242;
     setMarkdownMenu(null);
     setNodeContextMenu({
       x: Math.max(12, Math.min(clientX, window.innerWidth - menuWidth - 12)),
@@ -4081,6 +4116,20 @@ function NodeRow({
           >
             <Copy size={16} />
             <span>Copy</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={isTranslating || !localTitle.trim()}
+            onClick={() => {
+              flushTitle(localTitle);
+              titleInputRef.current?.blur();
+              setNodeContextMenu(null);
+              void onTranslate(formatOutlineTitle(localTitle, hasDivider)).catch(onTagError);
+            }}
+          >
+            <Languages size={16} />
+            <span>Translation2Eng</span>
           </button>
           <button
             type="button"

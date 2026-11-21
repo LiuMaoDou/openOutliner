@@ -67,6 +67,9 @@ def run():
                          ["Reliability first title for selection", "Reliability second title", "Reliability third title"]]
                 blank = request(base, "/api/nodes", {"parentId": workspace["rootNodeId"], "title": ""})
                 with_notes = request(base, "/api/nodes", {"parentId": workspace["rootNodeId"], "title": "", "body": "Speaker notes"})
+                foreign = request(base, "/api/nodes", {
+                    "parentId": workspace["rootNodeId"], "title": "请确认会议时间。", "body": "Local meeting notes"
+                })
                 with sync_playwright() as p:
                     browser = p.chromium.launch()
                     try:
@@ -377,6 +380,30 @@ def run():
                                 blank_preview.click(button="right")
                                 menu.get_by_role("menuitem", name="Remove dividing line").click()
                                 divider.wait_for(state="detached")
+
+                                # The selected title is the only outline data sent. Failed requests keep it intact.
+                                foreign_title = page.locator(f'.nodeRow[data-node-id="{foreign["id"]}"] .nodeTitlePreview')
+                                translation_route = "**/api/translation/english"
+                                page.route(translation_route, lambda route: route.fulfill(
+                                    status=502, json={"error": "The translation provider returned HTTP 502."}))
+                                foreign_title.click(button="right")
+                                translate = menu.get_by_role("menuitem", name="Translation2Eng")
+                                translate.click()
+                                page.get_by_text("The translation provider returned HTTP 502.", exact=True).wait_for(state="visible")
+                                assert foreign_title.inner_text() == foreign["title"]
+                                page.locator(".errorBar button").click()
+
+                                translated = "Please confirm the meeting time."
+                                page.unroute(translation_route)
+                                page.route(translation_route, lambda route: route.fulfill(json={"text": translated}))
+                                foreign_title.click(button="right")
+                                with page.expect_request(translation_route) as outgoing:
+                                    translate.click()
+                                assert outgoing.value.post_data_json == {"text": foreign["title"]}
+                                foreign_title.get_by_text(translated, exact=True).wait_for(state="visible")
+                                assert page.locator(".nodeNotes").input_value() == foreign["body"]
+                                page.reload()
+                                foreign_title.get_by_text(translated, exact=True).wait_for(state="visible")
                                 assert not errors, errors
                                 print(f"PASS full app / {theme}: load, character selection, native selection, forward/reverse multi-row, transparent rows, persisted schema envelope upgrade")
                             finally:

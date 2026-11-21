@@ -5,6 +5,7 @@ import { SyncService } from "../services/sync.js";
 import { SyncConflict } from "../shared/sync.js";
 import { startWeChatReminders } from "../services/wechatReminders.js";
 import { authorized, login } from "./auth.js";
+import { readTranslationSettings, translateToEnglish, TranslationError } from "./translation.js";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -71,6 +72,11 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
 
   if (path === "/api/sync" && method === "GET") { sendJson(res, sync.pull()); return; }
   if (path === "/api/sync" && method === "POST") { sendJson(res, sync.push(await readJson(req))); return; }
+  if (path === "/api/translation/english" && method === "POST") {
+    const translated = await translateToEnglish(await readJson(req), await readTranslationSettings());
+    sendJson(res, { text: translated });
+    return;
+  }
   const result = dispatch(service, method, req.url ?? "/", method === "GET" ? {} : await readJson(req));
   if (path.startsWith("/api/export/")) sendText(res, result, path.endsWith("opml") ? "application/xml; charset=utf-8" : "text/markdown; charset=utf-8");
   else {
@@ -104,7 +110,7 @@ function sendText(res: ServerResponse, payload: string, contentType: string, sta
 function sendError(res: ServerResponse, error: unknown): void {
   if (error instanceof SyncConflict) { sendJson(res, { error: error.message, current: error.current, conflicts: error.conflicts }, 409); return; }
   const status =
-    error instanceof NotFoundError || error instanceof ValidationError ? error.statusCode : 500;
+    error instanceof NotFoundError || error instanceof ValidationError || error instanceof TranslationError ? error.statusCode : 500;
   sendJson(
     res,
     {

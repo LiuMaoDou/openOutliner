@@ -97,6 +97,12 @@ Open `http://127.0.0.1:4317` while online first and let the app finish caching. 
 - Moving an outline to another workspace preserves its subtree and opens the destination workspace with the moved outline selected.
 - On mobile, drag an outline to the left edge to reveal the workspace sidebar, then drop it onto the destination workspace.
 
+### Translate An Outline
+
+Right-click an outline and choose **Translation2Eng** to replace its title with an English translation. OpenOutliner sends the selected title to the configured provider and saves the result as a local edit.
+
+Configure an OpenAI-compatible Chat Completions provider in the server environment or the project's ignored `.env.local` file. Set `OPENOUTLINER_TRANSLATION_BASE_URL` to its API base URL (usually ending in `/v1`), `OPENOUTLINER_TRANSLATION_MODEL` to the model ID, and `OPENOUTLINER_TRANSLATION_API_KEY` to the provider key.
+
 ## Calendar And Reminders
 
 - Assign a due date to an outline to include it in the calendar.

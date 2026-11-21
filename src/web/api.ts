@@ -24,3 +24,17 @@ export async function apiDelete<T>(path: string): Promise<T> {
 export async function apiText(path: string): Promise<string> {
   return localRequest<string>(path);
 }
+
+export async function requestEnglishTranslation(text: string): Promise<string> {
+  const response = await fetch("/api/translation/english", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+    signal: AbortSignal.timeout(35_000)
+  }).catch(() => {
+    throw new Error("Could not reach the translation server. Check the connection and try again.");
+  });
+  const result = await response.json().catch(() => null);
+  if (response.ok && typeof result?.text === "string" && result.text.trim()) return result.text;
+  throw new Error(typeof result?.error === "string" ? result.error : "The translation server did not return a translation.");
+}
