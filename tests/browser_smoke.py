@@ -198,7 +198,7 @@ def run():
                                 preview = primary_row.locator('.nodeTitlePreview')
                                 title_editor = primary_row.locator('textarea.nodeTitle')
                                 base_color = preview.evaluate("e => getComputedStyle(e).color")
-                                calendar_color = {"light": "rgb(41, 76, 61)", "dark": "rgb(210, 240, 223)"}[theme]
+                                calendar_color = {"light": "rgb(25, 66, 123)", "dark": "rgb(194, 220, 255)"}[theme]
                                 delete_color = {"light": "rgb(149, 94, 107)", "dark": "rgb(224, 173, 184)"}[theme]
                                 primary_row.locator('.nodeDateAddButton').hover()
                                 page.wait_for_function(
