@@ -65,6 +65,8 @@ def run():
                 workspace = request(base, "/api/workspaces")[0]
                 nodes = [request(base, "/api/nodes", {"parentId": workspace["rootNodeId"], "title": title}) for title in
                          ["Reliability first title for selection", "Reliability second title", "Reliability third title"]]
+                blank = request(base, "/api/nodes", {"parentId": workspace["rootNodeId"], "title": ""})
+                with_notes = request(base, "/api/nodes", {"parentId": workspace["rootNodeId"], "title": "", "body": "Speaker notes"})
                 with sync_playwright() as p:
                     browser = p.chromium.launch()
                     try:
@@ -315,7 +317,7 @@ def run():
                                     };
                                   });
                                 }""")
-                                # Right-click uses the date-hover color and toggles a saved divider on the same row.
+                                # Right-click uses the date-hover color and only empty outlines can become dividers.
                                 preview = row.locator('.nodeTitlePreview')
                                 plain_color = preview.evaluate("e => getComputedStyle(e).color")
                                 menu = page.get_by_role("menu", name="Outline actions")
@@ -326,6 +328,8 @@ def run():
                                       document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
                                     ).color === color""",
                                     arg={"id": nodes[0]["id"], "color": calendar_color})
+                                add_divider = menu.get_by_role("menuitem", name="Dividing line", exact=True)
+                                assert add_divider.is_disabled()
                                 page.keyboard.press("Escape")
                                 menu.wait_for(state="detached")
                                 page.wait_for_function(
@@ -333,6 +337,11 @@ def run():
                                       document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
                                     ).color === color""",
                                     arg={"id": nodes[0]["id"], "color": plain_color})
+                                notes_row = page.locator(f'.nodeRow[data-node-id="{with_notes["id"]}"]')
+                                notes_row.locator('.nodeTitlePreview').click(button="right")
+                                assert add_divider.is_disabled()
+                                page.keyboard.press("Escape")
+                                menu.wait_for(state="detached")
                                 page.evaluate("""id => {
                                   window.dividerSaved = false;
                                   window.addEventListener("outliner-draft-saved", ({detail}) => {
@@ -340,17 +349,25 @@ def run():
                                       window.dividerSaved = true;
                                     }
                                   });
-                                }""", nodes[0]["id"])
-                                preview.click(button="right")
-                                menu.get_by_role("menuitem", name="Dividing line", exact=True).click()
-                                divider = row.get_by_role("separator", name="Dividing line")
+                                }""", blank["id"])
+                                blank_row = page.locator(f'.nodeRow[data-node-id="{blank["id"]}"]')
+                                blank_preview = blank_row.locator('.nodeTitlePreview')
+                                blank_preview.click(button="right")
+                                add_divider.click()
+                                divider = blank_row.get_by_role("separator", name="Dividing line")
                                 divider.wait_for(state="visible")
                                 page.wait_for_function("window.dividerSaved")
-                                assert row.locator('textarea.nodeTitle').input_value() == nodes[0]["title"]
+                                assert blank_row.locator('textarea.nodeTitle').input_value() == ""
                                 assert divider.evaluate("e => getComputedStyle(e).borderTopWidth") == "1px"
+                                assert divider.evaluate("""line => {
+                                  const preview = line.parentElement.getBoundingClientRect();
+                                  const rule = line.getBoundingClientRect();
+                                  return rule.width > 0 && rule.left - preview.left < 12 && preview.right - rule.right < 12 &&
+                                    Math.abs((rule.top + rule.bottom) - (preview.top + preview.bottom)) < 2;
+                                }"""), "The divider should span the title area of the blank row"
                                 page.reload()
                                 divider.wait_for(state="visible")
-                                preview.click(button="right")
+                                blank_preview.click(button="right")
                                 menu.get_by_role("menuitem", name="Remove dividing line").click()
                                 divider.wait_for(state="detached")
                                 assert not errors, errors

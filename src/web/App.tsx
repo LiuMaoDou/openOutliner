@@ -3246,6 +3246,9 @@ function NodeRow({
   const [storedTitle, setStoredTitle] = useState(() => readNodeDraft(node.id, "title") ?? node.title);
   const { text: localTitle, hasDivider } = splitOutlineTitle(storedTitle);
   const { text: previewTitle } = splitOutlineTitle(node.title);
+  const hasOutlineContent = Boolean(node.body.trim() || node.childIds.length);
+  const canAddDivider = !localTitle.trim() && !hasOutlineContent;
+  const showDivider = hasDivider && !previewTitle.trim() && !hasOutlineContent;
   const setLocalTitle = (text: string) => setStoredTitle(formatOutlineTitle(text, hasDivider));
   const lastStagedTitleRef = useRef(storedTitle);
   const [markdownMenu, setMarkdownMenu] = useState<MarkdownContextMenuState | null>(null);
@@ -3884,6 +3887,8 @@ function NodeRow({
                 {previewTitle}
               </ReactMarkdown>
             )
+          ) : showDivider ? (
+            <hr className="nodeDivider" aria-label="Dividing line" />
           ) : (
             <span className="nodeTitlePlaceholder">Untitled</span>
           )}
@@ -3971,7 +3976,6 @@ function NodeRow({
       <button className="iconButton danger" type="button" title="Delete" onClick={() => onDelete()}>
         <Trash2 size={15} />
       </button>
-      {hasDivider && <hr className="nodeDivider" aria-label="Dividing line" />}
       {markdownMenu && createPortal(
         <div
           ref={markdownMenuRef}
@@ -4097,6 +4101,7 @@ function NodeRow({
           <button
             type="button"
             role="menuitem"
+            disabled={!hasDivider && !canAddDivider}
             onClick={() => {
               setNodeContextMenu(null);
               setStoredTitle(formatOutlineTitle(localTitle, !hasDivider));
