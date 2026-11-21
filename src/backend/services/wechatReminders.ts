@@ -1,3 +1,4 @@
+import { splitOutlineTitle } from "../shared/outlineTitle.js";
 import { randomUUID } from "node:crypto";
 import type { SqlDatabase } from "../shared/sql.js";
 import { OutlinerService } from "./outliner.js";
@@ -92,7 +93,7 @@ export class WeChatReminderService {
       for (const node of nodes) {
         const days = Math.round((Date.parse(`${node.dueDate}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000);
         const status = days < 0 ? `逾期 ${-days} 天` : days === 0 ? "今天到期" : `还有 ${days} 天到期`;
-        const line = `• ${compact(node.title) || "未命名任务"}\n  ${compact(workspaces.get(node.workspaceId) ?? "")} · ${node.dueDate} · ${status}`;
+        const line = `• ${compact(splitOutlineTitle(node.title).text) || "未命名任务"}\n  ${compact(workspaces.get(node.workspaceId) ?? "")} · ${node.dueDate} · ${status}`;
         // Xtuis supports at most 64 KB. Leave room for form encoding and the summary footer.
         if (Buffer.byteLength(new URLSearchParams({ desp: `${header}${lines.join("\n")}\n${line}` }).toString()) > 60_000) break;
         lines.push(line);

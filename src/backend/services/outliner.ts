@@ -1,5 +1,6 @@
 import { resolveTagColor, tagColorForName } from "../shared/tagColors.js";
 import { TODAY_ROOT_NODE_ID, TODAY_WORKSPACE_ID } from "../shared/systemWorkspaces.js";
+import { formatOutlineTitle, splitOutlineTitle } from "../shared/outlineTitle.js";
 export { morandiTagColors, tagColorForName } from "../shared/tagColors.js";
 
 const randomUUID = () => globalThis.crypto.randomUUID();
@@ -299,7 +300,7 @@ export class OutlinerService {
     }
 
     const workspaceId = randomUUID();
-    const workspaceName = name?.trim() || node.title.trim() || "Untitled Workspace";
+    const workspaceName = name?.trim() || splitOutlineTitle(node.title).text.trim() || "Untitled Workspace";
     const workspaceIcon = normalizeWorkspaceIcon("layers");
     const workspacePosition = this.nextWorkspacePosition(null, sourceWorkspace.id);
     const now = timestamp();
@@ -646,10 +647,12 @@ export class OutlinerService {
 
     if (sets.length === 0) return node;
     fields.sort();
+    const nextDivider = input.title !== undefined ? splitOutlineTitle(input.title).hasDivider : undefined;
+    const dividerChanged = nextDivider !== undefined && nextDivider !== splitOutlineTitle(node.title).hasDivider;
     return this.recordOutlineMutation(
       node.workspaceId,
-      outlineUpdateLabel(fields),
-      `update:${id}:${fields.join(",")}`,
+      dividerChanged ? (nextDivider ? "Add dividing line" : "Remove dividing line") : outlineUpdateLabel(fields),
+      dividerChanged ? null : `update:${id}:${fields.join(",")}`,
       () => {
         sets.push("updated_at = ?");
         values.push(timestamp(), id);
@@ -922,7 +925,8 @@ export class OutlinerService {
   splitNodeByLineBreaks(id: string, title?: string): OutlineNode[] {
     const node = this.getNode(id);
     if (!node.parentId) throw new ValidationError("Workspace root nodes cannot be split.");
-    const lines = (title ?? node.title)
+    const { text: outlineText, hasDivider } = splitOutlineTitle(title ?? node.title);
+    const lines = outlineText
       .replace(/\r\n?/g, "\n")
       .split("\n")
       .map(line => line.trim())
@@ -939,7 +943,8 @@ export class OutlinerService {
              WHERE workspace_id = ? AND parent_id IS ? AND deleted_at IS NULL AND position > ?`
           )
           .run(createdIds.length, now, node.workspaceId, node.parentId, node.position);
-        this.db.prepare("UPDATE nodes SET title = ?, updated_at = ? WHERE id = ?").run(lines[0], now, node.id);
+        this.db.prepare("UPDATE nodes SET title = ?, updated_at = ? WHERE id = ?")
+          .run(formatOutlineTitle(lines[0], hasDivider), now, node.id);
 
         const insert = this.db.prepare(
           `INSERT INTO nodes (

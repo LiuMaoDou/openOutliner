@@ -1,3 +1,4 @@
+import { outlineTitleLabel } from "../backend/shared/outlineTitle"
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { CalendarDays, ChevronLeft, ChevronRight, List } from "lucide-react"
 import { apiGet, type OutlineNode, type Workspace } from "./api"
@@ -94,10 +95,10 @@ export function Calendar({ workspaces, search, onOpen }: {
   }
   const eventList = (items: OutlineNode[]) => items.map(node => (
     <button className={`calendarAgendaEvent${node.done ? " isDone" : ""}`} key={node.id} type="button"
-      title={`${node.title || "Untitled"}\n${workspaceNames.get(node.workspaceId) ?? "Workspace"}${node.done ? " · Completed" : ""}`}
+      title={`${outlineTitleLabel(node.title)}\n${workspaceNames.get(node.workspaceId) ?? "Workspace"}${node.done ? " · Completed" : ""}`}
       style={{ "--event-color": workspaceColor(node.workspaceId) } as CSSProperties} onClick={() => onOpen(node)}>
       <span className="calendarEventTime">All day</span>
-      <span className="calendarEventContent"><strong title={node.title || "Untitled"}>{node.title || "Untitled"}</strong>
+      <span className="calendarEventContent"><strong title={outlineTitleLabel(node.title)}>{outlineTitleLabel(node.title)}</strong>
         <small title={workspaceNames.get(node.workspaceId) ?? "Workspace"}>{workspaceNames.get(node.workspaceId) ?? "Workspace"}{node.done ? " · Completed" : ""}</small></span>
     </button>
   ))
@@ -158,7 +159,7 @@ export function Calendar({ workspaces, search, onOpen }: {
                   </div>}
                   <div className="calendarDayEvents">{events.slice(0, 3).map(node => <button type="button" key={node.id}
                     className={`calendarChip${node.done ? " isDone" : ""}`} style={{ "--event-color": workspaceColor(node.workspaceId) } as CSSProperties}
-                    title={`${node.title || "Untitled"} · ${workspaceNames.get(node.workspaceId) ?? "Workspace"}`} onClick={() => onOpen(node)}>{node.title || "Untitled"}</button>)}</div>
+                    title={`${outlineTitleLabel(node.title)} · ${workspaceNames.get(node.workspaceId) ?? "Workspace"}`} onClick={() => onOpen(node)}>{outlineTitleLabel(node.title)}</button>)}</div>
                   {events.length > 0 && <button type="button" className={`calendarMore${events.length <= 3 ? " mobileOnly" : ""}`}
                     aria-label={`View ${events.length} items for ${dayFormat.format(date)}`} onClick={() => selectDay(key)}>
                     <span className="calendarDesktopCount">{events.length > 3 ? `+${events.length - 3} more` : ""}</span>

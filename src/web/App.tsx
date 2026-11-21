@@ -18,6 +18,7 @@ import {
   ListPlus,
   Ellipsis,
   EyeOff,
+  Minus,
   Monitor,
   Moon,
   Palette,
@@ -74,6 +75,7 @@ import { rehypeTitleFormatting, sourceOffsetForText } from "./titleSourceMap";
 import { getDueReminderCutoff, getDueReminderNodes } from "./dueTasks";
 import { Calendar } from "./Calendar";
 import { TODAY_WORKSPACE_ID } from "../backend/shared/systemWorkspaces";
+import { formatOutlineTitle, outlineTitleLabel, splitOutlineTitle } from "../backend/shared/outlineTitle";
 import { SyncPanel } from "./SyncPanel";
 import { activatePrivacyScreen } from "./PrivacyScreen";
 import { useInlineTagInput } from "./InlineTagInput";
@@ -1759,7 +1761,7 @@ export function App() {
     }
     const title = draggingIds.length > 1
       ? `${draggingIds.length} nodes`
-      : readNodeDraft(node.id, "title") ?? localNodeTitlesRef.current.get(node.id) ?? node.title;
+      : outlineTitleLabel(readNodeDraft(node.id, "title") ?? localNodeTitlesRef.current.get(node.id) ?? node.title);
     setDragState({ draggingIds, movingIds, title, x: event.clientX, y: event.clientY });
     document.body.classList.add("isDraggingNode");
 
@@ -3073,8 +3075,8 @@ function OverdueTasks({ nodes, workspaces, onOpen }: {
         <div className="overdueList">
           {nodes.map(node => (
             <button type="button" key={node.id} onClick={() => onOpen(node)}
-              title={`${workspaces.find(workspace => workspace.id === node.workspaceId)?.name ?? ""} / ${node.title || "Untitled"}`}>
-              <span>{node.title || "Untitled"}</span>
+              title={`${workspaces.find(workspace => workspace.id === node.workspaceId)?.name ?? ""} / ${outlineTitleLabel(node.title)}`}>
+              <span>{outlineTitleLabel(node.title)}</span>
               <time dateTime={node.dueDate ?? undefined}>
                 {node.dueDate ? new Date(`${node.dueDate}T00:00:00`).toLocaleDateString(undefined, {
                   month: "short",
@@ -3241,8 +3243,11 @@ function NodeRow({
   const nodeContextMenuRef = useRef<HTMLDivElement | null>(null);
   const onCompositionChangeRef = useRef(onCompositionChange);
   onCompositionChangeRef.current = onCompositionChange;
-  const [localTitle, setLocalTitle] = useState(() => readNodeDraft(node.id, "title") ?? node.title);
-  const lastStagedTitleRef = useRef(localTitle);
+  const [storedTitle, setStoredTitle] = useState(() => readNodeDraft(node.id, "title") ?? node.title);
+  const { text: localTitle, hasDivider } = splitOutlineTitle(storedTitle);
+  const { text: previewTitle } = splitOutlineTitle(node.title);
+  const setLocalTitle = (text: string) => setStoredTitle(formatOutlineTitle(text, hasDivider));
+  const lastStagedTitleRef = useRef(storedTitle);
   const [markdownMenu, setMarkdownMenu] = useState<MarkdownContextMenuState | null>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3252,7 +3257,7 @@ function NodeRow({
       if (detail.nodeId !== node.id || detail.field !== "title" || detail.value === undefined) return;
       if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
       lastStagedTitleRef.current = detail.value;
-      setLocalTitle(detail.value);
+      setStoredTitle(detail.value);
     };
     window.addEventListener("outliner-draft-resolved", resolved);
     return () => window.removeEventListener("outliner-draft-resolved", resolved);
@@ -3265,7 +3270,7 @@ function NodeRow({
     if (document.activeElement === titleInputRef.current) return;
     const next = readNodeDraft(node.id, "title") ?? node.title;
     lastStagedTitleRef.current = next;
-    setLocalTitle(next);
+    setStoredTitle(next);
   }, [node.title]);
 
   const stageTitle = useCallback((title: string) => {
@@ -3276,24 +3281,26 @@ function NodeRow({
   }, [node.id, node.title, onCacheTitle]);
 
   // Flush local title to global state
-  const flushTitle = useCallback((title: string) => {
+  const flushTitle = useCallback((title: string, divider = hasDivider) => {
     if (syncTimerRef.current) {
       clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
     }
-    stageTitle(title);
-    onPatchLocal({ title });
-  }, [stageTitle, onPatchLocal]);
+    const next = formatOutlineTitle(title, divider);
+    stageTitle(next);
+    onPatchLocal({ title: next });
+  }, [hasDivider, stageTitle, onPatchLocal]);
 
   // Debounced sync during typing
   const syncTitleDebounced = useCallback((title: string) => {
-    stageTitle(title);
+    const next = formatOutlineTitle(title, hasDivider);
+    stageTitle(next);
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
-      onPatchLocal({ title });
+      onPatchLocal({ title: next });
       syncTimerRef.current = null;
     }, 300);
-  }, [stageTitle, onPatchLocal]);
+  }, [hasDivider, stageTitle, onPatchLocal]);
 
   const inlineTags = useInlineTagInput({
     nodeId: node.id, value: localTitle, inputRef: titleInputRef, tags: tagCatalog,
@@ -3460,7 +3467,7 @@ function NodeRow({
     .join(" ");
   const childCountLabel = getChildCountLabel(node.childIds.length);
   const hasComments = node.body.trim().length > 0;
-  const renderTitleLiterally = isMarkdownThematicBreak(node.title);
+  const renderTitleLiterally = isMarkdownThematicBreak(previewTitle);
   const openDatePicker = () => {
     const input = dateInputRef.current;
     if (!input) return;
@@ -3507,7 +3514,7 @@ function NodeRow({
     const startX = event.clientX;
     const startY = event.clientY;
     const startOffset = fromPreview
-      ? getPreviewSelectionStart(event.currentTarget, startX, startY, node.title)
+      ? getPreviewSelectionStart(event.currentTarget, startX, startY, previewTitle)
       : input.selectionStart;
     let mode: "text" | "nodes" = "text";
 
@@ -3634,7 +3641,7 @@ function NodeRow({
         className="iconButton nodeMenuButton"
         type="button"
         title="More outline actions"
-        aria-label={`More actions for ${node.title || "Untitled"}`}
+        aria-label={`More actions for ${previewTitle || "Untitled"}`}
         aria-haspopup="menu"
         aria-expanded={Boolean(nodeContextMenu)}
         disabled={node.id.startsWith("temp-")}
@@ -3802,14 +3809,14 @@ function NodeRow({
               const action = getNodeEnterAction(localTitle, input.selectionStart, input.selectionEnd);
               if (action.type === "insert-before") {
                 flushTitle(localTitle);
-                onCreateBefore(localTitle);
+                onCreateBefore(formatOutlineTitle(localTitle, hasDivider));
                 return;
               }
               const { currentTitle, nextTitle } = action;
               // Batch all state updates: flush current title + create new node
               setLocalTitle(currentTitle);
               flushTitle(currentTitle);
-              onCreateAfter(nextTitle, currentTitle);
+              onCreateAfter(nextTitle, formatOutlineTitle(currentTitle, hasDivider));
             } else if (event.key === "Tab") {
               event.preventDefault();
               if (event.shiftKey) onOutdent();
@@ -3844,9 +3851,9 @@ function NodeRow({
             if (!onMouseSelect(event)) return;
           }}
         >
-          {node.title.trim() ? (
+          {previewTitle.trim() ? (
             renderTitleLiterally ? (
-              <span><span className="nodeTitleInlineText">{node.title}</span></span>
+              <span><span className="nodeTitleInlineText">{previewTitle}</span></span>
             ) : (
               <ReactMarkdown
                 allowedElements={["p", "strong", "em", "del", "code", "a", "br", "mark", "span"]}
@@ -3874,7 +3881,7 @@ function NodeRow({
                   p: ({ children }) => <span><span className="nodeTitleInlineText">{children}</span></span>
                 }}
               >
-                {node.title}
+                {previewTitle}
               </ReactMarkdown>
             )
           ) : (
@@ -3897,7 +3904,7 @@ function NodeRow({
           className="nodeDatePicker"
           type="date"
           value={node.dueDate ?? ""}
-          aria-label={`Date for ${node.title || "Untitled"}`}
+          aria-label={`Date for ${previewTitle || "Untitled"}`}
           onChange={event => commitDueDate(event.target.value || null)}
         />
         {node.dueDate ? (
@@ -3964,6 +3971,7 @@ function NodeRow({
       <button className="iconButton danger" type="button" title="Delete" onClick={() => onDelete()}>
         <Trash2 size={15} />
       </button>
+      {hasDivider && <hr className="nodeDivider" aria-label="Dividing line" />}
       {markdownMenu && createPortal(
         <div
           ref={markdownMenuRef}
@@ -4089,13 +4097,26 @@ function NodeRow({
           <button
             type="button"
             role="menuitem"
+            onClick={() => {
+              setNodeContextMenu(null);
+              setStoredTitle(formatOutlineTitle(localTitle, !hasDivider));
+              flushTitle(localTitle, !hasDivider);
+              void flushNodeDraft(node.id, "title").catch(onTagError);
+            }}
+          >
+            <Minus size={16} />
+            <span>{hasDivider ? "Remove dividing line" : "Dividing line"}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
             disabled={!/[\r\n]/.test(localTitle)}
             onClick={() => {
               const split = async () => {
                 flushTitle(localTitle);
                 if (!node.id.startsWith("temp-")) await flushNodeDraft(node.id, "title");
                 setNodeContextMenu(null);
-                await onSplitLines(localTitle);
+                await onSplitLines(formatOutlineTitle(localTitle, hasDivider));
               };
               void split().catch(onTagError);
             }}
@@ -4137,7 +4158,7 @@ function TagResultRow({
   return (
     <div className={selected ? "tagResultRow selected" : "tagResultRow"}>
       <button className="tagResultMain" type="button" onClick={onOpen}>
-        <span className="tagResultTitle">{result.node.title || "Untitled"}</span>
+        <span className="tagResultTitle">{outlineTitleLabel(result.node.title)}</span>
         <span className="tagResultWorkspace">{result.workspace.name}</span>
         {result.node.body && <span className="tagResultBody">{result.node.body}</span>}
       </button>
@@ -4180,7 +4201,7 @@ function RecycleBinRow({
     <article className="recycleBinRow">
       <div className="recycleBinMain">
         <div className="recycleBinHeading">
-          <span className="recycleBinTitle">{entry.node.title || "Untitled"}</span>
+          <span className="recycleBinTitle">{outlineTitleLabel(entry.node.title)}</span>
           <span className="recycleBinWorkspace">{entry.workspace.name}</span>
         </div>
         {entry.node.body && <p className="recycleBinBody">{entry.node.body}</p>}
@@ -4194,7 +4215,7 @@ function RecycleBinRow({
             <div>
               {entry.descendants.map(node => (
                 <div className="recycleBinChild" key={node.id} style={{ "--recycle-depth": depthFor(node) } as CSSProperties}>
-                  <span>{node.title || "Untitled"}</span>
+                  <span>{outlineTitleLabel(node.title)}</span>
                   {node.body && <small>{node.body}</small>}
                 </div>
               ))}
@@ -4276,8 +4297,8 @@ function SystemTaggedNodeRow({
     ? result.path
     : [{ id: result.node.id, title: result.node.title, position: result.node.position }];
   const target = path[path.length - 1];
-  const ancestorTitles = path.slice(0, -1).map(segment => segment.title || "Untitled");
-  const targetTitle = target.title || "Untitled";
+  const ancestorTitles = path.slice(0, -1).map(segment => outlineTitleLabel(segment.title));
+  const targetTitle = outlineTitleLabel(target.title);
   const breadcrumbTitle = `${result.workspace.name} · ${[...ancestorTitles, targetTitle].join(" / ")}`;
 
   return (

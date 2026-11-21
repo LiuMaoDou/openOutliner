@@ -315,6 +315,44 @@ def run():
                                     };
                                   });
                                 }""")
+                                # Right-click uses the date-hover color and toggles a saved divider on the same row.
+                                preview = row.locator('.nodeTitlePreview')
+                                plain_color = preview.evaluate("e => getComputedStyle(e).color")
+                                menu = page.get_by_role("menu", name="Outline actions")
+                                preview.click(button="right")
+                                menu.wait_for(state="visible")
+                                page.wait_for_function(
+                                    """({id, color}) => getComputedStyle(
+                                      document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
+                                    ).color === color""",
+                                    arg={"id": nodes[0]["id"], "color": calendar_color})
+                                page.keyboard.press("Escape")
+                                menu.wait_for(state="detached")
+                                page.wait_for_function(
+                                    """({id, color}) => getComputedStyle(
+                                      document.querySelector(`.nodeRow[data-node-id="${id}"] .nodeTitlePreview`)
+                                    ).color === color""",
+                                    arg={"id": nodes[0]["id"], "color": plain_color})
+                                page.evaluate("""id => {
+                                  window.dividerSaved = false;
+                                  window.addEventListener("outliner-draft-saved", ({detail}) => {
+                                    if (detail.nodeId === id && detail.field === "title" && detail.value.endsWith("\\n\\n---")) {
+                                      window.dividerSaved = true;
+                                    }
+                                  });
+                                }""", nodes[0]["id"])
+                                preview.click(button="right")
+                                menu.get_by_role("menuitem", name="Dividing line", exact=True).click()
+                                divider = row.get_by_role("separator", name="Dividing line")
+                                divider.wait_for(state="visible")
+                                page.wait_for_function("window.dividerSaved")
+                                assert row.locator('textarea.nodeTitle').input_value() == nodes[0]["title"]
+                                assert divider.evaluate("e => getComputedStyle(e).borderTopWidth") == "1px"
+                                page.reload()
+                                divider.wait_for(state="visible")
+                                preview.click(button="right")
+                                menu.get_by_role("menuitem", name="Remove dividing line").click()
+                                divider.wait_for(state="detached")
                                 assert not errors, errors
                                 print(f"PASS full app / {theme}: load, character selection, native selection, forward/reverse multi-row, transparent rows, persisted schema envelope upgrade")
                             finally:

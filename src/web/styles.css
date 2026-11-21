@@ -2080,6 +2080,13 @@ body.isSelectingNodes .nodeTitlePreview {
   cursor: text;
 }
 
+.nodeDivider {
+  grid-column: 4 / -1;
+  margin: 0 8px 2px;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
 /* Link distant actions to their outline without changing the row background. */
 .nodeTitlePreview,
 .nodeTitlePreview .nodeTitleLink {
@@ -2087,6 +2094,8 @@ body.isSelectingNodes .nodeTitlePreview {
 }
 
 .nodeRow:has(.nodeDateControl button:is(:hover, :focus-visible))
+  :is(.nodeTitle, .nodeTitlePreview, .nodeTitleLink),
+.nodeRow:has(> .nodeMenuButton[aria-expanded="true"])
   :is(.nodeTitle, .nodeTitlePreview, .nodeTitleLink) {
   color: var(--node-calendar-hover-title);
 }

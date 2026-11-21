@@ -1,5 +1,6 @@
 import { dispatch } from "../src/backend/shared/dispatch.js";
 import { TODAY_WORKSPACE_ID } from "../src/backend/shared/systemWorkspaces.js";
+import { formatOutlineTitle } from "../src/backend/shared/outlineTitle.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -239,6 +240,24 @@ describe("OutlinerService", () => {
     expect(service.getOutlineHistoryState(workspace.id).canRedo).toBe(false);
     service.undoOutline(workspace.id);
     expect(service.getNode(node.id).body).toBe("");
+  });
+
+  it("undoes a dividing line independently and keeps it on the original outline when splitting", () => {
+    const workspace = service.createWorkspace("Notes");
+    const node = service.createNode({ parentId: workspace.rootNodeId, title: "Original" });
+    const text = "Slides and notes\nReview introduction";
+    const divided = formatOutlineTitle(text, true);
+    service.updateNode(node.id, { title: text });
+    service.updateNode(node.id, { title: divided });
+
+    expect(service.getOutlineHistoryState(workspace.id).undoLabel).toBe("Add dividing line");
+    expect(service.undoOutline(workspace.id).tree.children[0].title).toBe(text);
+    expect(service.redoOutline(workspace.id).tree.children[0].title).toBe(divided);
+    expect(service.splitNodeByLineBreaks(node.id).map(item => item.title)).toEqual([
+      formatOutlineTitle("Slides and notes", true), "Review introduction"
+    ]);
+    service.updateNode(node.id, { title: "Slides and notes" });
+    expect(service.getOutlineHistoryState(workspace.id).undoLabel).toBe("Remove dividing line");
   });
 
   it("undoes and redoes subtree deletion and ordered multi-node moves", () => {
