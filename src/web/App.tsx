@@ -77,7 +77,7 @@ import { rehypeTitleFormatting, sourceOffsetForText } from "./titleSourceMap";
 import { getDueReminderCutoff, getDueReminderNodes } from "./dueTasks";
 import { Calendar } from "./Calendar";
 import { TODAY_WORKSPACE_ID } from "../backend/shared/systemWorkspaces";
-import { formatOutlineTitle, outlineTitleLabel, splitOutlineTitle } from "../backend/shared/outlineTitle";
+import { canAddOutlineDivider, formatOutlineTitle, outlineTitleLabel, splitOutlineLines, splitOutlineTitle } from "../backend/shared/outlineTitle";
 import { SyncPanel } from "./SyncPanel";
 import { activatePrivacyScreen } from "./PrivacyScreen";
 import { useInlineTagInput } from "./InlineTagInput";
@@ -216,6 +216,12 @@ interface MarkdownContextMenuState {
 interface NodeContextMenuState {
   x: number;
   y: number;
+}
+
+interface OutlineSelectionActions {
+  canTranslate: boolean;
+  canSplit: boolean;
+  dividerAction: "add" | "remove" | null;
 }
 
 interface WorkspaceDragTarget {
@@ -395,7 +401,7 @@ export function App() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [copyNotice, setCopyNotice] = useState(false);
   const copyNoticeTimerRef = useRef<number | undefined>(undefined);
-  const [isTranslating, setIsTranslating] = useState(false);
+  const [translationProgress, setTranslationProgress] = useState("");
   const translatingRef = useRef(false);
   const [outlineHistory, setOutlineHistory] = useState<OutlineHistoryState>(EMPTY_OUTLINE_HISTORY);
   const [convertWorkspaceCandidate, setConvertWorkspaceCandidate] = useState<ConvertWorkspaceCandidate | null>(null);
@@ -912,6 +918,20 @@ export function App() {
   const filteredNodes = useMemo(() => isSearching && flatState
     ? searchNodeIds(flatState, search)
     : visibleIds, [isSearching, flatState, search, visibleIds]);
+  const selectedOutlines = selectedNodeIds.size > 1 && flatState
+    ? filteredNodes.flatMap(id => selectedNodeIds.has(id) && flatState.nodes[id] ? [flatState.nodes[id]] : [])
+    : [];
+  const selectionActions: OutlineSelectionActions | undefined = selectedNodeIds.size > 1 ? {
+    canTranslate: selectedOutlines.some(node => splitOutlineTitle(node.title).text.trim()),
+    canSplit: selectedOutlines.some(node => splitOutlineLines(node.title).length >= 2),
+    dividerAction: selectedOutlines.some(node => canAddOutlineDivider(node.title, node.body, node.childIds.length > 0))
+      ? "add"
+      : selectedOutlines.some(node => splitOutlineTitle(node.title).hasDivider) ? "remove" : null
+  } : undefined;
+  const getSelectedOutlineIds = (clickedId: string) => {
+    const selected = selectedNodeIdsRef.current;
+    return selected.has(clickedId) && selected.size > 1 ? filteredNodes.filter(id => selected.has(id)) : [clickedId];
+  };
   const filteredTagResults = isSearching
     ? tagResults.filter(result =>
         `${result.node.title}\n${result.node.body}\n${result.workspace.name}`.toLowerCase().includes(search.toLowerCase())
@@ -1366,9 +1386,7 @@ export function App() {
     const before = flatStateRef.current;
     if (!before || node.id === before.rootId) return;
     const visibleBefore = computeVisibleIds(before);
-    const selectedIds = selectedNodeIdsRef.current.has(node.id) && selectedNodeIdsRef.current.size > 1
-      ? visibleBefore.filter(id => selectedNodeIdsRef.current.has(id))
-      : [node.id];
+    const selectedIds = getSelectedOutlineIds(node.id);
     const deletingIds = getTopLevelNodeIds(before, selectedIds);
     if (deletingIds.length === 0) return;
     if (deletingIds.some(id => id.startsWith("temp-")) && deletingIds.length > 1) {
@@ -1998,38 +2016,81 @@ export function App() {
     }
   };
 
-  const splitNodeByLineBreaks = async (node: FlatNodeData, title: string) => {
+  const runOutlineSelectionAction = async (clickedId: string, path: string, options = {}) => {
+    const ids = getSelectedOutlineIds(clickedId);
     const currentWorkspaceId = workspaceIdRef.current;
-    await apiPost(`/api/nodes/${node.id}/split-lines`, { title });
+    if (pendingNodeCreateCountRef.current > 0 && ids.some(id => id.startsWith("temp-"))) {
+      await new Promise<void>(resolve => nodeCreateWaitersRef.current.add(resolve));
+    }
     if (workspaceIdRef.current !== currentWorkspaceId) return;
-    await Promise.all([
-      loadTree(currentWorkspaceId, { preserveSelection: true }),
-      loadOutlineHistory(currentWorkspaceId)
-    ]);
+    const persistedIds = ids.map(id => resolvedTempNodeIdsRef.current.get(id) ?? id);
+    if (persistedIds.some(id => id.startsWith("temp-"))) throw new Error("An outline could not be saved. Select it again to retry.");
+    pendingTreeMutationsRef.current += 1;
+    try {
+      await apiPost(path, { ...options, ids: persistedIds });
+      if (workspaceIdRef.current !== currentWorkspaceId) return;
+      await Promise.all([
+        loadTree(currentWorkspaceId, { preserveSelection: true }),
+        loadOutlineHistory(currentWorkspaceId)
+      ]);
+    } finally {
+      pendingTreeMutationsRef.current -= 1;
+    }
   };
 
-  const translateOutline = async (node: FlatNodeData, source: string) => {
-    if (translatingRef.current) return;
-    translatingRef.current = true;
-    setIsTranslating(true);
-    try {
-      await flushNodeDraft(node.id, "title");
-      const { text, hasDivider } = splitOutlineTitle(source);
-      const translated = await requestEnglishTranslation(text);
-      const next = formatOutlineTitle(translated, hasDivider);
-      if (next === source) return;
-
-      const state = flatStateRef.current;
-      const current = state && getNode(state, node.id);
-      if (!current || editingNodeIdRef.current === node.id || (readNodeDraft(node.id, "title") ?? current.title) !== source) {
-        throw new Error("The outline changed during translation. Open it and try again.");
+  const translateOutline = async (id: string, source: string) => {
+    const assertTitleUnchanged = () => {
+      const current = flatStateRef.current?.nodes[id];
+      if (!current || editingNodeIdRef.current === id || (readNodeDraft(id, "title") ?? current.title) !== source) {
+        throw new Error("An outline changed during translation. Select it again to retry.");
       }
-      beginNodeEdit(node.id, "title", source);
-      stageNodeDraft(node.id, "title", next, source);
-      await endNodeEdit(node.id, "title");
+    };
+
+    await flushNodeDraft(id, "title");
+    assertTitleUnchanged();
+    const { text, hasDivider } = splitOutlineTitle(source);
+    const next = formatOutlineTitle(await requestEnglishTranslation(text), hasDivider);
+    if (next === source) return;
+
+    assertTitleUnchanged();
+    beginNodeEdit(id, "title", source);
+    stageNodeDraft(id, "title", next, source);
+    await endNodeEdit(id, "title");
+  };
+
+  const translateSelectedOutlines = async (clickedId: string, clickedTitle: string) => {
+    const state = flatStateRef.current;
+    if (translatingRef.current || !state) return;
+    const ids = getSelectedOutlineIds(clickedId);
+    const titles = ids.flatMap(id => {
+      const source = id === clickedId ? clickedTitle : readNodeDraft(id, "title") ?? state.nodes[id]?.title ?? "";
+      return splitOutlineTitle(source).text.trim() ? [{ id, source }] : [];
+    });
+    if (!titles.length) return;
+
+    translatingRef.current = true;
+    setTranslationProgress("Translating into English…");
+    try {
+      if (pendingNodeCreateCountRef.current > 0 && titles.some(({ id }) => id.startsWith("temp-"))) {
+        await new Promise<void>(resolve => nodeCreateWaitersRef.current.add(resolve));
+      }
+      const errors: unknown[] = [];
+      for (const [index, { id, source }] of titles.entries()) {
+        if (titles.length > 1) setTranslationProgress(`Translating outline ${index + 1} of ${titles.length} into English…`);
+        try {
+          await translateOutline(resolvedTempNodeIdsRef.current.get(id) ?? id, source);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (errors.length) {
+        if (titles.length === 1) throw errors[0];
+        const firstError = errors[0] instanceof Error ? errors[0].message : String(errors[0]);
+        throw new Error(`Translation failed for ${errors.length} of ${titles.length} selected titles. ${firstError}`);
+      }
     } finally {
       translatingRef.current = false;
-      setIsTranslating(false);
+      setTranslationProgress("");
     }
   };
 
@@ -2692,10 +2753,10 @@ export function App() {
           </div>
         )}
 
-        {(isTranslating || copyNotice) && (
+        {(translationProgress || copyNotice) && (
           <div className="copyNotice" role="status" aria-live="polite">
-            {isTranslating ? <Languages size={16} /> : <Check size={16} />}
-            <span>{isTranslating ? "Translating into English…" : "Copied to clipboard"}</span>
+            {translationProgress ? <Languages size={16} /> : <Check size={16} />}
+            <span>{translationProgress || "Copied to clipboard"}</span>
           </div>
         )}
 
@@ -2963,14 +3024,19 @@ export function App() {
                           onTagAdd={name => addTag(node.id, name)}
                           onTagError={toError(setError)}
                           onConvertToWorkspace={title => setConvertWorkspaceCandidate({ id: node.id, title })}
-                          onSplitLines={title => splitNodeByLineBreaks(node, title)}
-                          onTranslate={title => translateOutline(node, title)}
-                          isTranslating={isTranslating}
+                          onSplitLines={() => runOutlineSelectionAction(node.id, "/api/nodes/split-lines")}
+                          onSetDivider={enabled => runOutlineSelectionAction(node.id, "/api/nodes/dividers", { enabled })}
+                          onTranslate={title => translateSelectedOutlines(node.id, title)}
+                          selectionActions={selectedNodeIds.has(node.id) ? selectionActions : undefined}
+                          isTranslating={Boolean(translationProgress)}
                           onCopy={async () => {
                             const state = flatStateRef.current;
                             if (!state) return;
-                            const ids = selectedNodeIdsRef.current.has(node.id) ? selectedNodeIdsRef.current : [node.id];
-                            await navigator.clipboard.writeText(selectedNodeText(state, ids));
+                            const titles = getSelectedOutlineIds(node.id).flatMap(id => {
+                              const outline = state.nodes[id];
+                              return outline ? [readNodeDraft(id, "title") ?? outline.title] : [];
+                            });
+                            await navigator.clipboard.writeText(titles.join("\n"));
                             showCopyNotice();
                           }}
                           onComplete={() => deleteNodeOptimistically(node, "complete").catch(toError(setError))}
@@ -3224,7 +3290,9 @@ function NodeRow({
   onTagError,
   onConvertToWorkspace,
   onSplitLines,
+  onSetDivider,
   onTranslate,
+  selectionActions,
   isTranslating,
   onCopy,
   onComplete,
@@ -3263,8 +3331,10 @@ function NodeRow({
   onTagAdd: (name: string) => Promise<void>;
   onTagError: (error: unknown) => void;
   onConvertToWorkspace: (title: string) => void;
-  onSplitLines: (title: string) => Promise<void>;
+  onSplitLines: () => Promise<void>;
+  onSetDivider: (enabled: boolean) => Promise<void>;
   onTranslate: (title: string) => Promise<void>;
+  selectionActions?: OutlineSelectionActions;
   isTranslating: boolean;
   onCopy: () => Promise<void>;
   onComplete: () => Promise<void>;
@@ -3282,8 +3352,9 @@ function NodeRow({
   const { text: localTitle, hasDivider } = splitOutlineTitle(storedTitle);
   const { text: previewTitle } = splitOutlineTitle(node.title);
   const hasOutlineContent = Boolean(node.body.trim() || node.childIds.length);
-  const canAddDivider = !localTitle.trim() && !hasOutlineContent;
   const showDivider = hasDivider && !previewTitle.trim() && !hasOutlineContent;
+  const dividerAction = selectionActions ? selectionActions.dividerAction : hasDivider ? "remove"
+    : canAddOutlineDivider(storedTitle, node.body, !!node.childIds.length) ? "add" : null;
   const setLocalTitle = (text: string) => setStoredTitle(formatOutlineTitle(text, hasDivider));
   const lastStagedTitleRef = useRef(storedTitle);
   const [markdownMenu, setMarkdownMenu] = useState<MarkdownContextMenuState | null>(null);
@@ -4120,7 +4191,7 @@ function NodeRow({
           <button
             type="button"
             role="menuitem"
-            disabled={isTranslating || !localTitle.trim()}
+            disabled={isTranslating || !(selectionActions?.canTranslate ?? localTitle.trim())}
             onClick={() => {
               flushTitle(localTitle);
               titleInputRef.current?.blur();
@@ -4150,29 +4221,24 @@ function NodeRow({
           <button
             type="button"
             role="menuitem"
-            disabled={!hasDivider && !canAddDivider}
+            disabled={dividerAction === null}
             onClick={() => {
+              flushTitle(localTitle);
               setNodeContextMenu(null);
-              setStoredTitle(formatOutlineTitle(localTitle, !hasDivider));
-              flushTitle(localTitle, !hasDivider);
-              void flushNodeDraft(node.id, "title").catch(onTagError);
+              void onSetDivider(dividerAction === "add").catch(onTagError);
             }}
           >
             <Minus size={16} />
-            <span>{hasDivider ? "Remove dividing line" : "Dividing line"}</span>
+            <span>{dividerAction === "remove" ? "Remove dividing line" : "Dividing line"}</span>
           </button>
           <button
             type="button"
             role="menuitem"
-            disabled={!/[\r\n]/.test(localTitle)}
+            disabled={!(selectionActions?.canSplit ?? splitOutlineLines(localTitle).length >= 2)}
             onClick={() => {
-              const split = async () => {
-                flushTitle(localTitle);
-                if (!node.id.startsWith("temp-")) await flushNodeDraft(node.id, "title");
-                setNodeContextMenu(null);
-                await onSplitLines(formatOutlineTitle(localTitle, hasDivider));
-              };
-              void split().catch(onTagError);
+              flushTitle(localTitle);
+              setNodeContextMenu(null);
+              void onSplitLines().catch(onTagError);
             }}
           >
             <ListPlus size={16} />
@@ -4181,6 +4247,7 @@ function NodeRow({
           <button
             type="button"
             role="menuitem"
+            disabled={Boolean(selectionActions)}
             onClick={() => {
               flushTitle(localTitle);
               if (!node.id.startsWith("temp-")) void flushNodeDraft(node.id, "title").catch(() => {});

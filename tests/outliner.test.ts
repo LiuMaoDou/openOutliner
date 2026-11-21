@@ -260,6 +260,46 @@ describe("OutlinerService", () => {
     expect(service.getOutlineHistoryState(workspace.id).undoLabel).toBe("Remove dividing line");
   });
 
+  it("splits all eligible selected outlines and undoes the group together", () => {
+    const { rootNodeId, id } = service.createWorkspace("Notes");
+    const first = service.createNode({ parentId: rootNodeId, title: "First\nSecond" });
+    const single = service.createNode({ parentId: rootNodeId, title: "Keep\n\n" });
+    const last = service.createNode({ parentId: rootNodeId, title: "Third\r\nFourth" });
+
+    dispatch(service, "POST", "/api/nodes/split-lines", { ids: [first.id, single.id, last.id] });
+
+    expect(service.listChildren(rootNodeId).map(node => node.title)).toEqual(["First", "Second", "Keep\n\n", "Third", "Fourth"]);
+    expect(service.getOutlineHistoryState(id).undoLabel).toBe("Split outlines");
+    expect(service.undoOutline(id).tree.children.map(node => node.title)).toEqual([first.title, single.title, last.title]);
+  });
+
+  it("adds and removes selected dividers while protecting titles, notes, and child outlines", () => {
+    const { rootNodeId, id } = service.createWorkspace("Notes");
+    const blank = service.createNode({ parentId: rootNodeId, title: "" });
+    const otherBlank = service.createNode({ parentId: rootNodeId, title: " " });
+    const titled = service.createNode({ parentId: rootNodeId, title: "Keep this title" });
+    const noted = service.createNode({ parentId: rootNodeId, title: "", body: "Keep this note" });
+    const parent = service.createNode({ parentId: rootNodeId, title: "" });
+    service.createNode({ parentId: parent.id, title: "Keep this child" });
+    const ids = [blank.id, otherBlank.id, titled.id, noted.id, parent.id];
+
+    const changed = dispatch(service, "POST", "/api/nodes/dividers", { ids, enabled: true });
+    expect(changed.map(node => node.id)).toEqual([blank.id, otherBlank.id]);
+    expect(service.getOutlineHistoryState(id).undoLabel).toBe("Add dividing lines");
+    expect(service.getNode(blank.id).title).toBe(formatOutlineTitle(blank.title, true));
+    expect(service.getNode(otherBlank.id).title).toBe(formatOutlineTitle(otherBlank.title, true));
+
+    dispatch(service, "POST", "/api/nodes/dividers", { ids, enabled: false });
+    expect(service.listChildren(rootNodeId).map(node => node.title)).toEqual([
+      blank.title, otherBlank.title, titled.title, noted.title, parent.title
+    ]);
+    expect(service.getOutlineHistoryState(id).undoLabel).toBe("Remove dividing lines");
+    const undone = service.undoOutline(id);
+    expect(undone.tree.children.map(node => node.title)).toEqual([
+      formatOutlineTitle(blank.title, true), formatOutlineTitle(otherBlank.title, true), titled.title, noted.title, parent.title
+    ]);
+  });
+
   it("undoes and redoes subtree deletion and ordered multi-node moves", () => {
     const workspace = service.createWorkspace("Structural History");
     const alpha = service.createNode({ parentId: workspace.rootNodeId, title: "Alpha" });

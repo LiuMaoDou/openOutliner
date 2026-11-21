@@ -13,7 +13,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = Path(os.environ.get("OO_BROWSER_ARTIFACTS", tempfile.mkdtemp(prefix="oo-browser-results-"))).resolve()
@@ -36,6 +36,79 @@ READ_STATE = """() => new Promise((resolve,reject) => {
   tx.oncomplete=()=>db.close();
  };
 })"""
+
+
+def check_selected_outline_actions(page, selection, translation_route):
+    rows = [page.locator(f'.nodeRow[data-node-id="{node["id"]}"]') for node in selection]
+    previews = [row.locator(".nodeTitlePreview") for row in rows]
+    menu = page.get_by_role("menu", name="Outline actions")
+
+    def action(name):
+        previews[1].click(button="right")
+        return menu.get_by_role("menuitem", name=name, exact=True)
+
+    previews[0].click()
+    previews[-1].click(modifiers=["Shift"])
+    for row in rows:
+        expect(row).to_have_attribute("data-selected", "true")
+
+    copy = action("Copy")
+    expect(menu.get_by_role("menuitem", name="Convert to workspace")).to_be_disabled()
+    copy.click()
+    assert page.evaluate("navigator.clipboard.readText()") == "\n".join(node["title"] for node in selection)
+
+    translations = {
+        selection[0]["title"]: "Review the agenda.\nPrepare the handouts.",
+        selection[-1]["title"]: "Confirm the seating.\nSend the invitations."
+    }
+    sent = []
+
+    def translate(route):
+        payload = route.request.post_data_json
+        assert set(payload) == {"text"}
+        text = payload["text"]
+        sent.append(text)
+        if len(sent) == 1:
+            route.fulfill(status=502, json={"error": "The translation provider returned HTTP 502."})
+        else:
+            route.fulfill(json={"text": translations.get(text, text)})
+
+    page.unroute(translation_route)
+    page.route(translation_route, translate)
+    action("Translation2Eng").click()
+    page.get_by_text("Translation failed for 1 of 2 selected titles.", exact=False).wait_for(state="visible")
+    expect(rows[0].locator("textarea.nodeTitle")).to_have_value(selection[0]["title"])
+    expect(rows[-1].locator("textarea.nodeTitle")).to_have_value(translations[selection[-1]["title"]])
+    assert sent == [selection[0]["title"], selection[-1]["title"]]
+    page.locator(".errorBar button").click()
+    action("Translation2Eng").click()
+    expect(rows[0].locator("textarea.nodeTitle")).to_have_value(translations[selection[0]["title"]])
+    expect(page.get_by_text("Translating outline", exact=False)).to_have_count(0)
+    assert sent[2:] == [selection[0]["title"], translations[selection[-1]["title"]]]
+
+    action("Dividing line").click()
+    for index in (1, 3):
+        expect(rows[index].get_by_role("separator", name="Dividing line")).to_be_visible()
+    expect(rows[2].get_by_role("separator")).to_have_count(0)
+    action("Remove dividing line").click()
+    for index in (1, 3):
+        expect(rows[index].get_by_role("separator")).to_have_count(0)
+
+    action("Split by line breaks").click()
+    expect(rows[0].locator("textarea.nodeTitle")).to_have_value("Review the agenda.")
+    expect(rows[-1].locator("textarea.nodeTitle")).to_have_value("Confirm the seating.")
+    for text in ("Prepare the handouts.", "Send the invitations."):
+        expect(page.locator(".nodeTitlePreview").get_by_text(text, exact=True)).to_be_visible()
+
+    action("Complete").click()
+    expect(page.get_by_text(f"Completed {len(rows)} outlines", exact=True)).to_be_visible()
+    for row in rows:
+        expect(row).to_have_count(0)
+    handouts = page.locator(".nodeTitlePreview").get_by_text("Prepare the handouts.", exact=True)
+    handouts.click(button="right")
+    menu.get_by_role("menuitem", name="Convert to workspace").click()
+    page.get_by_role("dialog", name="Convert to workspace?").get_by_role("button", name="Convert", exact=True).click()
+    expect(page.get_by_role("textbox", name="Workspace title")).to_have_value("Prepare the handouts.")
 
 
 def run():
@@ -70,11 +143,19 @@ def run():
                 foreign = request(base, "/api/nodes", {
                     "parentId": workspace["rootNodeId"], "title": "请确认会议时间。", "body": "Local meeting notes"
                 })
+                selection = [request(base, "/api/nodes", {"parentId": workspace["rootNodeId"], **row}) for row in [
+                    {"title": "请检查议程。\n请准备讲义。"},
+                    {"title": ""},
+                    {"title": "", "body": "Keep these notes"},
+                    {"title": ""},
+                    {"title": "请确认座位。\n请发送邀请。"}
+                ]]
                 with sync_playwright() as p:
                     browser = p.chromium.launch()
                     try:
                         for theme in ["light", "dark"]:
-                            context = browser.new_context(viewport={"width": 1440, "height": 1000})
+                            context = browser.new_context(viewport={"width": 1440, "height": 1000},
+                                                          permissions=["clipboard-read", "clipboard-write"])
                             context.add_init_script(f"localStorage.setItem('openoutliner-theme', {json.dumps(theme)});")
                             context.tracing.start(screenshots=True, snapshots=True, sources=True)
                             page = context.new_page()
@@ -345,21 +426,12 @@ def run():
                                 assert add_divider.is_disabled()
                                 page.keyboard.press("Escape")
                                 menu.wait_for(state="detached")
-                                page.evaluate("""id => {
-                                  window.dividerSaved = false;
-                                  window.addEventListener("outliner-draft-saved", ({detail}) => {
-                                    if (detail.nodeId === id && detail.field === "title" && detail.value.endsWith("\\n\\n---")) {
-                                      window.dividerSaved = true;
-                                    }
-                                  });
-                                }""", blank["id"])
                                 blank_row = page.locator(f'.nodeRow[data-node-id="{blank["id"]}"]')
                                 blank_preview = blank_row.locator('.nodeTitlePreview')
                                 blank_preview.click(button="right")
                                 add_divider.click()
                                 divider = blank_row.get_by_role("separator", name="Dividing line")
                                 divider.wait_for(state="visible")
-                                page.wait_for_function("window.dividerSaved")
                                 assert blank_row.locator('textarea.nodeTitle').input_value() == ""
                                 assert divider.evaluate("e => getComputedStyle(e).borderTopWidth") == "1px"
                                 assert divider.evaluate("""line => {
@@ -404,6 +476,7 @@ def run():
                                 assert page.locator(".nodeNotes").input_value() == foreign["body"]
                                 page.reload()
                                 foreign_title.get_by_text(translated, exact=True).wait_for(state="visible")
+                                check_selected_outline_actions(page, selection, translation_route)
                                 assert not errors, errors
                                 print(f"PASS full app / {theme}: load, character selection, native selection, forward/reverse multi-row, transparent rows, persisted schema envelope upgrade")
                             finally:

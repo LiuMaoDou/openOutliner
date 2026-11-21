@@ -122,6 +122,14 @@ export function dispatch(service: OutlinerService, method: string, address: stri
     return service.deleteNodes(body.ids ?? []);
   }
 
+  if (method === "POST" && path === "/api/nodes/split-lines") {
+    return service.splitSelectedOutlines(input?.ids);
+  }
+
+  if (method === "POST" && path === "/api/nodes/dividers") {
+    return service.setOutlineDividers(input?.ids, input?.enabled);
+  }
+
   const convertNodeToWorkspaceMatch = path.match(/^\/api\/nodes\/([^/]+)\/convert-to-workspace$/);
   if (method === "POST" && convertNodeToWorkspaceMatch) {
     const body = input;

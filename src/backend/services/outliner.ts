@@ -1,6 +1,6 @@
 import { resolveTagColor, tagColorForName } from "../shared/tagColors.js";
 import { TODAY_ROOT_NODE_ID, TODAY_WORKSPACE_ID } from "../shared/systemWorkspaces.js";
-import { formatOutlineTitle, splitOutlineTitle } from "../shared/outlineTitle.js";
+import { canAddOutlineDivider, formatOutlineTitle, splitOutlineLines, splitOutlineTitle } from "../shared/outlineTitle.js";
 export { morandiTagColors, tagColorForName } from "../shared/tagColors.js";
 
 const randomUUID = () => globalThis.crypto.randomUUID();
@@ -925,12 +925,9 @@ export class OutlinerService {
   splitNodeByLineBreaks(id: string, title?: string): OutlineNode[] {
     const node = this.getNode(id);
     if (!node.parentId) throw new ValidationError("Workspace root nodes cannot be split.");
-    const { text: outlineText, hasDivider } = splitOutlineTitle(title ?? node.title);
-    const lines = outlineText
-      .replace(/\r\n?/g, "\n")
-      .split("\n")
-      .map(line => line.trim())
-      .filter(Boolean);
+    const source = title ?? node.title;
+    const { hasDivider } = splitOutlineTitle(source);
+    const lines = splitOutlineLines(source);
     if (lines.length < 2) throw new ValidationError("The outline needs at least two non-empty lines.");
 
     const createdIds = lines.slice(1).map(() => randomUUID());
@@ -959,6 +956,48 @@ export class OutlinerService {
       });
       return [node.id, ...createdIds].map(nodeId => this.getNode(nodeId));
     });
+  }
+
+  splitSelectedOutlines(ids: string[]): OutlineNode[] {
+    return this.transaction(() => {
+      const nodes = this.outlineActionNodes(ids).filter(node => splitOutlineLines(node.title).length >= 2);
+      if (nodes.length === 0) return [];
+      if (nodes.length === 1) return this.splitNodeByLineBreaks(nodes[0].id);
+      return this.recordOutlineMutation(nodes[0].workspaceId, "Split outlines", null, () =>
+        this.withoutOutlineHistory(() => nodes.flatMap(node => this.splitNodeByLineBreaks(node.id)))
+      );
+    });
+  }
+
+  setOutlineDividers(ids: string[], enabled: boolean): OutlineNode[] {
+    if (typeof enabled !== "boolean") throw new ValidationError("Specify whether to add or remove dividing lines.");
+    return this.transaction(() => {
+      const hasChildren = this.db.prepare("SELECT 1 FROM nodes WHERE parent_id = ? AND deleted_at IS NULL LIMIT 1");
+      const nodes = this.outlineActionNodes(ids).filter(node => enabled
+        ? canAddOutlineDivider(node.title, node.body, Boolean(hasChildren.get(node.id)))
+        : splitOutlineTitle(node.title).hasDivider
+      );
+      if (nodes.length === 0) return [];
+      const update = (node: OutlineNode) => this.updateNode(node.id, {
+        title: formatOutlineTitle(splitOutlineTitle(node.title).text, enabled)
+      });
+      if (nodes.length === 1) return [update(nodes[0])];
+      const label = enabled ? "Add dividing lines" : "Remove dividing lines";
+      return this.recordOutlineMutation(nodes[0].workspaceId, label, null, () =>
+        this.withoutOutlineHistory(() => nodes.map(update))
+      );
+    });
+  }
+
+  private outlineActionNodes(ids: string[]): OutlineNode[] {
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== "string" || !id.trim())) {
+      throw new ValidationError("Select valid outlines.");
+    }
+    const nodes = [...new Set(ids)].map(id => this.getNode(id));
+    if (nodes.some(node => !node.parentId || node.workspaceId !== nodes[0].workspaceId)) {
+      throw new ValidationError("Select outlines from the same workspace.");
+    }
+    return nodes;
   }
 
   listScheduledNodes(): OutlineNode[] {

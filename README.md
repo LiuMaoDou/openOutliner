@@ -96,10 +96,11 @@ Open `http://127.0.0.1:4317` while online first and let the app finish caching. 
 - Deleting a workspace permanently deletes all nested sub-workspaces and their outlines.
 - Moving an outline to another workspace preserves its subtree and opens the destination workspace with the moved outline selected.
 - On mobile, drag an outline to the left edge to reveal the workspace sidebar, then drop it onto the destination workspace.
+- In the outline context menu, **Copy** and **Complete** act on the selection. **Dividing line** applies to eligible empty rows, and **Split by line breaks** applies to titles with two or more non-empty lines. **Convert to workspace** requires one selected outline.
 
 ### Translate An Outline
 
-Right-click an outline and choose **Translation2Eng** to replace its title with an English translation. OpenOutliner sends the selected title to the configured provider and saves the result as a local edit.
+Right-click an outline and choose **Translation2Eng** to replace its title with an English translation. To translate several titles, select the outlines and open the menu on any selected row. OpenOutliner sends each selected title with text to the configured provider and saves each result as a local edit.
 
 Configure an OpenAI-compatible Chat Completions provider in the server environment or the project's ignored `.env.local` file. Set `OPENOUTLINER_TRANSLATION_BASE_URL` to its API base URL (usually ending in `/v1`), `OPENOUTLINER_TRANSLATION_MODEL` to the model ID, and `OPENOUTLINER_TRANSLATION_API_KEY` to the provider key.
 

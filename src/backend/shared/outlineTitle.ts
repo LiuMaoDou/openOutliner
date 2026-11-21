@@ -13,3 +13,12 @@ export function formatOutlineTitle(text: string, hasDivider: boolean): string {
 export function outlineTitleLabel(title: string): string {
   return splitOutlineTitle(title).text || "Untitled";
 }
+
+export function splitOutlineLines(title: string): string[] {
+  return splitOutlineTitle(title).text.split(/\r\n?|\n/).map(line => line.trim()).filter(Boolean);
+}
+
+export function canAddOutlineDivider(title: string, body: string, hasChildren: boolean): boolean {
+  const { text, hasDivider } = splitOutlineTitle(title);
+  return !hasDivider && !text.trim() && !body.trim() && !hasChildren;
+}
