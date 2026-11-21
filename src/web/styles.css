@@ -100,7 +100,7 @@
   --node-date-background: #f4f4f5;
   --node-date-border: #e4e4e7;
   --node-date-hover: #e4e4e7;
-  --node-calendar-hover-title: #577467;
+  --node-calendar-hover-title: #294c3d;
   --node-delete-hover-title: #955e6b;
   --node-count-foreground: #71717a;
   --node-count-background: #f4f4f5;
@@ -178,7 +178,7 @@
   --node-date-background: #3c4350;
   --node-date-border: #596475;
   --node-date-hover: #4b5667;
-  --node-calendar-hover-title: #a9c7b9;
+  --node-calendar-hover-title: #d2f0df;
   --node-delete-hover-title: #e0adb8;
   --node-count-foreground: #d9e1ed;
   --node-count-background: #3b4350;
@@ -1909,6 +1909,10 @@ body.isSelectingNodes .nodeTitlePreview {
   background: currentColor;
   border-radius: 999px;
   box-shadow: 0 0 0 4px transparent;
+}
+
+.nodeRow:has(.nodeDivider):not(:hover) .dragHandle > .nodeDot {
+  opacity: 0;
 }
 
 .dragHandle:active {

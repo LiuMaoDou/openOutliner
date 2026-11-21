@@ -198,7 +198,7 @@ def run():
                                 preview = primary_row.locator('.nodeTitlePreview')
                                 title_editor = primary_row.locator('textarea.nodeTitle')
                                 base_color = preview.evaluate("e => getComputedStyle(e).color")
-                                calendar_color = {"light": "rgb(87, 116, 103)", "dark": "rgb(169, 199, 185)"}[theme]
+                                calendar_color = {"light": "rgb(41, 76, 61)", "dark": "rgb(210, 240, 223)"}[theme]
                                 delete_color = {"light": "rgb(149, 94, 107)", "dark": "rgb(224, 173, 184)"}[theme]
                                 primary_row.locator('.nodeDateAddButton').hover()
                                 page.wait_for_function(
@@ -365,6 +365,13 @@ def run():
                                   return rule.width > 0 && rule.left - preview.left < 12 && preview.right - rule.right < 12 &&
                                     Math.abs((rule.top + rule.bottom) - (preview.top + preview.bottom)) < 2;
                                 }"""), "The divider should span the title area of the blank row"
+                                dot = blank_row.locator('.dragHandle .nodeDot')
+                                page.mouse.move(1350, 900)
+                                assert dot.evaluate("e => getComputedStyle(e).opacity") == "0"
+                                blank_preview.hover()
+                                assert dot.evaluate("e => getComputedStyle(e).opacity") == "1"
+                                page.mouse.move(1350, 900)
+                                assert dot.evaluate("e => getComputedStyle(e).opacity") == "0"
                                 page.reload()
                                 divider.wait_for(state="visible")
                                 blank_preview.click(button="right")
