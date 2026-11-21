@@ -2754,7 +2754,7 @@ export function App() {
         )}
 
         {(translationProgress || copyNotice) && (
-          <div className="copyNotice" role="status" aria-live="polite">
+          <div className={translationProgress ? "translationNotice" : "copyNotice"} role="status" aria-live="polite">
             {translationProgress ? <Languages size={16} /> : <Check size={16} />}
             <span>{translationProgress || "Copied to clipboard"}</span>
           </div>

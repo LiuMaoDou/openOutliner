@@ -989,7 +989,8 @@ body.isResizingPanel .appShell {
   background: var(--background);
 }
 
-.copyNotice {
+.copyNotice,
+.translationNotice {
   position: fixed;
   top: 24px;
   left: 50%;
@@ -997,14 +998,35 @@ body.isResizingPanel .appShell {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 650;
+  transform: translateX(-50%);
+}
+
+.copyNotice {
   padding: 10px 16px;
   color: var(--primary-foreground);
   background: var(--primary);
   border-radius: var(--radius);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
-  font-size: 0.88rem;
-  font-weight: 650;
-  transform: translateX(-50%);
+}
+
+.translationNotice {
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px;
+  color: var(--foreground);
+  background: var(--floating-background);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(14px);
+  pointer-events: none;
+}
+
+.translationNotice svg {
+  flex: 0 0 auto;
+  color: var(--node-calendar-hover-title);
 }
 
 .undoBar {
