@@ -92,6 +92,8 @@ export interface TaggedNodeGroup {
 }
 
 export interface CreateNodeInput {
+  /** Optional reserved UUID for durable browser creation intents. */
+  id?: string;
   parentId: string;
   title: string;
   body?: string;

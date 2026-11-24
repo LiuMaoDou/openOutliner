@@ -142,7 +142,7 @@ def editor_checks(page, a, b, nodes, other, mapped):
 
 
 def recovery_check(page, directory):
-    page.route('**/api/sync',lambda route:route.abort())
+    page.route('**/api/sync*',lambda route:route.abort())
     page.locator('.syncIndicator').click()
     with page.expect_download() as info:
         page.get_by_role('button',name='下载备份').click()

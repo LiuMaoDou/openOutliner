@@ -82,7 +82,7 @@ import { canAddOutlineDivider, formatOutlineTitle, outlineTitleLabel, splitOutli
 import { SyncPanel } from "./SyncPanel";
 import { activatePrivacyScreen } from "./PrivacyScreen";
 import { useInlineTagInput } from "./InlineTagInput";
-import { beginNodeEdit, endNodeEdit, flushNodeDraft, readNodeDraft, stageNodeDraft } from "./offline";
+import { beginNodeEdit, endNodeEdit, flushNodeDraft, readNodeDraft, stageNodeDraft, beginCreation, stageCreation, pendingCreation, endCreation } from "./offline";
 import {
   type FlatTreeState,
   type FlatNodeData,
@@ -1203,6 +1203,7 @@ export function App() {
     const currentFlatState = flatStateRef.current;
     if (!currentFlatState) return;
     const tempId = `temp-${crypto.randomUUID()}`;
+    beginCreation(tempId, parentId, position, title);
     const preppedState =
       current && currentTitle !== undefined ? updateNode(currentFlatState, current.id, { title: currentTitle }) : currentFlatState;
     const tempNode: FlatNodeData = {
@@ -1235,7 +1236,8 @@ export function App() {
     try {
       const createRequest = nodeCreateQueueRef.current.then(() => currentTitleSave).then(() =>
         apiPost<OutlineTreeNode>("/api/nodes", {
-          parentId,
+          id: tempId.slice(5),
+          parentId: parentId.startsWith("temp-") ? parentId.slice(5) : parentId,
           title,
           position
         })
@@ -1247,22 +1249,23 @@ export function App() {
       if (cancelledTempIdsRef.current.has(tempId)) {
         cancelledTempIdsRef.current.delete(tempId);
         localNodeTitlesRef.current.delete(tempId);
-        apiDelete(`/api/nodes/${created.id}`)
-          .then(() => loadOutlineHistory(workspaceIdRef.current))
-          .catch(toError(setError));
+        await apiDelete(`/api/nodes/${created.id}`);
+        endCreation(tempId, true);
+        loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
         return;
       }
       await nodeCompositionTracker.wait(tempId);
       if (cancelledTempIdsRef.current.has(tempId)) {
         cancelledTempIdsRef.current.delete(tempId);
         localNodeTitlesRef.current.delete(tempId);
-        apiDelete(`/api/nodes/${created.id}`)
-          .then(() => loadOutlineHistory(workspaceIdRef.current))
-          .catch(toError(setError));
+        await apiDelete(`/api/nodes/${created.id}`);
+        endCreation(tempId, true);
+        loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
         return;
       }
       const draft = flatStateRef.current ? getNode(flatStateRef.current, tempId) : undefined;
-      const pendingTitle = localNodeTitlesRef.current.get(tempId);
+      const durable = pendingCreation(tempId);
+      const pendingTitle = localNodeTitlesRef.current.get(tempId) ?? durable?.title;
       const draftParentId = draft?.parentId ?? parentId;
       const createdPosition = created.position ?? position;
       const draftPosition = draft?.position ?? createdPosition;
@@ -1273,7 +1276,7 @@ export function App() {
         parentId: draftParentId,
         position: draftPosition,
         title: latestTitle,
-        body: draft?.body ?? created.body ?? "",
+        body: durable?.body ?? draft?.body ?? created.body ?? "",
         dueDate: draft?.dueDate ?? created.dueDate ?? null,
         done: draft?.done ?? created.done ?? false,
         collapsed: draft?.collapsed ?? created.collapsed ?? false,
@@ -1330,14 +1333,15 @@ export function App() {
           .catch(toError(setError));
       }
       if (pendingTitle !== undefined || (draft && (draft.title || draft.body || draft.dueDate || draft.done || draft.collapsed))) {
-        patchNode(created.id, {
+        await patchNode(created.id, {
           title: latestTitle,
           body: replacement.body,
           dueDate: replacement.dueDate,
           done: replacement.done,
           collapsed: replacement.collapsed
-        }).catch(toError(setError));
+        });
       }
+      endCreation(tempId, true);
     } catch (error) {
       if (cancelledTempIdsRef.current.has(tempId)) {
         cancelledTempIdsRef.current.delete(tempId);
@@ -1360,6 +1364,7 @@ export function App() {
       }
       throw error;
     } finally {
+      endCreation(tempId, false); // Leave an unacknowledged durable intent for recovery.
       pendingNodeCreateCountRef.current = Math.max(0, pendingNodeCreateCountRef.current - 1);
       if (pendingNodeCreateCountRef.current === 0) {
         for (const id of reconcilingNodeIdsRef.current) localNodeTitlesRef.current.delete(id);
@@ -1417,6 +1422,7 @@ export function App() {
     flatStateRef.current = newState;
     focusNode(previousId);
     if (deletingIds[0]?.startsWith("temp-")) {
+      stageCreation(deletingIds[0], { cancelled: true });
       cancelledTempIdsRef.current.add(deletingIds[0]);
       return;
     }
@@ -2997,6 +3003,7 @@ export function App() {
                           onCacheTitle={title => {
                             if (node.id.startsWith("temp-") || reconcilingNodeIdsRef.current.has(node.id)) {
                               localNodeTitlesRef.current.set(node.id, title);
+                              stageCreation(node.id, { title });
                             }
                           }}
                           onCommit={patch => patchNode(node.id, patch).catch(toError(setError))}
@@ -3108,6 +3115,7 @@ export function App() {
                     <div className="notesAlertContent">
                       <div className="notesAlertTitle">Notes</div>
                       <NodeNotes key={selectedNode.id} node={selectedNode} onError={toError(setError)} onTemporaryChange={body => {
+                        stageCreation(selectedNode.id, { body });
                         const current = flatStateRef.current;
                         if (!current) return;
                         const next = updateNode(current, selectedNode.id, { body });

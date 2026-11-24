@@ -568,6 +568,15 @@ export class OutlinerService {
 
   createNode(input: CreateNodeInput): OutlineNode {
     const parent = this.getNode(input.parentId);
+    const id = input.id ?? randomUUID();
+    if (typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new ValidationError("Invalid node UUID.");
+    const existing = this.db.prepare("SELECT * FROM nodes WHERE id = ?").get(id) as Row | undefined;
+    if (existing) {
+      if (existing.deleted_at !== null || existing.workspace_id !== parent.workspaceId || existing.parent_id === null) {
+        throw new ValidationError("Reserved node ID is no longer available.");
+      }
+      return rowToNode(existing);
+    }
     return this.recordOutlineMutation(parent.workspaceId, "Create outline", null, () => {
       const siblingCount = number(
         (this.db
@@ -575,7 +584,6 @@ export class OutlinerService {
           .get(input.parentId) as Row).count
       );
       const position = clamp(input.position ?? siblingCount, 0, siblingCount);
-      const id = randomUUID();
       const now = timestamp();
 
       this.transaction(() => {

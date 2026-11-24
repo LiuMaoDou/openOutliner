@@ -4,7 +4,7 @@ import { RECOVERY_CAPACITY_LABEL } from "./recoveryFile";
 import { CircleAlert, Database, FileDown, Upload, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
-import { downloadBackup, recoveryVersions, downloadRecovery, pendingEditorDrafts, resolveEditorDraft, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync } from "./offline";
+import { pendingCreationList, recoverPendingCreations, downloadBackup, recoveryVersions, downloadRecovery, pendingEditorDrafts, resolveEditorDraft, getSyncStatus, resolveConflict, restoreRecovery, signIn, subscribeSync } from "./offline";
 
 export function SyncPanel({ embedded = false, compact = false }: {
   embedded?: boolean;
@@ -23,7 +23,7 @@ export function SyncPanel({ embedded = false, compact = false }: {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const detailsRef = useRef<HTMLElement | null>(null);
   const recoveryInputRef = useRef<HTMLInputElement | null>(null);
-  const attention = status.localSaveError ? "保存失败" : status.draftConflicts?.length ? "编辑冲突" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : update.available ? "有更新" : "";
+  const attention = status.localSaveError ? "保存失败" : status.draftConflicts?.length ? "编辑冲突" : status.pendingCreations ? "新建草稿" : status.conflict ? "同步冲突" : status.needsLogin ? "需要登录" : !status.ready && status.error ? "尚未就绪" : update.available ? "有更新" : "";
   const forcedOpen = Boolean(status.needsLogin || !status.ready);
   const detailsVisible = open || forcedOpen;
   const closePanel = () => { setOpen(false); triggerRef.current?.focus({ preventScroll: true }); };
@@ -153,6 +153,15 @@ export function SyncPanel({ embedded = false, compact = false }: {
           <ul>{status.conflict.slice(0,10).map((text, i) => <li key={i}>{text}</li>)}</ul>
           <button disabled={busy} onClick={() => void act(() => resolveConflict("cloud"))}>采用云端，备份本机</button>
           <button disabled={busy} onClick={() => void act(() => resolveConflict("local"))}>采用本机，备份云端</button>
+        </div>}
+        {Boolean(status.pendingCreations) && <div>
+          <strong>待创建大纲恢复</strong>
+          <p>新建大纲已记录在本机日志中。关闭其他正在编辑这些大纲的窗口后，可重试恢复；冲突时保留原始草稿。</p>
+          {pendingCreationList().map(intent => <details key={intent.owner + intent.id}>
+            <summary>{intent.cancelled ? "已取消" : (intent.title || "（空标题）")}</summary>
+            <pre>{intent.body}</pre>
+          </details>)}
+          <button disabled={busy} onClick={() => void act(recoverPendingCreations)}>重试恢复新建大纲</button>
         </div>}
         {Boolean(status.drafts) && <div>
           <strong>保留的编辑草稿</strong>

@@ -2,7 +2,8 @@ import { encodeRecovery, decodeRecovery } from "./recoveryFile";
 import { openLocal } from "./localDatabase";
 import { migrate, SCHEMA_VERSION } from "../backend/shared/schema.js";
 import { needsStoredUpgrade, upgradeStoredState } from "../backend/shared/storedState.js";
-import { OutlinerService } from "../backend/services/outliner.js";
+import { OutlinerService, NotFoundError } from "../backend/services/outliner.js";
+import { CreationJournal, parseCreationBackup, replayCreation, type CreationIntent } from "./creationJournal";
 import { dispatch } from "../backend/shared/dispatch.js";
 import { changesBetween, mergeChanges, replaceSnapshot, applySnapshotChanges, snapshot, type Snapshot } from "../backend/shared/sync.js";
 import { DraftJournal, parseDraftBackup, type DraftField, type EditorDraft } from "./editorDrafts";
@@ -15,13 +16,15 @@ async function digestSnapshot(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
 }
-export interface SyncStatus { text: string; pending: number; needsLogin?: boolean; conflict?: string[]; error?: string; localSaveError?: string; drafts?: number; archivedDrafts?: number; draftConflicts?: EditorDraft[]; ready: boolean }
+export interface SyncStatus { text: string; pending: number; needsLogin?: boolean; conflict?: string[]; error?: string; localSaveError?: string; drafts?: number; archivedDrafts?: number; pendingCreations?: number; draftConflicts?: EditorDraft[]; ready: boolean }
 let status: SyncStatus = { text: "正在读取本机数据…", pending: 0, ready: false };
 const listeners = new Set<() => void>();
 export const subscribeSync = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export const getSyncStatus = () => status;
 function report(next: Partial<SyncStatus>) { status = { ...status, ...next }; listeners.forEach(listener => listener()); }
 let journal: DraftJournal;
+let creations: CreationJournal;
+const activeCreations = new Set<string>();
 let journalError: string | undefined;
 const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const draftSaveErrors = new Map<string, string>();
@@ -46,14 +49,82 @@ async function initializeJournal() {
     draftStorage = { length: 0, key: () => null, getItem: () => null, removeItem: () => {}, clear: () => {}, setItem: () => { throw new Error("浏览器不允许保存编辑草稿，请保持页面打开并检查存储权限。"); } };
   }
   journal = new DraftJournal(draftStorage, owner);
+  creations = new CreationJournal(draftStorage, owner);
 }
 function updateDraftStatus() {
   if (!journal) return;
   try {
     const entries = journal.list(), drafts = entries.filter(draft => !draft.archived);
     const draftError = journalError || [...draftSaveErrors.values()][0];
-    report({ drafts: drafts.length, archivedDrafts: entries.length - drafts.length, draftConflicts: drafts.filter(draft => draft.conflict), ...(draftError ? { localSaveError: draftError } : {}) });
+    report({ drafts: drafts.length, pendingCreations: creations?.list().length ?? 0, archivedDrafts: entries.length - drafts.length, draftConflicts: drafts.filter(draft => draft.conflict), ...(draftError ? { localSaveError: draftError } : {}) });
   } catch (error) { report({ localSaveError: error instanceof Error ? error.message : "无法读取编辑草稿。" }); }
+}
+export function beginCreation(tempId: string, parentId: string, position: number, title: string) {
+  const id = tempId.slice(5);
+  try {
+    creations.begin(id, parentId.startsWith("temp-") ? parentId.slice(5) : parentId, position, title);
+    activeCreations.add(id);
+    updateDraftStatus();
+  } catch (error) {
+    journalError = error instanceof Error ? error.message : "无法保存新建大纲，请检查本机存储。";
+    report({ localSaveError: journalError });
+    throw error;
+  }
+}
+export function stageCreation(tempId: string, patch: Partial<Pick<CreationIntent, "title" | "body" | "cancelled">>) {
+  if (!tempId.startsWith("temp-")) return;
+  try { creations.stage(tempId.slice(5), patch); }
+  catch (error) {
+    journalError = error instanceof Error ? error.message : "新建大纲草稿尚未持久保存。";
+    report({ localSaveError: journalError });
+  }
+  updateDraftStatus();
+}
+export function pendingCreation(tempId: string) { return creations?.get(tempId.slice(5)); }
+export function pendingCreationList() { return creations?.list() ?? []; }
+export function endCreation(tempId: string, saved: boolean) {
+  const id = tempId.slice(5), intent = creations?.get(id);
+  activeCreations.delete(id);
+  if (saved && intent) {
+    try { creations.acknowledge(intent); } catch (error) { report({ localSaveError: String(error) }); }
+  }
+  updateDraftStatus();
+}
+
+export async function recoverPendingCreations() {
+  if (!creations || !navigator.locks) return;
+  const replay = async (intent: CreationIntent) => {
+    if (activeCreations.has(intent.id)) return;
+    try {
+      await locked(async () => {
+        const current = creations.list().find(item => item.id === intent.id && item.owner === intent.owner);
+        if (!current) return;
+        const state = await read();
+        if (!state) return;
+        const { db, sql } = await openLocal(state.bytes);
+        try {
+          const service = new OutlinerService(sql);
+          service.importTransaction(() => replayCreation(current, service, error => error instanceof NotFoundError));
+          state.bytes = db.export();
+          await save(state);
+          creations.acknowledge(current);
+        } finally { db.close(); }
+      });
+    } catch (error) {
+      report({ localSaveError: error instanceof Error ? error.message : "待创建大纲恢复失败，草稿已保留。" });
+    }
+  };
+  for (const intent of creations.list().sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))) {
+    if (intent.owner === creations.owner) await replay(intent);
+    else await navigator.locks.request(`openoutliner-editor-${intent.owner}`, { ifAvailable: true }, async lock => {
+      if (lock) await replay(intent);
+    });
+  }
+  updateDraftStatus();
+  await refreshStatus();
+  changed();
+  window.dispatchEvent(new Event("outliner-sync"));
+  schedule();
 }
 export function beginNodeEdit(nodeId: string, field: DraftField, expectedValue: string) { journal.begin(nodeId, field, expectedValue); }
 export function readNodeDraft(nodeId: string, field: DraftField) { return journal?.get(nodeId, field)?.value; }
@@ -322,6 +393,7 @@ export async function synchronize(): Promise<void> {
 export async function initializeOffline() {
   await initializeJournal();
   await refreshStatus().catch(error => report({ text: "无法读取本机存储", error: error instanceof Error ? error.message : "存储不可用" }));
+  await recoverPendingCreations().catch(() => {});
   await flushAllNodeDrafts().catch(() => {});
   void synchronize();
   window.addEventListener("online", () => void synchronize());
@@ -332,7 +404,7 @@ export async function initializeOffline() {
   window.addEventListener("beforeunload", event => {
     // Durable drafts are replayed on reload. Only an actual failed journal
     // write needs the browser's leave-page warning.
-    if (journal.hasVolatileDrafts()) { event.preventDefault(); event.returnValue = ""; }
+    if (journal.hasVolatileDrafts() || creations.hasVolatileEntries()) { event.preventDefault(); event.returnValue = ""; }
   });
   setInterval(() => { if (document.visibilityState === "visible") void synchronize(); }, 15000);
   // Persistence is best effort; only a completed transaction is called saved.
@@ -366,7 +438,7 @@ export async function downloadRecovery() {
   if (!state) return;
   const { db, sql } = await openLocal(state.bytes);
   try {
-    const blob = encodeRecovery({ format: "openoutliner-recovery-v1", local: snapshot(sql), base: state.base, conflict: state.conflict, backups: state.backups, editorDrafts: journal.list() });
+    const blob = encodeRecovery({ format: "openoutliner-recovery-v1", local: snapshot(sql), base: state.base, conflict: state.conflict, backups: state.backups, editorDrafts: journal.list(), pendingCreations: creations.list() });
     const url = URL.createObjectURL(blob), anchor = document.createElement("a");
     const now = new Date();
     const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(value => String(value).padStart(2, "0")).join("-");
@@ -432,9 +504,10 @@ export function downloadEditorDrafts() {
 }
 
 export async function restoreRecovery(file: File, confirmRestore: (summary: string) => boolean) {
-  const recovery = await decodeRecovery(file) as { format?: string; local?: Snapshot; editorDrafts?: unknown } | null;
+  const recovery = await decodeRecovery(file) as { format?: string; local?: Snapshot; editorDrafts?: unknown; pendingCreations?: unknown } | null;
   if (!recovery || recovery.format !== "openoutliner-recovery-v1" || !recovery.local) throw new Error("请选择 OpenOutliner 恢复备份文件。");
   const drafts = parseDraftBackup(recovery.editorDrafts);
+  const intents = parseCreationBackup(recovery.pendingCreations);
   await flushAllNodeDrafts();
   const restored = await locked(async () => {
     const state = await read();
@@ -452,6 +525,7 @@ export async function restoreRecovery(file: File, confirmRestore: (summary: stri
       // Recovery is treated as pending local edits, with normal conflict checks.
       await save(state);
       journal.restore(drafts);
+      creations.restore(intents);
       return true;
     } finally { db.close(); }
   });
@@ -482,7 +556,8 @@ export async function prepareForAppUpdate(): Promise<void> {
   await locked(async () => {
     const state = await read();
     if (!state) throw new Error("尚未完成本机保存，请先完成首次同步。");
-    if (status.localSaveError || journal.hasVolatileDrafts()) throw new Error("本机保存尚未成功，暂不切换版本；请先下载草稿并处理保存错误。");
+    if (status.localSaveError || journal.hasVolatileDrafts() || creations.hasVolatileEntries()) throw new Error("本机保存尚未成功，暂不切换版本；请先下载草稿并处理保存错误。");
+    if (creations.list().some(intent => intent.owner === creations.owner)) throw new Error("请先保存或恢复待创建大纲，再更新应用。");
     if (journal.list().some(draft => draft.owner === journal.owner && !draft.archived)) throw new Error("请先处理当前页面的编辑草稿，再更新应用。");
   });
 }
