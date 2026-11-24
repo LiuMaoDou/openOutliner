@@ -10,9 +10,11 @@ export interface EditorDraft {
   updatedAt: string;
   conflict?: { current: string | null; message: string };
   archived?: boolean;
+  restoreId?: string;
 }
 
 export const draftPrefix = "openoutliner-draft-v1:";
+const restoredDraftPrefix = "openoutliner-recovery-draft-v1:";
 type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
 
 export function parseDraftBackup(value: unknown): EditorDraft[] {
@@ -32,16 +34,17 @@ export function parseDraftBackup(value: unknown): EditorDraft[] {
 export class DraftJournal {
   private memory = new Map<string, EditorDraft>();
   private bases = new Map<string, { value: string; session: string }>();
-  constructor(private storage: DraftStorage, readonly owner: string) {}
+  constructor(private storage: DraftStorage, readonly owner: string, private isRestoreCommitted = (_id: string) => false) {}
   private id(nodeId: string, field: DraftField) { return `${draftPrefix}${this.owner}:${nodeId}:${field}`; }
   private read(id: string): EditorDraft | undefined {
     const buffered = this.memory.get(id);
-    if (buffered) return buffered;
+    if (buffered) return !buffered.restoreId || this.isRestoreCommitted(buffered.restoreId) ? buffered : undefined;
     const raw = this.storage.getItem(id);
     if (!raw) return;
     try {
       const value = JSON.parse(raw) as EditorDraft;
-      if (value.id === id && typeof value.nodeId === "string" && (value.field === "title" || value.field === "body") && typeof value.value === "string" && typeof value.expected === "string") return value;
+      if (value.id === id && typeof value.nodeId === "string" && (value.field === "title" || value.field === "body") && typeof value.value === "string" && typeof value.expected === "string" &&
+          (!value.restoreId || this.isRestoreCommitted(value.restoreId))) return value;
     } catch { /* An invalid entry must not replace application data. */ }
   }
   get(nodeId: string, field: DraftField) {
@@ -52,7 +55,7 @@ export class DraftJournal {
     const ids = new Set(this.memory.keys());
     for (let i = 0; i < this.storage.length; i++) {
       const key = this.storage.key(i);
-      if (key?.startsWith(draftPrefix)) ids.add(key);
+      if (key?.startsWith(draftPrefix) || key?.startsWith(restoredDraftPrefix)) ids.add(key);
     }
     return [...ids].map(id => this.read(id)).filter((value): value is EditorDraft => Boolean(value));
   }
@@ -99,12 +102,22 @@ export class DraftJournal {
     this.storage.removeItem(id);
     this.memory.delete(id);
   }
-  restore(drafts: EditorDraft[]) {
+  restore(drafts: EditorDraft[], restoreId?: string) {
+    const prefix = restoreId ? `${restoredDraftPrefix}${restoreId}:` : draftPrefix;
     for (const draft of drafts) {
       // Imported drafts are always reviewed separately. They never become this
       // live tab's autosave entry and cannot overwrite its pending keystrokes.
       const owner = `recovery-${crypto.randomUUID()}`;
-      this.put({ ...draft, owner, id: `${draftPrefix}${owner}:${draft.nodeId}:${draft.field}`, version: crypto.randomUUID() });
+      const restored = { ...draft, owner, id: `${prefix}${owner}:${draft.nodeId}:${draft.field}`, version: crypto.randomUUID(), restoreId };
+      if (restoreId) this.storage.setItem(restored.id, JSON.stringify(restored));
+      else this.put(restored);
+    }
+  }
+  discardRestore(restoreId: string) {
+    const prefix = `${restoredDraftPrefix}${restoreId}:`;
+    for (let index = this.storage.length - 1; index >= 0; index--) {
+      const key = this.storage.key(index);
+      if (key?.startsWith(prefix)) this.storage.removeItem(key);
     }
   }
   recoverArchive(id: string) {

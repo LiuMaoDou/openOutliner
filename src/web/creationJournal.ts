@@ -1,6 +1,7 @@
 import type { CreateNodeInput, OutlineNode, UpdateNodeInput } from "../backend/domain/types.js";
 
 export const creationPrefix = "openoutliner-create-v1:";
+const restoredCreationPrefix = "openoutliner-recovery-create-v1:";
 export interface CreationIntent {
   id: string;
   owner: string;
@@ -12,6 +13,7 @@ export interface CreationIntent {
   version: string;
   cancelled?: boolean;
   updatedAt: string;
+  restoreId?: string;
 }
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
 export function isCreationIntent(value: unknown): value is CreationIntent {
@@ -31,22 +33,25 @@ export function parseCreationBackup(value: unknown): CreationIntent[] {
 
 export class CreationJournal {
   private memory = new Map<string, CreationIntent>();
-  constructor(private storage: StorageLike, readonly owner: string) {}
-  private key(intent: Pick<CreationIntent, "owner" | "id">) { return creationPrefix + intent.owner + ":" + intent.id; }
+  constructor(private storage: StorageLike, readonly owner: string, private isRestoreCommitted = (_id: string) => false) {}
+  private key(intent: Pick<CreationIntent, "owner" | "id" | "restoreId">) {
+    const prefix = intent.restoreId ? `${restoredCreationPrefix}${intent.restoreId}:` : creationPrefix;
+    return `${prefix}${intent.owner}:${intent.id}`;
+  }
   private read(key: string) {
     const buffered = this.memory.get(key);
-    if (buffered) return buffered;
+    if (buffered) return !buffered.restoreId || this.isRestoreCommitted(buffered.restoreId) ? buffered : undefined;
     try {
       const raw = this.storage.getItem(key);
       const value: unknown = raw && JSON.parse(raw);
-      if (isCreationIntent(value) && this.key(value) === key) return value;
+      if (isCreationIntent(value) && this.key(value) === key && (!value.restoreId || this.isRestoreCommitted(value.restoreId))) return value;
     } catch { /* Invalid entries are never executed. */ }
   }
   list(): CreationIntent[] {
     const keys = new Set(this.memory.keys());
     for (let index = 0; index < this.storage.length; index++) {
       const key = this.storage.key(index);
-      if (key?.startsWith(creationPrefix)) keys.add(key);
+      if (key?.startsWith(creationPrefix) || key?.startsWith(restoredCreationPrefix)) keys.add(key);
     }
     return [...keys].map(key => this.read(key)).filter((value): value is CreationIntent => !!value);
   }
@@ -70,10 +75,18 @@ export class CreationJournal {
     this.storage.removeItem(key);
     this.memory.delete(key);
   }
-  restore(intents: CreationIntent[]) {
+  restore(intents: CreationIntent[], restoreId: string) {
     for (const intent of intents) {
       // Imported intents cannot replace the live tab's entries.
-      this.put({ ...intent, owner: "recovery-" + crypto.randomUUID(), version: crypto.randomUUID() });
+      const restored = { ...intent, owner: `recovery-${crypto.randomUUID()}`, version: crypto.randomUUID(), restoreId };
+      this.storage.setItem(this.key(restored), JSON.stringify(restored));
+    }
+  }
+  discardRestore(restoreId: string) {
+    const prefix = `${restoredCreationPrefix}${restoreId}:`;
+    for (let index = this.storage.length - 1; index >= 0; index--) {
+      const key = this.storage.key(index);
+      if (key?.startsWith(prefix)) this.storage.removeItem(key);
     }
   }
   hasVolatileEntries() { return this.memory.size > 0; }

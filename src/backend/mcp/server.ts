@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { readFileSync } from "node:fs";
 import * as z from "zod/v4";
 import { openDatabase } from "../db/database.js";
 import { exportMarkdown, importMarkdown } from "../importExport/markdown.js";
@@ -12,7 +13,7 @@ service.ensureSeedData();
 
 const server = new McpServer({
   name: "openoutliner",
-  version: "0.1.0"
+  version: (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version: string }).version
 });
 
 registerTool(

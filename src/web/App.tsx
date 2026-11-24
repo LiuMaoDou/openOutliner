@@ -61,6 +61,7 @@ import {
   getIndentTargetId,
   getNode,
   getParentId,
+  getSiblingIndex,
   isDescendant,
   hasNode
 } from "./flatTree";
@@ -1111,12 +1112,13 @@ export function App() {
         loadOutlineHistory(workspaceIdRef.current).catch(toError(setError));
         return;
       }
-      const draft = flatStateRef.current ? getNode(flatStateRef.current, tempId) : undefined;
+      const draftState = flatStateRef.current;
+      const draft = draftState ? getNode(draftState, tempId) : undefined;
       const durable = pendingCreation(tempId);
       const pendingTitle = localNodeTitlesRef.current.get(tempId) ?? durable?.title;
       const draftParentId = draft?.parentId ?? parentId;
       const createdPosition = created.position ?? position;
-      const draftPosition = draft?.position ?? createdPosition;
+      const draftPosition = (draftState && getSiblingIndex(draftState, tempId)) ?? createdPosition;
       const latestTitle = resolvePendingNodeTitle(pendingTitle, draft?.title, created.title);
       const replacement: FlatNodeData = {
         id: created.id,
@@ -1385,11 +1387,12 @@ export function App() {
     const before = flatStateRef.current;
     if (!before || source.id === parentId) return;
     const currentSource = getNode(before, source.id);
-    if (!currentSource) return;
+    const sourceIndex = getSiblingIndex(before, source.id);
+    if (!currentSource || sourceIndex === undefined) return;
     const currentWorkspaceId = workspaceIdRef.current, request = treeRequestRef.current;
     const nextPosition =
-      currentSource.parentId === parentId && currentSource.position < position ? position - 1 : position;
-    if (currentSource.parentId === parentId && currentSource.position === nextPosition) return;
+      currentSource.parentId === parentId && sourceIndex < position ? position - 1 : position;
+    if (currentSource.parentId === parentId && sourceIndex === nextPosition) return;
     const restoreScroll = preserveOutlineScroll();
     const newState = moveNode(before, currentSource.id, parentId, nextPosition);
     setFlatState(newState);
@@ -1414,18 +1417,13 @@ export function App() {
     }
   };
 
-  const createAfter = async (current: FlatNodeData, title = "", currentTitle = current.title) => {
-    const currentFlatState = flatStateRef.current;
-    if (!currentFlatState) return;
-    const parentId = current.parentId ?? currentFlatState.rootId;
-    await createOptimisticNode(parentId, current.position + 1, current, title, currentTitle);
-  };
-
-  const createBefore = async (current: FlatNodeData, currentTitle = current.title) => {
-    const currentFlatState = flatStateRef.current;
-    if (!currentFlatState) return;
-    const parentId = current.parentId ?? currentFlatState.rootId;
-    await createOptimisticNode(parentId, current.position, current, "", currentTitle);
+  const createSibling = async (id: string, placement: "before" | "after", title = "", currentTitle?: string) => {
+    const state = flatStateRef.current;
+    if (!state) return;
+    const current = getNode(state, id);
+    const index = getSiblingIndex(state, id);
+    if (!current?.parentId || index === undefined) return;
+    await createOptimisticNode(current.parentId, index + (placement === "after" ? 1 : 0), current, title, currentTitle);
   };
 
   const createFirstNode = async () => {
@@ -1475,10 +1473,14 @@ export function App() {
   }, []);
 
   const outdent = async (current: FlatNodeData) => {
-    if (!flatState || !current.parentId || current.parentId === flatState.rootId) return;
-    const parent = getNode(flatState, current.parentId);
+    const state = flatStateRef.current;
+    if (!state) return;
+    const parentId = getParentId(state, current.id);
+    const parent = parentId ? getNode(state, parentId) : undefined;
     if (!parent?.parentId) return;
-    await moveNodeOptimistically(current, parent.parentId, parent.position + 1);
+    const parentIndex = getSiblingIndex(state, parent.id);
+    if (parentIndex === undefined) return;
+    await moveNodeOptimistically(current, parent.parentId, parentIndex + 1);
   };
 
   const focusRelative = (current: FlatNodeData, offset: number) => {
@@ -2866,10 +2868,10 @@ export function App() {
                             patchNode(node.id, patch).catch(toError(setError));
                           }}
                           onCreateAfter={(title, currentTitle) =>
-                            createAfter(node, title, currentTitle).catch(toError(setError))
+                            createSibling(node.id, "after", title, currentTitle).catch(toError(setError))
                           }
                           onCreateBefore={currentTitle =>
-                            createBefore(node, currentTitle).catch(toError(setError))
+                            createSibling(node.id, "before", "", currentTitle).catch(toError(setError))
                           }
                           onIndent={() => indent(node).catch(toError(setError))}
                           onOutdent={() => outdent(node).catch(toError(setError))}

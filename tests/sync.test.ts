@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openDatabase } from "../src/backend/db/database.js";
 import { OutlinerService } from "../src/backend/services/outliner.js";
 import { SyncService } from "../src/backend/services/sync.js";
@@ -15,6 +18,135 @@ function fixture() {
   return { db, service, workspace, node, sync: new SyncService(db) };
 }
 describe("offline sync", () => {
+  it("reads one SQLite revision while a CLI connection creates a workspace", () => {
+    const directory = mkdtempSync(join(tmpdir(), "openoutliner-sync-test-"));
+    const path = join(directory, "test.sqlite");
+    const reader = openDatabase(path), writer = openDatabase(path);
+    try {
+      const service = new OutlinerService(writer);
+      service.createWorkspace("Before pull");
+      const before = new SyncService(reader).pull();
+      let wrote = false;
+      const concurrent: SqlDatabase = {
+        exec: text => reader.exec(text),
+        prepare: text => {
+          const statement = reader.prepare(text);
+          if (text !== "SELECT * FROM workspaces") return statement;
+          return {
+            all: (...values) => {
+              const rows = statement.all(...values);
+              if (!wrote) {
+                service.createWorkspace("Written during pull");
+                wrote = true;
+              }
+              return rows;
+            },
+            get: (...values) => statement.get(...values),
+            run: (...values) => statement.run(...values)
+          };
+        }
+      };
+      expect(new SyncService(concurrent).pull()).toEqual(before);
+      expect(new SyncService(reader).pull().data.workspaces).toHaveLength(2);
+    } finally {
+      reader.close(); writer.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("coalesces independently created tags and fields with their note references", () => {
+    const { db, service, workspace, node, sync } = fixture();
+    const replica = openDatabase(":memory:");
+    try {
+      const second = service.createNode({ parentId: workspace.rootNodeId, title: "Second note" });
+      const base = snapshot(db);
+      replaceSnapshot(replica, base);
+      const local = new OutlinerService(replica);
+      const localTag = local.setNodeTag(node.id, "project");
+      const cloudTag = service.setNodeTag(second.id, "project");
+      local.setNodeTag(second.id, "project");
+      const localField = local.createFieldDefinition({ workspaceId: workspace.id, tagId: localTag.id, name: "Status", type: "text" });
+      const cloudField = service.createFieldDefinition({ workspaceId: workspace.id, tagId: cloudTag.id, name: "Status", type: "text" });
+      local.setFieldValue(node.id, localField.id, "started");
+      local.setFieldValue(second.id, localField.id, "finished");
+      service.setFieldValue(second.id, cloudField.id, "finished");
+      const sent = snapshot(replica), changes = changesBetween(base, sent);
+      const acknowledged = sync.push({ changes });
+      expect(acknowledged.data.tags.map(row => row.id)).toEqual([cloudTag.id]);
+      expect(acknowledged.data.field_definitions.map(row => row.id)).toEqual([cloudField.id]);
+      expect(acknowledged.data.node_tags).toEqual(expect.arrayContaining([
+        { node_id: node.id, tag_id: cloudTag.id }, { node_id: second.id, tag_id: cloudTag.id }
+      ]));
+      expect(service.listFieldValues(node.id)).toEqual([expect.objectContaining({ fieldId: cloudField.id, value: "started" })]);
+      expect(service.listFieldValues(second.id)).toEqual([expect.objectContaining({ fieldId: cloudField.id, value: "finished" })]);
+      expect(sync.push({ changes }).revision).toBe(acknowledged.revision);
+
+      local.updateTag(localTag.id, { name: "renamed" });
+      local.setFieldValue(node.id, localField.id, "edited during upload");
+      const latest = mergeChanges(acknowledged.data, changesBetween(sent, snapshot(replica)), changes);
+      expect(latest.tags).toEqual([expect.objectContaining({ id: cloudTag.id, name: "renamed" })]);
+      expect(latest.field_values.find(row => row.node_id === node.id)).toMatchObject({ field_id: cloudField.id, value: "edited during upload" });
+    } finally { replica.close(); db.close(); }
+  });
+
+  it("preserves conflicting field data instead of coalescing it silently", () => {
+    const { db, service, workspace, node, sync } = fixture();
+    const replica = openDatabase(":memory:");
+    try {
+      const base = snapshot(db);
+      replaceSnapshot(replica, base);
+      const local = new OutlinerService(replica);
+      const localTag = local.setNodeTag(node.id, "project");
+      const cloudTag = service.setNodeTag(node.id, "project");
+      const field = { workspaceId: workspace.id, name: "Status", type: "text" as const };
+      const localField = local.createFieldDefinition({ ...field, tagId: localTag.id });
+      const cloudField = service.createFieldDefinition({ ...field, tagId: cloudTag.id });
+      local.setFieldValue(node.id, localField.id, "offline value");
+      service.setFieldValue(node.id, cloudField.id, "cloud value");
+      const cloud = snapshot(db);
+      expect(() => sync.push({ changes: changesBetween(base, snapshot(replica)) })).toThrow(SyncConflict);
+      expect(snapshot(db)).toEqual(cloud);
+      expect(local.listFieldValues(node.id)).toEqual([expect.objectContaining({ value: "offline value" })]);
+    } finally { replica.close(); db.close(); }
+  });
+
+  it("assigns contiguous sibling positions after simultaneous inserts and retries without moving them", () => {
+    const { db, service, workspace, node, sync } = fixture();
+    const replica = openDatabase(":memory:"), reverse = openDatabase(":memory:");
+    try {
+      const existing = service.createNode({ parentId: workspace.rootNodeId, title: "Last note" });
+      const child = service.createNode({ parentId: node.id, title: "Unrelated legacy position" });
+      db.prepare("UPDATE nodes SET position = 7 WHERE id = ?").run(child.id);
+      const timestamp = "2026-01-01T00:00:00.000Z";
+      db.prepare("UPDATE nodes SET updated_at = ? WHERE id = ?").run(timestamp, existing.id);
+      const base = snapshot(db);
+      replaceSnapshot(replica, base);
+      const local = new OutlinerService(replica);
+      const left = local.createNode({ parentId: workspace.rootNodeId, position: 1, title: "Left insert" });
+      const right = service.createNode({ parentId: workspace.rootNodeId, position: 1, title: "Right insert" });
+      replica.prepare("UPDATE nodes SET updated_at = ? WHERE id = ?").run(timestamp, existing.id);
+      db.prepare("UPDATE nodes SET updated_at = ? WHERE id = ?").run("2026-01-02T00:00:00.000Z", existing.id);
+      replica.prepare("UPDATE nodes SET created_at = ? WHERE id = ?").run(timestamp, left.id);
+      db.prepare("UPDATE nodes SET created_at = ? WHERE id = ?").run(timestamp, right.id);
+      replaceSnapshot(reverse, snapshot(replica));
+      const reverseRequest = { changes: changesBetween(base, snapshot(db)) };
+      const request = { changes: changesBetween(base, snapshot(replica)) };
+      const originalRequest = structuredClone(request);
+      const response = sync.push(request);
+      const ids = [node.id, ...[left.id, right.id].sort(), existing.id];
+      expect(service.listChildren(workspace.rootNodeId).map(row => [row.id, row.position])).toEqual(ids.map((id, position) => [id, position]));
+      expect(request).toEqual(originalRequest);
+      expect(sync.push(request).revision).toBe(response.revision);
+      expect(service.getNode(child.id).position).toBe(7);
+      const reverseService = new SyncService(reverse);
+      const reverseResponse = reverseService.push(reverseRequest);
+      expect(new OutlinerService(reverse).listChildren(workspace.rootNodeId).map(row => row.id)).toEqual(ids);
+      expect(reverseService.push(reverseRequest).revision).toBe(reverseResponse.revision);
+      const insertedBelow = service.createNode({ parentId: workspace.rootNodeId, position: 2, title: "After the first insert" });
+      expect(service.listChildren(workspace.rootNodeId).map(row => row.id)).toEqual([ids[0], ids[1], insertedBelow.id, ...ids.slice(2)]);
+    } finally { replica.close(); reverse.close(); db.close(); }
+  });
+
   it("merges Today lists independently created offline without duplicating the list or losing tasks", () => {
     const { db, service, sync } = fixture();
     const replica = openDatabase(":memory:");

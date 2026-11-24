@@ -47,4 +47,20 @@ describe("native lossless archives", () => {
       expect(service.getOutlineHistoryState(ws.id).canUndo).toBe(false);
     } finally { db.close(); }
   });
+  it("restores historical fractional positions but rejects new ones", () => {
+    const source = openDatabase(":memory:"), dest = openDatabase(":memory:");
+    try {
+      const service = new OutlinerService(source), ws = service.createWorkspace("Legacy positions");
+      const node = service.createNode({ parentId: ws.rootNodeId, title: "Existing" });
+      expect(() => service.createNode({ parentId: ws.rootNodeId, title: "Invalid position", position: 0.5 })).toThrow("must be an integer");
+      const archive = exportNativeArchive(source);
+      archive.local.nodes.find(row => row.id === node.id)!.position = 0.5;
+      const history = archive.outlineHistory!.at(-1)!;
+      const after = JSON.parse(String(history.after_snapshot));
+      after.nodes[node.id].position = 0.5;
+      history.after_snapshot = JSON.stringify(after);
+      restoreNativeArchive(dest, archive);
+      expect(exportNativeArchive(dest)).toEqual(archive);
+    } finally { source.close(); dest.close(); }
+  });
 });

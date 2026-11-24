@@ -12,7 +12,15 @@ export class SyncService {
   private revisions = new RevisionWindow();
   constructor(private db: SqlDatabase) {}
   pull(): FullEnvelope {
-    const data = snapshot(this.db);
+    this.db.exec("SAVEPOINT sync_pull");
+    let data: ReturnType<typeof snapshot>;
+    try {
+      data = snapshot(this.db);
+      this.db.exec("RELEASE sync_pull");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO sync_pull; RELEASE sync_pull");
+      throw error;
+    }
     return { version: 1, revision: createHash("sha256").update(canonicalSnapshot(data)).digest("hex"), data };
   }
   incremental(full: FullEnvelope, baseRevision?: string | null) {

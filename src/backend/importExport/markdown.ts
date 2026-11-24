@@ -6,6 +6,7 @@ interface ParsedLine {
   kind: "bullet" | "heading";
   level: number;
   title: string;
+  headingText?: string;
   done: boolean;
   tags: string[];
   body: string[];
@@ -15,6 +16,7 @@ interface ParsedLine {
 
 interface ParsedWorkspace {
   name: string;
+  introduction?: ParsedLine;
   lines: ParsedLine[];
 }
 
@@ -56,11 +58,16 @@ export function importMarkdown(
 
     const target = targetWorkspace(service, input);
     const parsed = parseMarkdownLines(input.content);
-    if (parsed[0]?.kind === "heading" && parsed[0].level === 0 && parsed[0].title === target.workspace.name) {
+    const heading = parsed[0];
+    let introduction: ParsedLine | undefined;
+    if (heading?.kind === "heading" && heading.level === 0 &&
+        (heading.headingText === target.workspace.name || heading.title === target.workspace.name)) {
+      introduction = headingIntroduction(heading);
       parsed.shift();
     }
-    if (parsed.length === 0) throw new ValidationError("No outline nodes found in Markdown.");
-    const imported = service.importOutlineBatch(target.workspace.id, () => importParsedLines(service, target.parentId, parsed));
+    if (!introduction && parsed.length === 0) throw new ValidationError("No outline nodes found in Markdown.");
+    const imported = service.importOutlineBatch(target.workspace.id, () =>
+      importWorkspaceLines(service, target.parentId, parsed, introduction));
     return { imported, workspaceId: target.workspace.id };
   });
 }
@@ -74,7 +81,8 @@ function importAllMarkdown(service: OutlinerService, content: string): MarkdownI
   for (const parsedWorkspace of parsedWorkspaces) {
     const workspace = service.createWorkspace(parsedWorkspace.name);
     workspaceIds.push(workspace.id);
-    imported += service.importOutlineBatch(workspace.id, () => importParsedLines(service, workspace.rootNodeId, parsedWorkspace.lines));
+    imported += service.importOutlineBatch(workspace.id, () =>
+      importWorkspaceLines(service, workspace.rootNodeId, parsedWorkspace.lines, parsedWorkspace.introduction));
   }
 
   return {
@@ -83,6 +91,16 @@ function importAllMarkdown(service: OutlinerService, content: string): MarkdownI
     workspaceIds,
     workspaces: workspaceIds.length
   };
+}
+
+function importWorkspaceLines(service: OutlinerService, parentId: string, lines: ParsedLine[], introduction?: ParsedLine): number {
+  const introductoryCount = introduction ? importParsedLines(service, parentId, [introduction]) : 0;
+  return introductoryCount + importParsedLines(service, parentId, lines);
+}
+
+function headingIntroduction(heading: ParsedLine): ParsedLine | undefined {
+  if (!heading.body.length) return undefined;
+  return { ...heading, title: heading.headingText ?? heading.title, tags: [] };
 }
 
 function importParsedLines(service: OutlinerService, parentId: string, parsed: ParsedLine[]): number {
@@ -117,7 +135,7 @@ function parseMarkdownWorkspaces(content: string): ParsedWorkspace[] {
 
   for (const line of parsed) {
     if (line.kind === "heading" && line.level === 0) {
-      current = { name: line.title || "Imported Markdown", lines: [] };
+      current = { name: line.headingText || line.title || "Imported Markdown", introduction: headingIntroduction(line), lines: [] };
       workspaces.push(current);
       continue;
     }
@@ -217,12 +235,14 @@ function parseMarkdownLines(content: string): ParsedLine[] {
 
     const heading = rawLine.match(/^(#{1,6})\s+(.+?)\s*$/);
     if (heading) {
-      const title = parseTitleTags(heading[2].trim());
+      const headingText = heading[2].trim();
+      const title = parseTitleTags(headingText);
       const line = {
         kind: "heading" as const,
         level: heading[1].length - 1,
         done: false,
         title: title.title,
+        headingText,
         tags: title.tags,
         body: []
       };

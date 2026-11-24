@@ -27,6 +27,8 @@ export const getSyncStatus = () => status;
 function report(next: Partial<SyncStatus>) { status = { ...status, ...next }; listeners.forEach(listener => listener()); }
 let journal: DraftJournal;
 let creations: CreationJournal;
+const RESTORE_COMMITS_KEY = "committed-restores";
+let committedRestores = new Set<string>();
 const activeCreations = new Set<string>();
 let journalError: string | undefined;
 const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -51,8 +53,9 @@ async function initializeJournal() {
   try { draftStorage = localStorage; } catch {
     draftStorage = { length: 0, key: () => null, getItem: () => null, removeItem: () => {}, clear: () => {}, setItem: () => { throw new Error("浏览器不允许保存编辑草稿，请保持页面打开并检查存储权限。"); } };
   }
-  journal = new DraftJournal(draftStorage, owner);
-  creations = new CreationJournal(draftStorage, owner);
+  const isRestoreCommitted = (id: string) => committedRestores.has(id);
+  journal = new DraftJournal(draftStorage, owner, isRestoreCommitted);
+  creations = new CreationJournal(draftStorage, owner, isRestoreCommitted);
 }
 function updateDraftStatus() {
   if (!journal) return;
@@ -206,14 +209,24 @@ function store() {
     request.onupgradeneeded = () => request.result.createObjectStore("state");
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(new Error("无法打开本机数据库，请检查浏览器存储权限。"));
+  }).catch(error => {
+    storage = undefined;
+    throw error;
   });
 }
 async function read(): Promise<Saved | undefined> {
   // All callers hold the existing cross-tab openoutliner-data Web Lock.
   const storage = await store();
   const state = await new Promise<Saved | undefined>((resolve, reject) => {
-    const request = storage.transaction("state").objectStore("state").get("current");
-    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    const tx = storage.transaction("state");
+    const records = tx.objectStore("state");
+    const request: IDBRequest<Saved | undefined> = records.get("current");
+    const commits: IDBRequest<string[] | undefined> = records.get(RESTORE_COMMITS_KEY);
+    tx.oncomplete = () => {
+      committedRestores = new Set(Array.isArray(commits.result) ? commits.result : []);
+      resolve(request.result);
+    };
+    tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("无法读取本机数据库。"));
   });
   if (!state || !needsStoredUpgrade(state)) return state;
   const { db, sql } = await openLocal(state.bytes);
@@ -235,15 +248,23 @@ async function read(): Promise<Saved | undefined> {
     return upgraded;
   } finally { db.close(); }
 }
-async function save(value: Saved): Promise<void> {
+async function save(value: Saved, restoreId?: string): Promise<void> {
   try {
     const db = await store();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction("state", "readwrite");
-      tx.objectStore("state").put(value, "current");
       tx.oncomplete = () => resolve();
       tx.onerror = tx.onabort = () => reject(new Error("保存到本机失败，请检查剩余空间；本次修改尚未保存。"));
+      try {
+        const records = tx.objectStore("state");
+        records.put(value, "current");
+        if (restoreId) records.put([...committedRestores, restoreId], RESTORE_COMMITS_KEY);
+      } catch (error) {
+        try { tx.abort(); } catch { /* The transaction may already have aborted. */ }
+        reject(error);
+      }
     });
+    if (restoreId) committedRestores.add(restoreId);
     if (status.localSaveError && !journalError && !draftSaveErrors.size && !journal?.hasVolatileDrafts()) report({ localSaveError: undefined });
   } catch (error) {
     report({ localSaveError: error instanceof Error ? error.message : "保存到本机失败，本次修改尚未保存。" });
@@ -260,7 +281,8 @@ function changed() {
   window.dispatchEvent(new Event("outliner-data-changed"));
 }
 channel?.addEventListener("message", () => { window.dispatchEvent(new Event("outliner-sync")); void refreshStatus(); });
-async function refreshStatus(cloudReachable = navigator.onLine) {
+let cloudReachable: boolean | undefined;
+async function refreshStatus() {
   await locked(async () => {
     const state = await read();
     if (!state) return;
@@ -268,7 +290,7 @@ async function refreshStatus(cloudReachable = navigator.onLine) {
     try {
       const count = changesBetween(state.base, snapshot(sql)).length;
       updateDraftStatus();
-      report({ ready: true, pending: count, conflict: state.conflict?.conflicts, text: state.conflict ? "同步冲突 · 本机修改已保留" : status.draftConflicts?.length ? "编辑冲突 · 两份内容已保留" : status.drafts ? "编辑草稿已保留 · 等待写入本机数据库" : count ? `已保存到本机 · ${count} 条待同步` : !cloudReachable ? "离线 · 数据已保存在本机" : status.error ? "已保存到本机 · 等待连接云端" : "已同步" });
+      report({ ready: true, pending: count, conflict: state.conflict?.conflicts, text: state.conflict ? "同步冲突 · 本机修改已保留" : status.draftConflicts?.length ? "编辑冲突 · 两份内容已保留" : status.drafts ? "编辑草稿已保留 · 等待写入本机数据库" : count ? `已保存到本机 · ${count} 条待同步` : !(cloudReachable ?? navigator.onLine) ? "离线 · 数据已保存在本机" : status.error ? "已保存到本机 · 等待连接云端" : "已同步" });
     } finally { db.close(); }
   });
 }
@@ -346,7 +368,8 @@ export async function synchronize(): Promise<void> {
   await navigator.locks.request("openoutliner-sync", { ifAvailable: true }, async lock => {
     if (!lock) return;
     try {
-      await flushAllNodeDrafts();
+      // A failed draft save must not hold back changes already committed to IndexedDB.
+      await flushAllNodeDrafts().catch(() => {});
       const sent = await locked(async () => {
         const state = await read();
         if (!state) return undefined;
@@ -358,7 +381,11 @@ export async function synchronize(): Promise<void> {
       const changes = sent ? changesBetween(sent.state.base, sent.data) : [];
       if (changes.length > MAX_SYNC_CHANGES) throw new Error("待同步记录超过 100000 条，本机数据已保留。请先下载恢复备份。");
       report({ text: "正在同步…", error: undefined });
-      const response = await network(changes.length ? "POST" : "GET", changes.length ? { changes } : undefined, sent?.state.revision);
+      const response = await network(changes.length ? "POST" : "GET", changes.length ? { changes } : undefined, sent?.state.revision).catch(error => {
+        cloudReachable = false;
+        throw error;
+      });
+      cloudReachable = true;
       if (response.status === 401) { report({ needsLogin: true, text: "请登录以同步 · 本机数据保留" }); return; }
       if (response.status === 409) {
         const conflict = await response.json() as Conflict;
@@ -389,7 +416,7 @@ export async function synchronize(): Promise<void> {
           let merged = remote.data;
           // Edits made while the network request was in flight remain pending.
           if (state && sent && current) {
-            try { merged = mergeChanges(remote.data, changesBetween(sent.data, current)); }
+            try { merged = mergeChanges(remote.data, changesBetween(sent.data, current), changes); }
             catch {
               state.conflict = { current: remote.data, conflicts: ["同步期间发生了并发修改，本机版本已保留。"] };
               await save(state); return;
@@ -417,7 +444,7 @@ export async function synchronize(): Promise<void> {
           report({ ready: true, needsLogin: false, error: undefined });
         } finally { db.close(); }
       });
-      await refreshStatus(true);
+      await refreshStatus();
       if (remoteChanged) changed();
       if (remoteChanged) window.dispatchEvent(new Event("outliner-sync"));
     } catch (error) {
@@ -433,7 +460,7 @@ export async function initializeOffline() {
   await flushAllNodeDrafts().catch(() => {});
   void synchronize();
   window.addEventListener("online", () => void synchronize());
-  window.addEventListener("offline", () => void refreshStatus());
+  window.addEventListener("offline", () => void synchronize());
   window.addEventListener("focus", () => void synchronize());
   window.addEventListener("focusout", schedule);
   window.addEventListener("storage", () => updateDraftStatus());
@@ -574,14 +601,30 @@ export async function restoreRecovery(file: File, confirmRestore: (summary: stri
       restoreNativeArchive(sql, archive);
       state.backups.push(...imported, { date: now, data: previous.local, outlineHistory: previous.outlineHistory });
       state.bytes = db.export();
-      // Recovery is treated as pending local edits, with normal conflict checks.
-      await save(state);
-      journal.restore(drafts);
-      creations.restore(intents);
+      const restoreId = drafts.length || intents.length ? crypto.randomUUID() : undefined;
+      try {
+        if (restoreId) {
+          // Readers ignore staged journal entries until the dataset and batch marker commit together.
+          journal.restore(drafts, restoreId);
+          creations.restore(intents, restoreId);
+        }
+        await save(state, restoreId);
+      } catch (error) {
+        if (restoreId) {
+          try { journal.discardRestore(restoreId); } catch { /* Uncommitted entries remain invisible. */ }
+          try { creations.discardRestore(restoreId); } catch { /* Uncommitted entries remain invisible. */ }
+        }
+        throw error;
+      }
       return true;
     } finally { db.close(); }
   });
-  if (restored) { await refreshStatus(); changed(); window.dispatchEvent(new Event("outliner-sync")); schedule(); }
+  if (restored) {
+    changed();
+    window.dispatchEvent(new Event("outliner-sync"));
+    schedule();
+    await refreshStatus().catch(error => report({ error: error instanceof Error ? error.message : "无法读取本机数据库。" }));
+  }
 }
 
 export async function recoveryVersions(): Promise<string[]> {

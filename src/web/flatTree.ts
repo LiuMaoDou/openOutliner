@@ -360,6 +360,12 @@ export function getParentId(state: FlatTreeState, id: string): string | null {
   return state.nodes[id]?.parentId ?? null;
 }
 
+export function getSiblingIndex(state: FlatTreeState, id: string): number | undefined {
+  const parentId = getParentId(state, id);
+  const index = parentId ? state.nodes[parentId]?.childIds.indexOf(id) : undefined;
+  return index === -1 ? undefined : index;
+}
+
 export function isDescendant(state: FlatTreeState, ancestorId: string, id: string): boolean {
   if (!state.nodes[ancestorId]) return false;
   let parentId = state.nodes[id]?.parentId;

@@ -3,8 +3,21 @@ import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import type { SqlDatabase, SqlValue } from "../backend/shared/sql.js";
 import { migrate } from "../backend/shared/schema.js";
 let runtime: Promise<SqlJsStatic> | undefined;
+
+async function loadRuntime() {
+  // sql.js memoizes its own initializer, including failures. Fetch and validate before calling it.
+  const response = await fetch(wasmUrl, { signal: AbortSignal.timeout(12000) });
+  if (!response.ok) throw new Error(`无法加载本机数据库模块 (${response.status})。`);
+  const wasmBinary = await response.arrayBuffer();
+  if (!WebAssembly.validate(wasmBinary)) throw new Error("本机数据库模块无效。");
+  return initSqlJs({ wasmBinary });
+}
+
 export async function openLocal(bytes?: Uint8Array): Promise<{ db: Database; sql: SqlDatabase }> {
-  const SQL = await (runtime ??= initSqlJs({ locateFile: () => wasmUrl }));
+  const SQL = await (runtime ??= loadRuntime().catch(error => {
+    runtime = undefined;
+    throw error;
+  }));
   const db = new SQL.Database(bytes);
   db.run("PRAGMA foreign_keys = ON;");
   const query = (sql: string, values: SqlValue[]) => {

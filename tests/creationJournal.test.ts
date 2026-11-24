@@ -11,6 +11,23 @@ function storage() {
 }
 
 describe("durable node creation", () => {
+  it("keeps staged creation attachments hidden until their restore commits", () => {
+    const disk = storage(), id = crypto.randomUUID();
+    const committed = new Set<string>();
+    const source = new CreationJournal(disk, "active");
+    source.begin(id, "parent", 0, "Original");
+    const intent = source.get(id)!;
+    const recovered = new CreationJournal(disk, "other-tab", restoreId => committed.has(restoreId));
+    recovered.restore([intent], "committed");
+    recovered.restore([intent], "failed");
+    expect(recovered.list()).toEqual([intent]);
+    committed.add("committed");
+    expect(recovered.list()).toHaveLength(2);
+    expect(recovered.list().some(entry => entry.restoreId === "failed")).toBe(false);
+    recovered.discardRestore("failed");
+    expect(disk.length).toBe(2);
+  });
+
   it("replays typing before the initial create completed and does not duplicate a reserved id", () => {
     const db = openDatabase(":memory:");
     try {

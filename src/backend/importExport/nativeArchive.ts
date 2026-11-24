@@ -18,7 +18,8 @@ function validHistoryNode(value: unknown): boolean {
   if (!object(value)) return false;
   return Object.entries(value).every(([key, field]) => {
     if (!historyFields.has(key)) return false;
-    if (key === "position") return typeof field === "number" && Number.isSafeInteger(field);
+    // Older versions accepted fractional positions and included them in undo history.
+    if (key === "position") return typeof field === "number" && Number.isFinite(field) && Math.abs(field) <= Number.MAX_SAFE_INTEGER;
     if (key === "done" || key === "collapsed") return typeof field === "boolean";
     if (key === "parentId" || key === "dueDate" || key === "deletedAt") return field === null || typeof field === "string";
     return typeof field === "string";

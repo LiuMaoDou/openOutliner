@@ -15,6 +15,102 @@ function historyBytes(workspaceId: string): number {
     FROM outline_history WHERE workspace_id = ?`).get(workspaceId)!.bytes);
 }
 
+describe("legacy sibling positions", () => {
+  const updatedAt = "2026-01-01T00:00:00.000Z";
+  const setPosition = (id: string, position: number) => {
+    db.prepare("UPDATE nodes SET position = ?, updated_at = ? WHERE id = ?").run(position, updatedAt, id);
+  };
+  const order = (parentId: string) => service.listChildren(parentId).map(node => [node.id, node.position]);
+
+  it("inserts at an ordinal, changes only its sibling group and undoes legacy normalization", () => {
+    const workspace = service.createWorkspace("Legacy children");
+    const first = service.createNode({ parentId: workspace.rootNodeId, title: "First" });
+    const second = service.createNode({ parentId: workspace.rootNodeId, title: "Second" });
+    const third = service.createNode({ parentId: workspace.rootNodeId, title: "Third" });
+    const tied = service.createNode({ parentId: workspace.rootNodeId, title: "Tied with second" });
+    const nested = service.createNode({ parentId: first.id, title: "Different sibling group" });
+    setPosition(first.id, 0);
+    setPosition(second.id, 0.5);
+    setPosition(third.id, 7);
+    setPosition(tied.id, 0.5);
+    db.prepare("UPDATE nodes SET created_at = ? WHERE id IN (?, ?)").run(updatedAt, second.id, tied.id);
+    setPosition(nested.id, 9);
+    const [lowerId, higherId] = [second.id, tied.id].sort();
+    expect(service.getTree(workspace.rootNodeId).children.map(node => node.id)).toEqual([first.id, lowerId, higherId, third.id]);
+
+    const inserted = service.createNode({ parentId: workspace.rootNodeId, position: 1, title: "Between" });
+    expect(order(workspace.rootNodeId)).toEqual([[first.id, 0], [inserted.id, 1], [lowerId, 2], [higherId, 3], [third.id, 4]]);
+    expect(service.getNode(first.id).updatedAt).toBe(updatedAt);
+    expect(service.getNode(nested.id)).toMatchObject({ position: 9, updatedAt });
+    expect(service.getOutlineHistoryState(workspace.id).undoLabel).toBe("Create outline");
+    service.undoOutline(workspace.id);
+    expect(order(workspace.rootNodeId)).toEqual([[first.id, 0], [lowerId, 0.5], [higherId, 0.5], [third.id, 7]]);
+  });
+
+  it("moves a single outline between legacy groups and preserves timestamps of unchanged siblings", () => {
+    const workspace = service.createWorkspace("Legacy move");
+    const left = service.createNode({ parentId: workspace.rootNodeId, title: "Left" });
+    const right = service.createNode({ parentId: workspace.rootNodeId, title: "Right" });
+    const staying = service.createNode({ parentId: left.id, title: "Staying" });
+    const moving = service.createNode({ parentId: left.id, title: "Moving" });
+    const first = service.createNode({ parentId: right.id, title: "First" });
+    const second = service.createNode({ parentId: right.id, title: "Second" });
+    setPosition(staying.id, 0.5);
+    setPosition(moving.id, 4);
+    setPosition(first.id, 0);
+    setPosition(second.id, 7);
+
+    service.moveNode(moving.id, right.id, 1);
+    expect(order(left.id)).toEqual([[staying.id, 0]]);
+    expect(order(right.id)).toEqual([[first.id, 0], [moving.id, 1], [second.id, 2]]);
+    expect(service.getNode(first.id).updatedAt).toBe(updatedAt);
+    expect(service.getOutlineHistoryState(workspace.id).undoLabel).toBe("Move outline");
+    const history = historyBytes(workspace.id);
+    const unchanged = service.getNode(moving.id);
+    expect(service.moveNode(moving.id, right.id, 1)).toEqual(unchanged);
+    expect(historyBytes(workspace.id)).toBe(history);
+    service.undoOutline(workspace.id);
+    expect(order(left.id)).toEqual([[staying.id, 0.5], [moving.id, 4]]);
+    expect(order(right.id)).toEqual([[first.id, 0], [second.id, 7]]);
+  });
+
+  it("restores a trashed outline in its former relative order among legacy siblings", () => {
+    const workspace = service.createWorkspace("Legacy restore");
+    const first = service.createNode({ parentId: workspace.rootNodeId, title: "First" });
+    const deleted = service.createNode({ parentId: workspace.rootNodeId, title: "Deleted" });
+    const last = service.createNode({ parentId: workspace.rootNodeId, title: "Last" });
+    service.deleteNode(deleted.id);
+    setPosition(first.id, 0);
+    setPosition(deleted.id, 2.5);
+    setPosition(last.id, 8);
+
+    expect(service.restoreNode(deleted.id).position).toBe(1);
+    expect(order(workspace.rootNodeId)).toEqual([[first.id, 0], [deleted.id, 1], [last.id, 2]]);
+    expect(service.getNode(first.id).updatedAt).toBe(updatedAt);
+    service.undoOutline(workspace.id);
+    expect(order(workspace.rootNodeId)).toEqual([[first.id, 0], [last.id, 8]]);
+    expect(service.listRecycleBin().map(entry => entry.node.position)).toEqual([2.5]);
+  });
+
+  it("appends after legacy target siblings when moving to another workspace", () => {
+    const source = service.createWorkspace("Legacy move source");
+    const target = service.createWorkspace("Legacy move target");
+    const staying = service.createNode({ parentId: source.rootNodeId, title: "Staying" });
+    const moving = service.createNode({ parentId: source.rootNodeId, title: "Moving" });
+    const first = service.createNode({ parentId: target.rootNodeId, title: "First" });
+    const second = service.createNode({ parentId: target.rootNodeId, title: "Second" });
+    setPosition(staying.id, 0);
+    setPosition(first.id, 0);
+    setPosition(second.id, 8);
+
+    service.moveNodesToWorkspace([moving.id], target.id);
+    expect(order(source.rootNodeId)).toEqual([[staying.id, 0]]);
+    expect(order(target.rootNodeId)).toEqual([[first.id, 0], [second.id, 1], [moving.id, 2]]);
+    expect(service.getNode(staying.id).updatedAt).toBe(updatedAt);
+    expect(service.getNode(first.id).updatedAt).toBe(updatedAt);
+  });
+});
+
 describe("safe imports", () => {
   it.each([
     ["Markdown", importMarkdown, ""], ["Markdown whitespace", importMarkdown, " \n\t"],
@@ -193,16 +289,28 @@ describe("restore deletion batches", () => {
     expect(service.getTree(parent.id).children.map(node => node.id)).toEqual([child.id]);
   });
 
-  it("rejects restoration below a parent moved into another workspace", () => {
+  it("restores a deleted subtree in its original workspace after its parent moves", () => {
     const source = service.createWorkspace("Source");
     const target = service.createWorkspace("Target");
     const parent = service.createNode({ parentId: source.rootNodeId, title: "Parent" });
     const child = service.createNode({ parentId: parent.id, title: "Deleted" });
+    const nested = service.createNode({ parentId: child.id, title: "Deleted together" });
     service.deleteNode(child.id);
     service.moveNodesToWorkspace([parent.id], target.id);
-    expect(() => service.restoreNode(child.id)).toThrow("another workspace");
-    expect(() => service.getNode(child.id)).toThrow();
+    expect(service.listRecycleBin().map(entry => entry.node.id)).toEqual([child.id]);
     expect(service.getTree(parent.id).children).toEqual([]);
+    expect(service.restoreNode(child.id)).toMatchObject({ parentId: source.rootNodeId, children: [{ id: nested.id }] });
+  });
+
+  it("keeps trashed outlines when deleting the workspace that received their parent", () => {
+    const source = service.createWorkspace("Source");
+    const target = service.createWorkspace("Target");
+    const parent = service.createNode({ parentId: source.rootNodeId, title: "Parent" });
+    const child = service.createNode({ parentId: parent.id, title: "Deleted before move" });
+    service.deleteNode(child.id);
+    service.moveNodesToWorkspace([parent.id], target.id);
+    service.deleteWorkspace(target.id);
+    expect(service.restoreNode(child.id)).toMatchObject({ parentId: source.rootNodeId, workspaceId: source.id });
   });
 });
 

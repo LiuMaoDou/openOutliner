@@ -333,7 +333,7 @@ public class MainActivity extends Activity {
     resumed = false;
     themeHandler.removeCallbacks(themeRefresh);
     if (fileCallback != null) fileCallback.onReceiveValue(null);
-    localExport.detach();
+    localExport.destroy();
     root.removeView(web);
     web.destroy();
     super.onDestroy();

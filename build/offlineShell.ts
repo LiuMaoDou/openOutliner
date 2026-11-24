@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { OutputBundle } from "rollup";
 import type { Plugin } from "vite";
 
+const iconPath = "person/飞机.png";
+const manifestPath = "manifest.webmanifest";
+
 export function offlineAssets(bundle: OutputBundle): { shell: string[]; assets: string[] } {
-  const shell = new Set(["/", "/manifest.webmanifest", "/person/飞机.png"]);
+  const shell = new Set(["/", `/${manifestPath}`, `/${iconPath}`]);
   const visit = (name: string) => {
     if (shell.has(`/${name}`)) return;
     const entry = bundle[name];
@@ -96,11 +101,26 @@ self.addEventListener("fetch", event => {
 }
 
 export function offlineShell(): Plugin {
+  let iconFile: string;
+  let manifestFile: string;
   return {
     name: "offline-shell",
+    configResolved(config) {
+      iconFile = resolve(config.root, iconPath);
+      manifestFile = resolve(config.publicDir, manifestPath);
+    },
+    buildStart() {
+      this.addWatchFile(iconFile);
+      this.addWatchFile(manifestFile);
+    },
     generateBundle(_options, bundle) {
+      const icon = readFileSync(iconFile);
+      // The manifest refers to the stable icon URL on both static and Node hosts.
+      this.emitFile({ type: "asset", fileName: iconPath, source: icon });
       const { shell, assets } = offlineAssets(bundle);
       const hash = createHash("sha256");
+      // Vite copies the public directory separately from the Rollup bundle.
+      hash.update(manifestPath).update("\0").update(readFileSync(manifestFile)).update("\0");
       for (const [name, entry] of Object.entries(bundle).sort(([left], [right]) => left.localeCompare(right))) {
         hash.update(name).update("\0").update(entry.type === "chunk" ? entry.code : entry.source).update("\0");
       }

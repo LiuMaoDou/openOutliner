@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeVisibleIds, fromNestedTree, isDescendant, removeNodes, searchNodeIds, selectedNodeText } from "../src/web/flatTree.js";
+import { computeVisibleIds, fromNestedTree, getSiblingIndex, isDescendant, moveNode, removeNodes, searchNodeIds, selectedNodeText } from "../src/web/flatTree.js";
 import type { OutlineTreeNode } from "../src/web/api.js";
 import { getDueReminderCutoff, getDueReminderNodes } from "../src/web/dueTasks.js";
 
@@ -72,6 +72,24 @@ describe("outline search", () => {
 });
 
 describe("large outline operations", () => {
+  it("uses the ordered sibling index for mutations on outlines with legacy positions", () => {
+    const { state } = fromNestedTree(node("root", "Root", [
+      node("first", "First", [], { position: 5.5 }),
+      node("parent", "Parent", [node("child", "Child", [], { position: 2.5 })], { position: 10 }),
+      node("last", "Last", [], { position: 24.5 })
+    ]));
+    expect(getSiblingIndex(state, "first")).toBe(0);
+    expect(getSiblingIndex(state, "parent")).toBe(1);
+    expect(getSiblingIndex(state, "child")).toBe(0);
+    expect(getSiblingIndex(state, "last")).toBe(2);
+    expect(getSiblingIndex(state, "root")).toBeUndefined();
+    expect(getSiblingIndex(state, "missing")).toBeUndefined();
+
+    const outdented = moveNode(state, "child", "root", getSiblingIndex(state, "parent")! + 1);
+    expect(outdented.nodes.root.childIds).toEqual(["first", "parent", "child", "last"]);
+    expect(getSiblingIndex(outdented, "child")).toBe(2);
+  });
+
   it("copies selected visible titles in outline order without including collapsed children", () => {
     const { state } = fromNestedTree(node("root", "Root", [
       node("first", "First", [node("hidden", "Hidden")], { collapsed: true }),

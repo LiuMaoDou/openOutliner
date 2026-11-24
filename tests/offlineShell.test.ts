@@ -1,7 +1,11 @@
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import { expect, it, vi } from "vitest";
 import type { OutputBundle } from "rollup";
-import { offlineAssets, serviceWorkerSource } from "../build/offlineShell";
+import { build } from "vite";
+import { offlineAssets, offlineShell, serviceWorkerSource } from "../build/offlineShell";
 
 it("precaches the entry dependency graph and SQL runtime without every lazy icon or font", () => {
   const bundle = {
@@ -20,6 +24,39 @@ it("precaches the entry dependency graph and SQL runtime without every lazy icon
   expect(assets).toContain("/assets/icon.js");
   expect(assets).toContain("/assets/cjk.woff2");
   expect(assets).not.toContain("/assets/main.js.map");
+});
+
+it("ships the manifest icon to static hosts and updates the worker on manifest-only changes", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "openoutliner-offline-shell-")));
+  try {
+    mkdirSync(join(root, "public"));
+    mkdirSync(join(root, "person"));
+    const icon = Buffer.from([1, 2, 3]);
+    const manifest = join(root, "public", "manifest.webmanifest");
+    writeFileSync(join(root, "person", "飞机.png"), icon);
+    writeFileSync(join(root, "index.html"), `
+      <link rel="icon" href="/person/飞机.png">
+      <link rel="manifest" href="/manifest.webmanifest">
+      <script type="module" src="/main.js"></script>
+    `);
+    writeFileSync(join(root, "main.js"), 'document.title = "OpenOutliner";');
+    writeFileSync(manifest, '{"name":"OpenOutliner"}');
+
+    const config = { configFile: false as const, root, plugins: [offlineShell()], logLevel: "silent" as const };
+    const worker = () => readFileSync(join(root, "dist", "sw.js"), "utf8").split("\n");
+    await build(config);
+    const previousWorker = worker();
+    const previousCache = previousWorker.find(line => line.startsWith("const CACHE = "));
+    expect(previousCache).toBeDefined();
+    expect(readFileSync(join(root, "dist", "person", "飞机.png"))).toEqual(icon);
+    expect(previousWorker.find(line => line.startsWith("const SHELL = "))).toContain("/person/飞机.png");
+
+    writeFileSync(manifest, '{"name":"OpenOutliner (updated)"}');
+    await build(config);
+    expect(worker().find(line => line.startsWith("const CACHE = "))).not.toBe(previousCache);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function workerHarness(clients = [{id:"one",url:"https://outline.test/"}]) {

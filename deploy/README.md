@@ -15,7 +15,7 @@ OPENOUTLINER_PASSWORD=替换为足够长的随机密码
 
 不使用 Docker 时：Node >=26，运行 `npm ci && npm run build`，设置 `OPENOUTLINER_HOST=0.0.0.0`、`OPENOUTLINER_PASSWORD`、`OPENOUTLINER_DB` 和 `NODE_ENV=production`，再运行 `npm start`。必须在前面配置同域 HTTPS 反向代理。
 
-生产模式的登录 Cookie 仅通过 HTTPS 发送，30 天过期，密码改变后旧会话失效。浏览器已下载的数据仍可离线读取；请只在自己的设备使用。默认只监听本机且未设密码的开发服务保持免登录。
+生产模式的登录 Cookie 仅通过 HTTPS 发送，30 天过期，密码改变后旧会话失效。浏览器已下载的数据仍可离线读取；请只在自己的设备使用。免登录仅限直接访问本机的开发请求。生产环境或经反向代理访问时，即使 Node 只监听本机，也须设置 `OPENOUTLINER_PASSWORD`。
 
 ## 微信到期提醒（虾推啥）
 

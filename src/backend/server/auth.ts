@@ -6,14 +6,30 @@ const same = (a: string, b: string) => {
   const left = Buffer.from(a), right = Buffer.from(b);
   return left.length === right.length && timingSafeEqual(left, right);
 };
+
+const loopbackHost = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i;
+const loopbackAddresses = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+function allowsPasswordlessLocal(req: IncomingMessage): boolean {
+  return process.env.NODE_ENV !== "production" &&
+    loopbackAddresses.has(req.socket.remoteAddress ?? "") &&
+    loopbackHost.test(req.headers.host ?? "") &&
+    !Object.keys(req.headers).some(header => header === "forwarded" || header === "x-real-ip" || header.startsWith("x-forwarded-"));
+}
+
 export function authorized(req: IncomingMessage): boolean {
-  if (!password) return true;
+  if (!password) return allowsPasswordlessLocal(req);
   const value = req.headers.cookie?.split(";").map(item => item.trim()).find(item => item.startsWith("oo_session="))?.slice(11) ?? "";
   const [expires, signature = ""] = value.split(".");
   return Number(expires) > Date.now() && same(sign(expires), signature);
 }
 const attempts = new Map<string, { count: number; until: number }>();
 export function login(req: IncomingMessage, res: ServerResponse, input: { password?: string }): void {
+  if (!password && !allowsPasswordlessLocal(req)) {
+    res.writeHead(503, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "托管服务需要设置 OPENOUTLINER_PASSWORD" }));
+    return;
+  }
   const address = req.socket.remoteAddress ?? "unknown";
   let attempt = attempts.get(address);
   if (!attempt || attempt.until < Date.now()) { attempt = { count: 0, until: Date.now() + 60000 }; attempts.set(address, attempt); }
@@ -22,6 +38,7 @@ export function login(req: IncomingMessage, res: ServerResponse, input: { passwo
     res.writeHead(401); res.end(JSON.stringify({ error: "密码不正确" })); return;
   }
   const expires = String(Date.now() + 30 * 86400000);
-  res.setHeader("set-cookie", `oo_session=${expires}.${sign(expires)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
+  const secure = process.env.NODE_ENV === "production" || !loopbackHost.test(req.headers.host ?? "");
+  res.setHeader("set-cookie", `oo_session=${expires}.${sign(expires)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${secure ? "; Secure" : ""}`);
   res.writeHead(200, { "content-type": "application/json" }); res.end('{"ok":true}');
 }

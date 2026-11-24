@@ -9,6 +9,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from uuid import uuid4
 from playwright.sync_api import expect, sync_playwright
 from browser_smoke import ROOT, ARTIFACTS, request
 
@@ -87,7 +88,7 @@ def editor_checks(page, a, b, nodes, other, mapped):
     editor=row(page,nodes[0]).locator('textarea.nodeTitle')
     editor.press('Home');editor.press('Shift+ArrowRight');editor.press('Shift+ArrowRight')
     native=editor.evaluate('e=>e.value.slice(e.selectionStart,e.selectionEnd)')
-    page.keyboard.press('Control+c')
+    page.keyboard.press('ControlOrMeta+c')
     assert page.evaluate('navigator.clipboard.readText()') == native
     page.evaluate("""() => {
       window.__pointerLog=[];
@@ -101,7 +102,7 @@ def editor_checks(page, a, b, nodes, other, mapped):
     page.mouse.move(last['x']+70,last['y']+last['height']/2,steps=15);page.mouse.up()
     page.mouse.move(1300,950)
     page.wait_for_function('ids=>ids.every(id=>document.querySelector(`[data-node-id="${id}"]`)?.dataset.selected==="true")',arg=[n['id'] for n in nodes])
-    page.keyboard.press('Control+c')
+    page.keyboard.press('ControlOrMeta+c')
     assert page.evaluate('navigator.clipboard.readText()') == '\n'.join(row(page,n).locator('textarea.nodeTitle').input_value() for n in nodes)
     print('PASS real native and multi-row keyboard copy',flush=True)
     # Keep a failed operation in flight while switching to another real workspace.
@@ -213,6 +214,127 @@ def sync_with_offline_browser_flag(browser, base, node):
         assert request(base, f'/api/nodes/{node["id"]}')['title'] == title
         page.locator('.syncIndicator').click()
         expect(page.locator('.syncStatusRow [role="status"]')).to_have_text('已同步')
+        with page.expect_response(lambda response: '/api/sync?' in response.url and response.ok, timeout=5000):
+            page.evaluate("window.dispatchEvent(new Event('offline'))")
+        expect(page.locator('.syncStatusRow [role="status"]')).to_have_text('已同步')
+    finally:
+        context.close()
+
+
+def retry_local_startup(browser, base, node):
+    context = browser.new_context(service_workers='block')
+    context.add_init_script("""(() => {
+      const open = IDBFactory.prototype.open;
+      let failNext = true;
+      IDBFactory.prototype.open = function(name, ...args) {
+        if (name !== 'openoutliner-offline-v1' || !failNext) return open.call(this, name, ...args);
+        failNext = false;
+        const request = {};
+        setTimeout(() => request.onerror(), 0);
+        return request;
+      };
+    })()""")
+    try:
+        page = context.new_page()
+        requests = []
+
+        def load_wasm(route):
+            requests.append(route.request.url)
+            if len(requests) == 1:
+                route.fulfill(status=503)
+            else:
+                route.continue_()
+
+        page.route('**/*.wasm', load_wasm)
+        page.goto(base)
+        expect(page.get_by_role('alert')).to_contain_text('无法加载本机数据库模块 (503)')
+        page.evaluate("window.dispatchEvent(new Event('focus'))")
+        row(page, node).locator('.nodeTitlePreview').wait_for(state='visible')
+        assert len(requests) == 2
+    finally:
+        context.close()
+
+
+def sync_committed_edit_despite_draft_failure(browser, base, first, second):
+    context = browser.new_context()
+    try:
+        page = context.new_page()
+        page.goto(base)
+        row(page, first).locator('.nodeTitlePreview').wait_for(state='visible')
+        pattern = '**/api/sync*'
+        page.route(pattern, lambda route: route.abort())
+
+        def edit(node, title):
+            row(page, node).locator('.nodeTitlePreview').click()
+            row(page, node).locator('textarea.nodeTitle').fill(title)
+            page.locator('.workspaceTitleInput').click()
+
+        title = 'Committed independently of the broken draft'
+        edit(first, title)
+        page.locator('.syncIndicator').click()
+        expect(page.get_by_role('status')).to_contain_text('待同步')
+        page.get_by_role('button', name='关闭备份与恢复').click()
+        page.evaluate("""() => {
+          const put = IDBObjectStore.prototype.put;
+          IDBObjectStore.prototype.put = function(value, key) {
+            if (this.name === 'state' && key === 'current' &&
+                new TextDecoder().decode(value.bytes).includes('Draft blocked by quota')) {
+              this.transaction.abort();
+              throw new DOMException('Draft save rejected', 'QuotaExceededError');
+            }
+            return put.apply(this, arguments);
+          };
+        }""")
+        edit(second, 'Draft blocked by quota')
+        page.locator('.syncIndicator').click()
+        expect(page.get_by_role('alert')).to_contain_text('Draft save rejected')
+        with page.expect_response(lambda response: '/api/sync?' in response.url and
+                                   response.request.method == 'POST' and response.ok, timeout=5000):
+            page.unroute(pattern)
+            page.evaluate("window.dispatchEvent(new Event('focus'))")
+        assert request(base, f'/api/nodes/{first["id"]}')['title'] == title
+        assert request(base, f'/api/nodes/{second["id"]}')['title'] == second['title']
+    finally:
+        context.close()
+
+
+def failed_attachment_cannot_replace_archive(browser, base, first, second):
+    context = browser.new_context()
+    try:
+        page = context.new_page()
+        page.goto(base)
+        row(page, first).locator('.nodeTitlePreview').wait_for(state='visible')
+        before = request(base, '/api/sync')
+        changed = before['data']
+        changed['nodes'] = [node for node in changed['nodes'] if node['id'] != second['id']]
+        archive = {
+            'format': 'openoutliner-recovery-v1', 'local': changed,
+            'editorDrafts': [{'nodeId': first['id'], 'field': 'title', 'expected': first['title'],
+                              'value': 'Attachment', 'updatedAt': '2026-01-01T00:00:00.000Z'}],
+            'pendingCreations': [{'id': str(uuid4()), 'owner': 'imported', 'parentId': second['parentId'],
+                                  'position': 0, 'initialTitle': 'Creation', 'title': 'Creation',
+                                  'body': '', 'version': 'imported', 'updatedAt': '2026-01-01T00:00:00.000Z'}]
+        }
+        page.evaluate("""() => {
+          const write = Storage.prototype.setItem;
+          Storage.prototype.setItem = function(key, value) {
+            if (key.startsWith('openoutliner-recovery-create-v1:')) {
+              throw new DOMException('Recovery attachment rejected', 'QuotaExceededError');
+            }
+            return write.call(this, key, value);
+          };
+        }""")
+        page.locator('.syncIndicator').click()
+        page.once('dialog', lambda dialog: dialog.accept())
+        page.locator('input[aria-label="恢复备份文件"]').set_input_files({
+            'name': 'restore.json', 'mimeType': 'application/json', 'buffer': json.dumps(archive).encode()
+        })
+        expect(page.get_by_role('alert')).to_contain_text('Recovery attachment rejected')
+        assert page.evaluate("!Object.keys(localStorage).some(key => key.startsWith('openoutliner-recovery-'))")
+        with page.expect_response(lambda response: '/api/sync?' in response.url and response.ok, timeout=5000):
+            page.evaluate("window.dispatchEvent(new Event('focus'))")
+        assert request(base, '/api/sync')['revision'] == before['revision']
+        row(page, second).locator('.nodeTitlePreview').wait_for(state='visible')
     finally:
         context.close()
 
@@ -271,6 +393,10 @@ def run():
                         print('PASS actual service worker: multi-client activation refused; single-client explicit update reloads safely',flush=True)
                         sync_with_offline_browser_flag(browser, base, nodes[0])
                         print('PASS automatic sync with a reachable server and a false browser online flag', flush=True)
+                        retry_local_startup(browser, base, nodes[0])
+                        sync_committed_edit_despite_draft_failure(browser, base, nodes[0], nodes[1])
+                        failed_attachment_cannot_replace_archive(browser, base, nodes[0], nodes[2])
+                        print('PASS transient storage startup, draft failure isolation, and atomic recovery', flush=True)
                     finally:browser.close()
             finally:
                 server.terminate()

@@ -1402,6 +1402,22 @@ describe("tree operations", () => {
 });
 
 describe("import/export", () => {
+  it("preserves workspace heading text and prose in Markdown import", () => {
+    const content = "# Journal #2026\nThe introduction belongs in the outline.\n\n## Next section\n- Buy stamps";
+    const result = importMarkdown(service, { content });
+    const workspace = service.getWorkspace(result.workspaceId!);
+    const tree = service.getTree(workspace.rootNodeId);
+    expect(workspace.name).toBe("Journal #2026");
+    expect(tree.children).toMatchObject([
+      { title: "Journal #2026", body: "The introduction belongs in the outline.", children: [] },
+      { title: "Next section" },
+      { title: "Buy stamps" }
+    ]);
+    const destination = service.createWorkspace(workspace.name);
+    importMarkdown(service, { workspaceId: destination.id, content });
+    expect(service.getTree(destination.rootNodeId).children[0].body).toBe("The introduction belongs in the outline.");
+  });
+
   it("round-trips Markdown hierarchy", () => {
     const workspace = service.createWorkspace("Markdown");
 

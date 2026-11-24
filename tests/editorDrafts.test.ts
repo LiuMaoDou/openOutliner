@@ -113,6 +113,22 @@ describe("durable editor journal", () => {
     expect(journal.get("node", "body")).toBeUndefined();
   });
 
+  it("only exposes staged attachments for committed restores", () => {
+    const storage = memoryStorage();
+    const committed = new Set<string>();
+    const source = new DraftJournal(storage, "active");
+    const draft = source.stage("node", "title", "Draft", "Original");
+    const recovered = new DraftJournal(storage, "other-tab", id => committed.has(id));
+    recovered.restore([draft], "committed");
+    recovered.restore([draft], "failed");
+    expect(recovered.list()).toEqual([draft]);
+    committed.add("committed");
+    expect(recovered.list()).toHaveLength(2);
+    expect(recovered.list().some(entry => entry.restoreId === "failed")).toBe(false);
+    recovered.discardRestore("failed");
+    expect(storage.length).toBe(2);
+  });
+
   it("rejects malformed backup drafts before they enter the journal", () => {
     expect(parseDraftBackup(undefined)).toEqual([]);
     expect(() => parseDraftBackup({ value: "bad" })).toThrow("格式无效");
