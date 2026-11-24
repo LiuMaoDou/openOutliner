@@ -1,10 +1,11 @@
-import type { Snapshot } from "./sync.js";
+import type { Row, Snapshot } from "./sync.js";
 import { TODAY_WORKSPACE_ID } from "./systemWorkspaces.js";
 
 export interface SnapshotBackup {
   date: string;
   data: Snapshot;
   kind?: "sync";
+  outlineHistory?: Row[];
 }
 
 export const AUTOMATIC_SYNC_BACKUP_LIMIT = 3;

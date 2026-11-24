@@ -1,5 +1,6 @@
 import { resolveTagColor, tagColorForName } from "../shared/tagColors.js";
 import { TODAY_ROOT_NODE_ID, TODAY_WORKSPACE_ID } from "../shared/systemWorkspaces.js";
+import { snapshot as syncSnapshot, validateTrees } from "../shared/sync.js";
 import { canAddOutlineDivider, formatOutlineTitle, splitOutlineLines, splitOutlineTitle } from "../shared/outlineTitle.js";
 export { morandiTagColors, tagColorForName } from "../shared/tagColors.js";
 
@@ -1790,6 +1791,10 @@ export class OutlinerService {
         if (Array.isArray(snapshot)) this.applyOutlineSnapshot(workspaceId, snapshot);
         else this.applyOutlineDelta(workspaceId, snapshot);
       });
+      // Restored history is portable; a malformed or stale undo must not
+      // produce an unreachable node, invalid root, or cross-workspace relation.
+      validateTrees(syncSnapshot(this.db));
+      if (this.db.prepare("PRAGMA foreign_key_check").all().length) throw new ValidationError("Invalid outline history relation.");
       this.db
         .prepare("UPDATE outline_history SET undone = ?, updated_at = ? WHERE seq = ?")
         .run(direction === "undo" ? 1 : 0, timestamp(), number(entry.seq));

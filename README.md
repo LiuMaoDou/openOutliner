@@ -181,6 +181,7 @@ The MCP server exposes tools for workspace listing, node search/read/create/edit
 
 ## Import And Export
 
+- Native JSON recovery archives preserve the complete outline database: IDs, workspace/folder hierarchy, tag colors, field definitions/values, completion, dates, recycle-bin records and local undo history. Browser exports also contain retained versions and editing/creation drafts. Use Backup and Recovery in the app or `openoutliner export native --out archive.json`; CLI full restore requires `openoutliner import native archive.json --replace --backup before-restore.json` (use a new backup filename). A restored archive is never treated as a new cloud acknowledgement.
 - Markdown export supports one workspace or all workspaces.
 - Markdown and OPML imports can target a workspace/parent node, or create new workspaces when no target is supplied. Existing workspaces and undo history are preserved; invalid or empty imports make no changes.
 - OPML export supports one workspace or all workspaces.

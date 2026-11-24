@@ -135,7 +135,7 @@ export function applySnapshotChanges(db: SqlDatabase, current: Snapshot, target:
   }
 }
 
-function validateTrees(data: Snapshot): void {
+export function validateTrees(data: Snapshot): void {
   const nodes = new Map(data.nodes.map(row => [row.id, row]));
   const roots = new Map(data.workspaces.map(row => [row.id, row.root_node_id]));
   for (const workspace of data.workspaces) {

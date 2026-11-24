@@ -1,4 +1,5 @@
 import { encodeRecovery, decodeRecovery } from "./recoveryFile";
+import { exportNativeArchive, parseNativeArchive, restoreNativeArchive } from "../backend/importExport/nativeArchive.js";
 import { openLocal } from "./localDatabase";
 import { migrate, SCHEMA_VERSION } from "../backend/shared/schema.js";
 import { needsStoredUpgrade, upgradeStoredState } from "../backend/shared/storedState.js";
@@ -438,7 +439,7 @@ export async function downloadRecovery() {
   if (!state) return;
   const { db, sql } = await openLocal(state.bytes);
   try {
-    const blob = encodeRecovery({ format: "openoutliner-recovery-v1", local: snapshot(sql), base: state.base, conflict: state.conflict, backups: state.backups, editorDrafts: journal.list(), pendingCreations: creations.list() });
+    const blob = encodeRecovery({ ...exportNativeArchive(sql), base: state.base, conflict: state.conflict, backups: state.backups, editorDrafts: journal.list(), pendingCreations: creations.list() });
     const url = URL.createObjectURL(blob), anchor = document.createElement("a");
     const now = new Date();
     const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(value => String(value).padStart(2, "0")).join("-");
@@ -504,7 +505,7 @@ export function downloadEditorDrafts() {
 }
 
 export async function restoreRecovery(file: File, confirmRestore: (summary: string) => boolean) {
-  const recovery = await decodeRecovery(file) as { format?: string; local?: Snapshot; editorDrafts?: unknown; pendingCreations?: unknown } | null;
+  const recovery = await decodeRecovery(file) as { format?: string; local?: Snapshot; outlineHistory?: unknown; base?: unknown; conflict?: { current?: unknown }; backups?: unknown; editorDrafts?: unknown; pendingCreations?: unknown } | null;
   if (!recovery || recovery.format !== "openoutliner-recovery-v1" || !recovery.local) throw new Error("请选择 OpenOutliner 恢复备份文件。");
   const drafts = parseDraftBackup(recovery.editorDrafts);
   const intents = parseCreationBackup(recovery.pendingCreations);
@@ -514,13 +515,32 @@ export async function restoreRecovery(file: File, confirmRestore: (summary: stri
     if (!state) throw new Error("请先完成首次同步，再导入恢复备份。");
     const { db, sql } = await openLocal(state.bytes);
     try {
-      const previous = snapshot(sql), incoming = recovery.local!;
-      if (removesToday(previous, incoming)) throw new Error("此备份缺少系统 Today 工作区。为避免清除现有 Today，请选择包含 Today 的完整恢复备份。");
+      const previous = exportNativeArchive(sql), archive = parseNativeArchive(sql, recovery), incoming = archive.local;
+      if (removesToday(previous.local, incoming)) throw new Error("此备份缺少系统 Today 工作区。为避免清除现有 Today，请选择包含 Today 的完整恢复备份。");
       const activeCount = (data: Snapshot) => data.nodes.filter(row => row.parent_id !== null && row.deleted_at === null).length;
-      const summary = `全量恢复将替换本机全部工作区（${previous.workspaces.length} → ${incoming.workspaces.length}）、有效大纲（${activeCount(previous)} → ${activeCount(incoming)}）。\n恢复后可能将修改或删除同步到其他设备。当前数据会保留在历史备份中。确认继续？`;
+      const summary = `全量恢复将替换本机全部工作区（${previous.local.workspaces.length} → ${incoming.workspaces.length}）、有效大纲（${activeCount(previous.local)} → ${activeCount(incoming)}）。\n恢复后可能将修改或删除同步到其他设备。当前数据会保留在历史备份中。确认继续？`;
       if (!confirmRestore(summary)) return false;
-      replaceSnapshot(sql, incoming);
-      state.backups.push({ date: new Date().toISOString(), data: previous });
+      // Preserve the imported recovery versions without making an old base
+      // the current sync acknowledgement. Invalid attachments fail before writes.
+      const imported: SnapshotBackup[] = [];
+      const now = new Date().toISOString();
+      const addVersion = (data: unknown, date: string, outlineHistory?: unknown) => {
+        const parsed = parseNativeArchive(sql, { format: "openoutliner-recovery-v1", local: data, outlineHistory });
+        imported.push({ date, data: parsed.local, outlineHistory: parsed.outlineHistory });
+      };
+      if (recovery.backups !== undefined) {
+        if (!Array.isArray(recovery.backups)) throw new Error("备份历史格式无效。");
+        for (const entry of recovery.backups) {
+          if (!entry || typeof entry.date !== "string") throw new Error("备份历史格式无效。");
+          addVersion(entry.data, entry.date, entry.outlineHistory);
+        }
+      }
+      if (recovery.base && changesBetween(incoming, parseNativeArchive(sql, { format: "openoutliner-recovery-v1", local: recovery.base }).local).length) {
+        addVersion(recovery.base, now);
+      }
+      if (recovery.conflict?.current) addVersion(recovery.conflict.current, now);
+      restoreNativeArchive(sql, archive);
+      state.backups.push(...imported, { date: now, data: previous.local, outlineHistory: previous.outlineHistory });
       state.bytes = db.export();
       // Recovery is treated as pending local edits, with normal conflict checks.
       await save(state);
@@ -538,7 +558,7 @@ export async function recoveryVersions(): Promise<string[]> {
 export async function downloadBackup(index: number, expectedDate: string) {
   const state = await locked(read), backup = state?.backups[index];
   if (!backup || backup.date !== expectedDate) throw new Error("备份列表已更新，请重新打开备份面板后选择版本。");
-  const url = URL.createObjectURL(encodeRecovery({ format: "openoutliner-recovery-v1", local: backup.data }));
+  const url = URL.createObjectURL(encodeRecovery({ format: "openoutliner-recovery-v1", local: backup.data, outlineHistory: backup.outlineHistory }));
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = `openoutliner-backup-${index + 1}.json`; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

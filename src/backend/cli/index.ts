@@ -5,6 +5,7 @@ import { openDatabase } from "../db/database.js";
 import { exportMarkdown, importMarkdown } from "../importExport/markdown.js";
 import { exportOpml, importOpml } from "../importExport/opml.js";
 import { OutlinerService } from "../services/outliner.js";
+import { exportNativeArchive, restoreNativeArchive } from "../importExport/nativeArchive.js";
 
 const program = new Command();
 
@@ -150,7 +151,44 @@ importCommand
     )
   );
 
+importCommand
+  .command("native")
+  .argument("<file>", "Native JSON archive")
+  .requiredOption("--backup <file>", "Write the current full archive to a new file before replacement")
+  .option("--replace", "Confirm replacement of all workspaces")
+  .action((file, options) => {
+    if (!options.replace) throw new Error("Native import replaces the database; pass --replace and --backup.");
+    const db = openDatabase(program.opts<{ db?: string }>().db);
+    try {
+      const input: unknown = JSON.parse(readFileSync(file, "utf8"));
+      db.exec("BEGIN IMMEDIATE;");
+      try {
+        writeFileSync(options.backup, JSON.stringify(exportNativeArchive(db)), { encoding: "utf8", flag: "wx", mode: 0o600 });
+        const archive = restoreNativeArchive(db, input);
+        db.exec("COMMIT;");
+        print({ workspaces: archive.local.workspaces.length, nodes: archive.local.nodes.length, backup: options.backup });
+      } catch (error) { db.exec("ROLLBACK;"); throw error; }
+    } finally { db.close(); }
+  });
+
 const exportCommand = program.command("export").description("Export outlines");
+
+exportCommand
+  .command("native")
+  .description("Lossless JSON archive including identities, fields, deleted items and undo history")
+  .option("--out <file>", "Output file (must not exist)")
+  .action(options => {
+    const db = openDatabase(program.opts<{ db?: string }>().db);
+    try {
+      db.exec("BEGIN;");
+      try {
+        const content = JSON.stringify(exportNativeArchive(db));
+        if (options.out) writeFileSync(options.out, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+        else process.stdout.write(content);
+        db.exec("COMMIT;");
+      } catch (error) { db.exec("ROLLBACK;"); throw error; }
+    } finally { db.close(); }
+  });
 
 exportCommand
   .command("markdown")
