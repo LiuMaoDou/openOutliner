@@ -113,6 +113,10 @@ Configure an OpenAI-compatible Chat Completions provider in the server environme
 - Optional WeChat reminders run on the backend independently of the browser. Set `XTUIS_TOKEN` on the server to enable one daily digest at 09:00 in `Asia/Shanghai`, including unfinished tasks due within two days and overdue tasks across all workspaces. Completed/deleted tasks and tasks without a due date are excluded. See [WeChat reminder configuration](deploy/README.md#微信到期提醒虾推啥).
 - Lunar dates, holidays, and make-up working days come from [ChinaCalendar](https://github.com/yangh9/ChinaCalendar) feeds. Existing cached data remains available if a feed cannot refresh; initial retrieval requires a network connection.
 
+## Version and Build Identification
+
+The sidebar shows the semantic package version (currently v0.11.0) and the short identifier of the JavaScript bundle actually loaded by the browser. Hover over the version to inspect the full build filename. Two deployments with the same package version can therefore still be distinguished. The CLI reads its version from the same package.json. The build identifier is a Vite content hash, not a Git commit hash, so it also works in Docker builds without Git metadata.
+
 ## Offline, Sync, And Backups
 
 The web app runs outline operations against a local SQLite database saved in IndexedDB. After the first successful load and production app-cache setup, supported browsers can reopen and edit offline.

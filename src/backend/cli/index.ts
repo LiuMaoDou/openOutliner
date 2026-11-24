@@ -7,12 +7,14 @@ import { exportOpml, importOpml } from "../importExport/opml.js";
 import { OutlinerService } from "../services/outliner.js";
 import { exportNativeArchive, restoreNativeArchive } from "../importExport/nativeArchive.js";
 
+// The source and compiled CLI both live three levels below package.json.
+const appVersion = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version: string }).version;
 const program = new Command();
 
 program
   .name("openoutliner")
   .description("CLI for the local OpenOutliner workspace")
-  .version("0.1.0")
+  .version(appVersion)
   .option("--db <path>", "SQLite database path");
 
 function getService(): OutlinerService {

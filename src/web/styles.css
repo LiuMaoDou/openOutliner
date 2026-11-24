@@ -559,6 +559,9 @@ body.isResizingPanel .appShell {
 }
 
 .sidebarVersion {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -567,6 +570,13 @@ body.isResizingPanel .appShell {
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebarBuildId {
+  font-size: 0.5625rem;
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .appShell.sidebarCollapsed .sidebarFooter {
