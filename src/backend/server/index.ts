@@ -70,8 +70,13 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   const path = url.pathname;
   const method = req.method ?? "GET";
 
-  if (path === "/api/sync" && method === "GET") { sendJson(res, sync.pull()); return; }
-  if (path === "/api/sync" && method === "POST") { sendJson(res, sync.push(await readJson(req))); return; }
+  if (path === "/api/sync" && (method === "GET" || method === "POST")) {
+    const full = method === "GET" ? sync.pull() : sync.push(await readJson(req));
+    const result = url.searchParams.get("incremental") === "1"
+      ? sync.incremental(full, url.searchParams.get("baseRevision"))
+      : full;
+    sendJson(res, result); return;
+  }
   if (path === "/api/translation/english" && method === "POST") {
     const translated = await translateToEnglish(await readJson(req), await readTranslationSettings());
     sendJson(res, { text: translated });

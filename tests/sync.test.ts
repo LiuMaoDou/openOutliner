@@ -103,7 +103,7 @@ describe("offline sync", () => {
       } };
       const response = new SyncService(sql).push({ changes: changesBetween(base, local) });
       expect(response.data).toEqual(local);
-      // One validation read and one snapshot replacement read.
+      // One validation read and one incremental application schema read.
       expect(schemaReads).toBe(2);
     } finally { db.close(); }
   });

@@ -4,13 +4,17 @@ import { migrate, SCHEMA_VERSION } from "../backend/shared/schema.js";
 import { needsStoredUpgrade, upgradeStoredState } from "../backend/shared/storedState.js";
 import { OutlinerService } from "../backend/services/outliner.js";
 import { dispatch } from "../backend/shared/dispatch.js";
-import { changesBetween, mergeChanges, replaceSnapshot, snapshot, type Snapshot } from "../backend/shared/sync.js";
+import { changesBetween, mergeChanges, replaceSnapshot, applySnapshotChanges, snapshot, type Snapshot } from "../backend/shared/sync.js";
 import { DraftJournal, parseDraftBackup, type DraftField, type EditorDraft } from "./editorDrafts";
 import { backupBeforeSync, incomingRemovalConflicts, removesToday, type SnapshotBackup } from "../backend/shared/syncSafety.js";
 
 interface Conflict { current: Snapshot; conflicts: string[] }
 interface Saved { bytes: Uint8Array; base: Snapshot; revision: string; conflict?: Conflict; backups: SnapshotBackup[]; schemaVersion?: number }
-interface Envelope { version: number; revision: string; data: Snapshot }
+import { decodeEnvelope, type SyncEnvelope } from "../backend/shared/syncProtocol.js";
+async function digestSnapshot(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
 export interface SyncStatus { text: string; pending: number; needsLogin?: boolean; conflict?: string[]; error?: string; localSaveError?: string; drafts?: number; archivedDrafts?: number; draftConflicts?: EditorDraft[]; ready: boolean }
 let status: SyncStatus = { text: "正在读取本机数据…", pending: 0, ready: false };
 const listeners = new Set<() => void>();
@@ -194,12 +198,13 @@ async function refreshStatus() {
     } finally { db.close(); }
   });
 }
-async function network(method: string, body?: unknown): Promise<Response> {
+async function network(method: string, body?: unknown, revision?: string, incremental = true): Promise<Response> {
   const payload = body ? JSON.stringify(body) : undefined;
   if (payload && new Blob([payload]).size > 32 * 1024 * 1024) {
     throw new Error("待同步数据超过 32 MiB，本机数据已保留。请先下载恢复备份；当前版本尚不支持分批同步。");
   }
-  return fetch("/api/sync", { method, headers: { "content-type": "application/json" }, body: payload, cache: "no-store", signal: AbortSignal.timeout(12000) });
+  const query = incremental ? "?" + new URLSearchParams({ incremental: "1", ...(revision ? { baseRevision: revision } : {}) }) : "";
+  return fetch("/api/sync" + query, { method, headers: { "content-type": "application/json" }, body: payload, cache: "no-store", signal: AbortSignal.timeout(12000) });
 }
 let pendingLocalWrites = 0;
 export async function localRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -246,7 +251,7 @@ export async function synchronize(): Promise<void> {
       const changes = sent ? changesBetween(sent.state.base, sent.data) : [];
       if (changes.length > 100000) throw new Error("待同步记录超过 100000 条，本机数据已保留。请先下载恢复备份。");
       report({ text: "正在同步…", error: undefined });
-      const response = await network(changes.length ? "POST" : "GET", changes.length ? { changes } : undefined);
+      const response = await network(changes.length ? "POST" : "GET", changes.length ? { changes } : undefined, sent?.state.revision);
       if (response.status === 401) { report({ needsLogin: true, text: "请登录以同步 · 本机数据保留" }); return; }
       if (response.status === 409) {
         const conflict = await response.json() as Conflict;
@@ -254,8 +259,19 @@ export async function synchronize(): Promise<void> {
         await refreshStatus(); changed(); return;
       }
       if (!response.ok) throw new Error(`云端暂不可用 (${response.status})，修改仍保存在本机。`);
-      const remote = await response.json() as Envelope;
-      if (remote.version !== 1) throw new Error("同步协议已更新，请联网刷新应用。");
+      const envelope = await response.json() as SyncEnvelope;
+      let remote;
+      try {
+        remote = await decodeEnvelope(envelope, sent?.state.base, sent?.state.revision, digestSnapshot);
+      } catch {
+        // A failed delta never modifies local data. The upload, if any, was
+        // already acknowledged; request an authoritative full snapshot.
+        const fallback = await network("GET", undefined, undefined, false);
+        if (!fallback.ok) throw new Error("增量同步校验失败，本机数据已保留。");
+        const full = await fallback.json() as SyncEnvelope;
+        if (full.version !== 1) throw new Error("同步协议不兼容，本机数据已保留。");
+        remote = full;
+      }
       let remoteChanged = false;
       await locked(async () => {
         const state = await read();
@@ -284,7 +300,10 @@ export async function synchronize(): Promise<void> {
           const backups = remoteChanged && current
             ? backupBeforeSync(state?.backups ?? [], current)
             : state?.backups ?? [];
-          if (remoteChanged) replaceSnapshot(sql, merged);
+          if (remoteChanged) {
+            if (current) applySnapshotChanges(sql, current, merged);
+            else replaceSnapshot(sql, merged);
+          }
           if (!state || remoteChanged || changes.length || state.revision !== remote.revision) {
             await save({ bytes: db.export(), base: remote.data, revision: remote.revision, backups, schemaVersion: SCHEMA_VERSION });
           }

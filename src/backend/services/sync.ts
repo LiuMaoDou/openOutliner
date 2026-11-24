@@ -1,16 +1,21 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { removesToday } from "../shared/syncSafety.js";
+import { canonicalSnapshot, RevisionWindow, type FullEnvelope } from "../shared/syncProtocol.js";
 import type { SqlDatabase } from "../shared/sql.js";
-import { tables, rowKey, changesBetween, snapshot, mergeChanges, replaceSnapshot, SyncConflict, type Change, type Table } from "../shared/sync.js";
+import { tables, rowKey, changesBetween, snapshot, mergeChanges, applySnapshotChanges, SyncConflict, type Change, type Table } from "../shared/sync.js";
 
 const row = z.record(z.string(), z.union([z.string(), z.number().finite(), z.null()]));
 const payload = z.object({ changes: z.array(z.object({ table: z.enum(tables), key: z.string(), before: row.nullable(), after: row.nullable() })).max(100000) });
 export class SyncService {
+  private revisions = new RevisionWindow();
   constructor(private db: SqlDatabase) {}
-  pull() {
+  pull(): FullEnvelope {
     const data = snapshot(this.db);
-    return { version: 1, revision: createHash("sha256").update(JSON.stringify(data)).digest("hex"), data };
+    return { version: 1, revision: createHash("sha256").update(canonicalSnapshot(data)).digest("hex"), data };
+  }
+  incremental(full: FullEnvelope, baseRevision?: string | null) {
+    return this.revisions.response(full, baseRevision);
   }
   push(input: unknown) {
     const { changes } = payload.parse(input);
@@ -30,7 +35,7 @@ export class SyncService {
       const current = snapshot(this.db);
       const merged = mergeChanges(current, changes as Change[]);
       if (removesToday(current, merged)) throw new SyncConflict(current, ["系统 Today 工作区不能通过同步删除。请保留 Today 或恢复缺失的节点。"]);
-      try { if (changesBetween(current, merged).length) replaceSnapshot(this.db, merged); }
+      try { applySnapshotChanges(this.db, current, merged); }
       catch (error) { throw new SyncConflict(current, [error instanceof Error ? error.message : "数据关联冲突"]); }
       const result = this.pull();
       this.db.exec("COMMIT;");

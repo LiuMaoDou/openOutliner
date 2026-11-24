@@ -100,6 +100,41 @@ export function replaceSnapshot(db: SqlDatabase, data: Snapshot, clearHistory = 
     db.exec("RELEASE replace_snapshot;");
   } catch (error) { db.exec("ROLLBACK TO replace_snapshot; RELEASE replace_snapshot;"); throw error; }
 }
+/** Apply common row additions/updates without deleting and reinserting the
+ * whole database. Complex physical deletes or constraint-order collisions
+ * use the existing checked, atomic snapshot replacement instead. */
+export function applySnapshotChanges(db: SqlDatabase, current: Snapshot, target: Snapshot): void {
+  const changes = changesBetween(current, target);
+  if (!changes.length) return;
+  if (changes.some(change => change.after === null)) { replaceSnapshot(db, target); return; }
+  validateTrees(target);
+  db.exec("SAVEPOINT apply_snapshot_changes; PRAGMA defer_foreign_keys = ON;");
+  try {
+    db.exec("DELETE FROM outline_history;");
+    for (const table of tables) {
+      const affected = changes.filter(change => change.table === table);
+      if (!affected.length) continue;
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all().map(row => String(row.name));
+      const keys = table === "node_tags" ? ["node_id", "tag_id"] : table === "field_values" ? ["node_id", "field_id"] : ["id"];
+      const insert = db.prepare(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`);
+      const mutable = columns.filter(column => !keys.includes(column));
+      const update = mutable.length ? db.prepare(`UPDATE ${table} SET ${mutable.map(column => column + " = ?").join(",")} WHERE ${keys.map(column => column + " = ?").join(" AND ")}`) : undefined;
+      for (const change of affected) {
+        const row = change.after!;
+        if (Object.keys(row).length !== columns.length || columns.some(column => !(column in row))) throw new Error("Invalid snapshot columns");
+        if (change.before === null) insert.run(...columns.map(column => row[column] as SqlValue));
+        else if (update) update.run(...[...mutable, ...keys].map(column => row[column] as SqlValue));
+      }
+    }
+    if (db.prepare("PRAGMA foreign_key_check").all().length ||
+        changesBetween(snapshot(db), target).length) throw new Error("Incremental snapshot mismatch");
+    db.exec("RELEASE apply_snapshot_changes;");
+  } catch {
+    db.exec("ROLLBACK TO apply_snapshot_changes; RELEASE apply_snapshot_changes;");
+    replaceSnapshot(db, target);
+  }
+}
+
 function validateTrees(data: Snapshot): void {
   const nodes = new Map(data.nodes.map(row => [row.id, row]));
   const roots = new Map(data.workspaces.map(row => [row.id, row.root_node_id]));
