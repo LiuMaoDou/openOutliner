@@ -3,10 +3,11 @@ import { z } from "zod";
 import { removesToday } from "../shared/syncSafety.js";
 import { canonicalSnapshot, RevisionWindow, type FullEnvelope } from "../shared/syncProtocol.js";
 import type { SqlDatabase } from "../shared/sql.js";
-import { tables, rowKey, changesBetween, snapshot, mergeChanges, applySnapshotChanges, SyncConflict, type Change, type Table } from "../shared/sync.js";
+import { MAX_SYNC_CHANGES } from "../shared/uploadLimits.js";
+import { tables, rowKey, snapshot, mergeChanges, applySnapshotChanges, SyncConflict, type Change, type Table } from "../shared/sync.js";
 
 const row = z.record(z.string(), z.union([z.string(), z.number().finite(), z.null()]));
-const payload = z.object({ changes: z.array(z.object({ table: z.enum(tables), key: z.string(), before: row.nullable(), after: row.nullable() })).max(100000) });
+const payload = z.object({ changes: z.array(z.object({ table: z.enum(tables), key: z.string(), before: row.nullable(), after: row.nullable() })).max(MAX_SYNC_CHANGES) });
 export class SyncService {
   private revisions = new RevisionWindow();
   constructor(private db: SqlDatabase) {}

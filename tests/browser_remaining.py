@@ -71,7 +71,7 @@ def arm_failure(page):
 
 
 def editor_checks(page, a, b, nodes, other, mapped):
-    page.route('**/api/sync', lambda route: route.abort())
+    page.route('**/api/sync*', lambda route: route.abort())
     for node, word, expected in mapped:
         pt=point(page,node,word)
         page.mouse.click(pt['x'],pt['y'])

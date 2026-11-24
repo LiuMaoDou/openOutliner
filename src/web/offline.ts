@@ -1,5 +1,6 @@
 import { encodeRecovery, decodeRecovery } from "./recoveryFile";
 import { saveLocalFile } from "./saveFile";
+import { DIRECT_SYNC_BYTES, MAX_STAGED_SYNC_BYTES, MAX_SYNC_CHANGES, SYNC_CHUNK_BYTES } from "../backend/shared/uploadLimits.js";
 import { exportNativeArchive, parseNativeArchive, restoreNativeArchive } from "../backend/importExport/nativeArchive.js";
 import { openLocal } from "./localDatabase";
 import { migrate, SCHEMA_VERSION } from "../backend/shared/schema.js";
@@ -273,11 +274,44 @@ async function refreshStatus() {
 }
 async function network(method: string, body?: unknown, revision?: string, incremental = true): Promise<Response> {
   const payload = body ? JSON.stringify(body) : undefined;
-  if (payload && new Blob([payload]).size > 32 * 1024 * 1024) {
-    throw new Error("待同步数据超过 32 MiB，本机数据已保留。请先下载恢复备份；当前版本尚不支持分批同步。");
-  }
   const query = incremental ? "?" + new URLSearchParams({ incremental: "1", ...(revision ? { baseRevision: revision } : {}) }) : "";
+  const blob = payload ? new Blob([payload], { type: "application/json" }) : undefined;
+  if (blob && blob.size > DIRECT_SYNC_BYTES) return stagedSync(blob, query);
   return fetch("/api/sync" + query, { method, headers: { "content-type": "application/json" }, body: payload, cache: "no-store", signal: AbortSignal.timeout(12000) });
+}
+async function stagedSync(blob: Blob, query: string): Promise<Response> {
+  if (blob.size > MAX_STAGED_SYNC_BYTES) throw new Error("待同步数据超过 256 MiB，本机数据已保留；请先下载恢复备份。");
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer())),
+    byte => byte.toString(16).padStart(2, "0")).join("");
+  const start = await fetch("/api/sync/uploads", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ bytes: blob.size, digest }), cache: "no-store", signal: AbortSignal.timeout(30000) });
+  if (start.status === 401) return start;
+  if (!start.ok) throw new Error(`云端暂不能分片同步（${start.status}），本机数据已保留。`);
+  const info = await start.json() as { id?: string; chunkBytes?: number };
+  if (typeof info.id !== "string" || !/^[0-9a-f-]{36}$/.test(info.id) ||
+      !Number.isSafeInteger(info.chunkBytes) || info.chunkBytes! < 1 || info.chunkBytes! > SYNC_CHUNK_BYTES) {
+    throw new Error("无效的云端分片同步配置，本机数据已保留。");
+  }
+  const root = "/api/sync/uploads/" + info.id;
+  let committed = false;
+  try {
+    const chunkBytes = info.chunkBytes!;
+    for (let offset = 0, index = 0; offset < blob.size; offset += chunkBytes, index++) {
+      const response = await fetch(root + "/" + index, { method: "POST", headers: { "content-type": "application/octet-stream" },
+        body: blob.slice(offset, offset + chunkBytes), cache: "no-store", signal: AbortSignal.timeout(30000) });
+      if (response.status === 401) return response;
+      if (!response.ok) throw new Error(`分片上传中断（${response.status}），本机数据已保留。`);
+      const ack = await response.json() as { received?: number };
+      if (ack.received !== Math.min(offset + chunkBytes, blob.size)) throw new Error("分片上传确认不一致，本机数据已保留。");
+    }
+    const result = await fetch(root + "/commit" + query, { method: "POST", cache: "no-store", signal: AbortSignal.timeout(120000) });
+    committed = true; // The server discards staging even on merge conflict.
+    return result;
+  } finally {
+    if (!committed) {
+      await fetch(root + "/abort", { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => {});
+    }
+  }
 }
 let pendingLocalWrites = 0;
 export async function localRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -322,7 +356,7 @@ export async function synchronize(): Promise<void> {
       if (sent?.state.conflict) { await refreshStatus(); return; }
       if (!navigator.onLine) { await refreshStatus(); return; }
       const changes = sent ? changesBetween(sent.state.base, sent.data) : [];
-      if (changes.length > 100000) throw new Error("待同步记录超过 100000 条，本机数据已保留。请先下载恢复备份。");
+      if (changes.length > MAX_SYNC_CHANGES) throw new Error("待同步记录超过 100000 条，本机数据已保留。请先下载恢复备份。");
       report({ text: "正在同步…", error: undefined });
       const response = await network(changes.length ? "POST" : "GET", changes.length ? { changes } : undefined, sent?.state.revision);
       if (response.status === 401) { report({ needsLogin: true, text: "请登录以同步 · 本机数据保留" }); return; }

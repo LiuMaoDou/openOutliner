@@ -378,7 +378,7 @@ def run():
                                     arg={"id": workspace["id"], "count": previous_child_count + 1})
                                 parent.locator('input').click()
                                 # Force an old envelope, then verify actual app startup upgrades it atomically.
-                                page.route("**/api/sync", lambda route: route.abort())
+                                page.route("**/api/sync*", lambda route: route.abort())
                                 page.evaluate("""() => new Promise((resolve,reject)=>{
                                   const open=indexedDB.open('openoutliner-offline-v1',1);
                                   open.onerror=()=>reject(open.error);

@@ -2,6 +2,8 @@ import { appRecoveryHtml, webBuildInfo } from "./appRecovery.js";
 import { staticFile } from "./staticFiles.js";
 import { dispatch } from "../shared/dispatch.js";
 import { SyncService } from "../services/sync.js";
+import { SyncUploadStore } from "./syncUploads.js";
+import { DIRECT_SYNC_BYTES, SYNC_CHUNK_BYTES } from "../shared/uploadLimits.js";
 import { SyncConflict } from "../shared/sync.js";
 import { startWeChatReminders } from "../services/wechatReminders.js";
 import { authorized, login } from "./auth.js";
@@ -16,6 +18,7 @@ const port = Number(process.env.OPENOUTLINER_PORT ?? 4317);
 const db = openDatabase();
 const service = new OutlinerService(db);
 const sync = new SyncService(db);
+const syncUploads = new SyncUploadStore();
 const host = process.env.OPENOUTLINER_HOST ?? "127.0.0.1";
 if (!["127.0.0.1", "localhost", "::1"].includes(host) && !process.env.OPENOUTLINER_PASSWORD) throw new Error("Set OPENOUTLINER_PASSWORD before enabling remote access.");
 service.ensureSeedData();
@@ -63,12 +66,29 @@ server.listen(port, host, () => {
   console.log(`OpenOutliner API listening on http://${host}:${typeof address === "object" && address ? address.port : port}`);
   const stopReminders = startWeChatReminders(db, process.env.XTUIS_TOKEN);
   server.once("close", stopReminders);
+  server.once("close", () => syncUploads.dispose());
 });
 
 async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
   const path = url.pathname;
   const method = req.method ?? "GET";
+
+  if (method === "POST" && path === "/api/sync/uploads") {
+    sendJson(res, syncUploads.start(await readJson(req)), 201); return;
+  }
+  const staged = path.match(/^\/api\/sync\/uploads\/([0-9a-f-]{36})\/(\d+|commit|abort)$/);
+  if (method === "POST" && staged) {
+    const [, id, action] = staged;
+    if (action === "abort") { syncUploads.abort(id); sendJson(res, { ok: true }); return; }
+    if (action === "commit") {
+      const full = sync.push(syncUploads.finish(id));
+      sendJson(res, url.searchParams.get("incremental") === "1" ? sync.incremental(full, url.searchParams.get("baseRevision")) : full);
+      return;
+    }
+    sendJson(res, syncUploads.append(id, Number(action), await readBody(req, SYNC_CHUNK_BYTES)));
+    return;
+  }
 
   if (path === "/api/sync" && (method === "GET" || method === "POST")) {
     const full = method === "GET" ? sync.pull() : sync.push(await readJson(req));
@@ -90,16 +110,22 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   }
 }
 
-async function readJson<T>(req: IncomingMessage): Promise<T> {
+async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
-    size += chunk.length;
-    if (size > 32 * 1024 * 1024) throw new ValidationError("Request exceeds 32 MB");
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > limit) throw new ValidationError("Request exceeds byte limit");
+    chunks.push(bytes);
   }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return (raw ? JSON.parse(raw) : {}) as T;
+  return Buffer.concat(chunks);
+}
+
+async function readJson<T>(req: IncomingMessage): Promise<T> {
+  const raw = (await readBody(req, DIRECT_SYNC_BYTES)).toString("utf8");
+  try { return (raw ? JSON.parse(raw) : {}) as T; }
+  catch { throw new ValidationError("Invalid JSON request"); }
 }
 
 function sendJson(res: ServerResponse, payload: unknown, status = 200): void {
