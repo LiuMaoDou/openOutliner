@@ -22,13 +22,6 @@ export const getAppUpdateStatus = () => status;
 export const registerUpdateBarrier = (fn: () => Promise<unknown>) => { barriers.add(fn); return () => { barriers.delete(fn); }; };
 const report = (patch: Partial<AppUpdateStatus>) => { status = { ...status, ...patch }; subscribers.forEach(fn => fn()); };
 
-/** Identify the actual loaded Vite bundle even when the semantic version
- * is unchanged. No Git checkout is required in Docker or packaged builds. */
-export function shortBuildId(build: string): string {
-  if (build === "development") return "dev";
-  return build.replace(/^index-/, "").replace(/\.js$/, "").slice(0, 8) || "unknown";
-}
-
 export function hasAppUpdate(current: string, server: string | null, waiting: boolean): boolean {
   return waiting || Boolean(server && current !== "development" && current !== server);
 }

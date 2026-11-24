@@ -115,7 +115,7 @@ Configure an OpenAI-compatible Chat Completions provider in the server environme
 
 ## Version and Build Identification
 
-The sidebar shows the semantic package version (currently v0.11.0) and the short identifier of the JavaScript bundle actually loaded by the browser. Hover over the version to inspect the full build filename. Two deployments with the same package version can therefore still be distinguished. The CLI reads its version from the same package.json. The build identifier is a Vite content hash, not a Git commit hash, so it also works in Docker builds without Git metadata.
+The sidebar displays only the semantic package version. The CLI reads its version from the same package.json. Build identifiers remain internal to the update detection mechanism; they are not displayed beside or in the tooltip of the sidebar version.
 
 ## Offline, Sync, And Backups
 

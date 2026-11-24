@@ -35,4 +35,6 @@ Do not commit local databases, secrets, or generated runtime data from `data/`. 
 
 ## Release Policy
 
+The sidebar must show only the semantic package version (for example, v0.11.1), without build hashes or commit identifiers, including in its tooltip. Keep internal build-based update detection intact. Update the package and lockfile versions together for version bumps.
+
 Package and publish a release only when the user explicitly requests it. Routine code changes, commits, and pushes do not authorize release packaging, release tags, or GitHub Releases. Build commands used for development or validation may still run as needed.

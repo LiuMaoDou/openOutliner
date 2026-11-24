@@ -1,4 +1,4 @@
-import { getAppUpdateStatus, registerUpdateBarrier, shortBuildId } from "./appUpdates";
+import { registerUpdateBarrier } from "./appUpdates";
 import { version as appVersion } from "../../package.json";
 import { Check, CircleHelp, CircleCheck, CalendarDays, ChevronLeft, ChevronRight, FolderTree, Languages,
   EyeOff, Monitor, Moon, PanelLeft, PanelRight, Plus, Search, Sun, Tags as TagsIcon, Trash2, Undo2, X } from "lucide-react";
@@ -2467,10 +2467,7 @@ export function App() {
           >
             {theme === "light" ? <Sun size={17} /> : theme === "dark" ? <Moon size={17} /> : <Monitor size={17} />}
           </button>
-          <span className="sidebarVersion" title={`OpenOutliner v${appVersion} · Build: ${getAppUpdateStatus().current}`}>
-            <span>v{appVersion}</span>
-            {!sidebarCompact && <small className="sidebarBuildId">{shortBuildId(getAppUpdateStatus().current)}</small>}
-          </span>
+          <span className="sidebarVersion" title={`OpenOutliner v${appVersion}`}>v{appVersion}</span>
         </div>
         {!sidebarCompact && (
           <div

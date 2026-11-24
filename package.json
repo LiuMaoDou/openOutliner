@@ -1,6 +1,6 @@
 {
   "name": "openoutliner",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "private": true,
   "type": "module",
   "description": "Local-first outline notes app with MCP and CLI access.",
