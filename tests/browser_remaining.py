@@ -9,7 +9,7 @@ import socket
 import subprocess
 import tempfile
 import time
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from browser_smoke import ROOT, ARTIFACTS, request
 
 
@@ -193,6 +193,30 @@ def update_check(browser, base, original_worker):
         context.close()
 
 
+def sync_with_offline_browser_flag(browser, base, node):
+    context = browser.new_context()
+    context.add_init_script("Object.defineProperty(Navigator.prototype, 'onLine', {get: () => false})")
+    try:
+        page = context.new_page()
+        page.goto(base)
+        preview = row(page, node).locator('.nodeTitlePreview')
+        preview.wait_for(state='visible', timeout=10000)
+        assert page.evaluate('navigator.onLine') is False
+
+        title = 'Synced while the browser reports offline'
+        with page.expect_response(lambda response: '/api/sync?' in response.url and
+                                   response.request.method == 'POST' and response.ok, timeout=10000):
+            preview.click()
+            row(page, node).locator('textarea.nodeTitle').fill(title)
+            page.locator('.workspaceTitleInput').click()
+
+        assert request(base, f'/api/nodes/{node["id"]}')['title'] == title
+        page.locator('.syncIndicator').click()
+        expect(page.locator('.syncStatusRow [role="status"]')).to_have_text('已同步')
+    finally:
+        context.close()
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix='oo-remaining-') as directory, socket.socket() as probe:
         probe.bind(('127.0.0.1',0));port=probe.getsockname()[1];probe.close()
@@ -245,6 +269,8 @@ def run():
                         original=(ROOT/'dist/web/sw.js').read_text()
                         update_check(browser,base,original)
                         print('PASS actual service worker: multi-client activation refused; single-client explicit update reloads safely',flush=True)
+                        sync_with_offline_browser_flag(browser, base, nodes[0])
+                        print('PASS automatic sync with a reachable server and a false browser online flag', flush=True)
                     finally:browser.close()
             finally:
                 server.terminate()

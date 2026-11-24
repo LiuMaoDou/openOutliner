@@ -260,7 +260,7 @@ function changed() {
   window.dispatchEvent(new Event("outliner-data-changed"));
 }
 channel?.addEventListener("message", () => { window.dispatchEvent(new Event("outliner-sync")); void refreshStatus(); });
-async function refreshStatus() {
+async function refreshStatus(cloudReachable = navigator.onLine) {
   await locked(async () => {
     const state = await read();
     if (!state) return;
@@ -268,7 +268,7 @@ async function refreshStatus() {
     try {
       const count = changesBetween(state.base, snapshot(sql)).length;
       updateDraftStatus();
-      report({ ready: true, pending: count, conflict: state.conflict?.conflicts, text: state.conflict ? "同步冲突 · 本机修改已保留" : status.draftConflicts?.length ? "编辑冲突 · 两份内容已保留" : status.drafts ? "编辑草稿已保留 · 等待写入本机数据库" : count ? `已保存到本机 · ${count} 条待同步` : !navigator.onLine ? "离线 · 数据已保存在本机" : status.error ? "已保存到本机 · 等待连接云端" : "已同步" });
+      report({ ready: true, pending: count, conflict: state.conflict?.conflicts, text: state.conflict ? "同步冲突 · 本机修改已保留" : status.draftConflicts?.length ? "编辑冲突 · 两份内容已保留" : status.drafts ? "编辑草稿已保留 · 等待写入本机数据库" : count ? `已保存到本机 · ${count} 条待同步` : !cloudReachable ? "离线 · 数据已保存在本机" : status.error ? "已保存到本机 · 等待连接云端" : "已同步" });
     } finally { db.close(); }
   });
 }
@@ -354,7 +354,7 @@ export async function synchronize(): Promise<void> {
         try { return { state, data: snapshot(sql) }; } finally { db.close(); }
       });
       if (sent?.state.conflict) { await refreshStatus(); return; }
-      if (!navigator.onLine) { await refreshStatus(); return; }
+      // The browser can report offline while the sync endpoint is reachable.
       const changes = sent ? changesBetween(sent.state.base, sent.data) : [];
       if (changes.length > MAX_SYNC_CHANGES) throw new Error("待同步记录超过 100000 条，本机数据已保留。请先下载恢复备份。");
       report({ text: "正在同步…", error: undefined });
@@ -417,7 +417,7 @@ export async function synchronize(): Promise<void> {
           report({ ready: true, needsLogin: false, error: undefined });
         } finally { db.close(); }
       });
-      await refreshStatus();
+      await refreshStatus(true);
       if (remoteChanged) changed();
       if (remoteChanged) window.dispatchEvent(new Event("outliner-sync"));
     } catch (error) {
