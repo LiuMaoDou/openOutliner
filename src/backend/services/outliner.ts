@@ -612,6 +612,7 @@ export class OutlinerService {
 
   updateNode(id: string, input: UpdateNodeInput): OutlineNode {
     const node = this.getNode(id);
+    if (node.parentId === null && input.collapsed === true) throw new ValidationError("Workspace root nodes cannot be collapsed.");
     const sets: string[] = [];
     const values: SqlValue[] = [];
     const fields: string[] = [];
@@ -665,6 +666,7 @@ export class OutlinerService {
 
   moveNode(id: string, parentId: string, position?: number): OutlineNode {
     const node = this.getNode(id);
+    if (node.parentId === null) throw new ValidationError("Workspace root nodes cannot be moved.");
     const nextParent = this.getNode(parentId);
     if (node.id === nextParent.id) throw new ValidationError("A node cannot be moved under itself.");
     if (node.workspaceId !== nextParent.workspaceId) {
@@ -1526,6 +1528,7 @@ export class OutlinerService {
     options?: string | null;
   }): FieldDefinition {
     this.getWorkspace(input.workspaceId);
+    if (this.getTag(input.tagId).workspaceId !== input.workspaceId) throw new ValidationError("Tag must belong to the selected workspace.");
     const id = randomUUID();
     const now = timestamp();
     this.db
@@ -1539,7 +1542,10 @@ export class OutlinerService {
   }
 
   setFieldValue(nodeId: string, fieldId: string, value: string): FieldValue {
-    this.getNode(nodeId);
+    const node = this.getNode(nodeId);
+    const field = this.db.prepare("SELECT workspace_id FROM field_definitions WHERE id = ?").get(fieldId) as Row | undefined;
+    if (!field) throw new NotFoundError(`Field not found: ${fieldId}`);
+    if (field.workspace_id !== node.workspaceId) throw new ValidationError("Field must belong to the node workspace.");
     const now = timestamp();
     this.db
       .prepare(
@@ -2030,7 +2036,9 @@ function rowToNode(row: Row): OutlineNode {
 
 function normalizeDueDate(value: string | null): string | null {
   if (value === null) return null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+  const parsed = typeof value === "string" ? Date.parse(`${value}T00:00:00Z`) : NaN;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(parsed) ||
+      new Date(parsed).toISOString().slice(0, 10) !== value) {
     throw new ValidationError("Date must use the YYYY-MM-DD format.");
   }
   return value;

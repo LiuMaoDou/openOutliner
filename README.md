@@ -121,7 +121,9 @@ Optional self-hosting adds password-protected access and synchronization between
 
 - This is a personal, single-dataset service, not a multi-user workspace with isolated accounts.
 - Sync is not guaranteed while the page is closed or the device is asleep.
-- Undo history is local to each device and is reset when remote changes are applied.
+- Undo history is local to each device and is reset when remote changes are applied. Before applying changed remote data, the browser retains the latest three automatic recovery snapshots; explicit restore and conflict backups are not rotated.
+- If a remote snapshot unexpectedly omits a live node or workspace, sync pauses for review. This guards against server rollback and permanent deletions on other devices. Delete-versus-edit conflicts also require review.
+- Restoring a JSON backup replaces the entire local dataset and can propagate changes/deletions to other devices; review the confirmation before proceeding. Markdown/OPML are interchange formats, not full-fidelity backups.
 - Clearing browser/app data can remove unsynced notes. Download a recovery backup before clearing data, and back up the server database separately.
 - External links and remote images are not downloaded for offline use.
 

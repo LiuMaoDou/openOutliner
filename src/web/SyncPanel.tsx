@@ -113,7 +113,7 @@ export function SyncPanel({ embedded = false, compact = false }: {
       hidden
       onChange={event => {
         const file = event.target.files?.[0]; event.target.value = "";
-        if (file) void act(() => restoreRecovery(file));
+        if (file) void act(() => restoreRecovery(file, summary => window.confirm(summary)));
       }}
     />
     {detailsVisible && createPortal(<section
@@ -137,10 +137,10 @@ export function SyncPanel({ embedded = false, compact = false }: {
       {status.ready && <div>
         <button className="syncActionRow" type="button" disabled={busy} onClick={() => void act(downloadRecovery, true)}><FileDown size={16} /><span>下载备份</span><small>全部工作区</small></button>
         <button className="syncActionRow" type="button" disabled={busy} onClick={() => recoveryInputRef.current?.click()}><Upload size={16} /><span>恢复备份</span><small>JSON</small></button>
-        <p className="recoveryCapacity">导出与恢复统一上限：{RECOVERY_CAPACITY_LABEL}。超大完整备份可分别下载历史版本；不会自动删除备份。</p>
+        <p className="recoveryCapacity">导出与恢复统一上限：{RECOVERY_CAPACITY_LABEL}。超大完整备份可分别下载历史版本；自动同步备份保留最近 3 份，手动恢复或冲突备份不会自动删除。</p>
         {versions.length > 0 && <details><summary>历史备份（{versions.length}）</summary>
           {versions.map((date, index) => <button key={`${date}:${index}`} className="syncActionRow" type="button" disabled={busy}
-            onClick={() => void act(() => downloadBackup(index))}><FileDown size={16} /><span>{new Date(date).toLocaleString()}</span></button>)}
+            onClick={() => void act(() => downloadBackup(index, date))}><FileDown size={16} /><span>{new Date(date).toLocaleString()}</span></button>)}
         </details>}
       </div>}
       <div className="syncAttentionDetails">
@@ -149,7 +149,7 @@ export function SyncPanel({ embedded = false, compact = false }: {
           <button disabled={busy || !password}>登录并同步</button>
         </form>}
         {status.conflict && <div>
-          <p>其他设备也修改了数据。选择后，另一版本会保留在本机恢复备份中。选择“本机”将以当前整套本机数据替换此次云端版本。</p>
+          <p>检测到同步冲突或云端数据异常。选择后，另一版本会保留在本机恢复备份中。选择“本机”将以当前整套本机数据替换此次云端版本。请先核对并下载备份。</p>
           <ul>{status.conflict.slice(0,10).map((text, i) => <li key={i}>{text}</li>)}</ul>
           <button disabled={busy} onClick={() => void act(() => resolveConflict("cloud"))}>采用云端，备份本机</button>
           <button disabled={busy} onClick={() => void act(() => resolveConflict("local"))}>采用本机，备份云端</button>

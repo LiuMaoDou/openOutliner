@@ -1948,6 +1948,7 @@ export function App() {
   const selectWorkspace = useCallback((id: string) => {
     setMobileSidebarOpen(false);
     if (id === workspaceIdRef.current) return;
+    setSearch("");
     pendingNodeRevealRef.current = null;
     workspaceIdRef.current = id;
     treeRequestRef.current += 1;

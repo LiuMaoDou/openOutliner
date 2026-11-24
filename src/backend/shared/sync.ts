@@ -1,4 +1,5 @@
 import type { SqlDatabase, SqlValue } from "./sql.js";
+import { TODAY_ROOT_NODE_ID, TODAY_WORKSPACE_ID } from "./systemWorkspaces.js";
 
 export const tables = ["workspace_folders", "workspaces", "nodes", "tags", "node_tags", "field_definitions", "field_values"] as const;
 export type Table = typeof tables[number];
@@ -34,6 +35,17 @@ export class SyncConflict extends Error {
   statusCode = 409;
   constructor(public readonly current: Snapshot, public readonly conflicts: string[]) { super("其他设备也修改了这些数据，请选择要保留的版本。"); }
 }
+// Deletion/restoration and concurrent content changes are semantic conflicts.
+// Position/timestamp-only changes may be ordinary sibling reordering.
+const nodeContentFields = ["title", "body", "due_date", "done", "collapsed", "parent_id", "workspace_id"] as const;
+function lifecycleConflict(before: Row, local: Row, remote: Row): boolean {
+  const localLifecycle = local.deleted_at !== before.deleted_at;
+  const remoteLifecycle = remote.deleted_at !== before.deleted_at;
+  if (localLifecycle === remoteLifecycle) return false;
+  const other = localLifecycle ? remote : local;
+  return nodeContentFields.some(field => other[field] !== before[field]);
+}
+
 // Merge different fields independently; never silently overwrite the same field.
 export function mergeChanges(current: Snapshot, changes: Change[]): Snapshot {
   const result = structuredClone(current);
@@ -52,6 +64,10 @@ export function mergeChanges(current: Snapshot, changes: Change[]): Snapshot {
     if (equal(remote, change.after)) continue; // Acknowledgement lost: already applied.
     if (!equal(remote, change.before)) {
       if (remote && change.before && change.after) {
+        if (change.table === "nodes" && lifecycleConflict(change.before, change.after, remote)) {
+          conflicts.push(`节点：${String(remote.title ?? change.key)}（删除/恢复与内容编辑冲突）`);
+          continue;
+        }
         merged = { ...remote };
         for (const field of Object.keys(change.after)) {
           if (change.after[field] === change.before[field]) continue;
@@ -86,9 +102,34 @@ export function replaceSnapshot(db: SqlDatabase, data: Snapshot, clearHistory = 
 }
 function validateTrees(data: Snapshot): void {
   const nodes = new Map(data.nodes.map(row => [row.id, row]));
+  const roots = new Map(data.workspaces.map(row => [row.id, row.root_node_id]));
   for (const workspace of data.workspaces) {
     const root = nodes.get(workspace.root_node_id);
     if (!root || root.parent_id !== null || root.workspace_id !== workspace.id || root.deleted_at !== null) throw new Error("工作区根节点冲突");
+    if (workspace.id === TODAY_WORKSPACE_ID &&
+        (workspace.root_node_id !== TODAY_ROOT_NODE_ID || workspace.parent_workspace_id !== null || workspace.folder_id !== null || workspace.name !== "Today")) {
+      throw new Error("系统 Today 工作区结构冲突");
+    }
+  }
+  // Along with foreign-key and edge/cycle checks, this establishes reachability.
+  for (const node of data.nodes) {
+    if (node.deleted_at === null && node.parent_id === null && roots.get(node.workspace_id) !== node.id) {
+      throw new Error(`孤立节点：「${node.title}」没有连接到工作区根节点`);
+    }
+  }
+  const tags = new Map(data.tags.map(row => [row.id, row]));
+  const fields = new Map(data.field_definitions.map(row => [row.id, row]));
+  for (const field of data.field_definitions) {
+    if (tags.get(field.tag_id)?.workspace_id !== field.workspace_id) throw new Error("字段与标签不属于同一工作区");
+  }
+  // Tombstones may retain metadata from their historical workspace.
+  for (const relation of data.node_tags) {
+    const node = nodes.get(relation.node_id);
+    if (node?.deleted_at === null && tags.get(relation.tag_id)?.workspace_id !== node.workspace_id) throw new Error("节点与标签不属于同一工作区");
+  }
+  for (const relation of data.field_values) {
+    const node = nodes.get(relation.node_id);
+    if (node?.deleted_at === null && fields.get(relation.field_id)?.workspace_id !== node.workspace_id) throw new Error("节点与字段不属于同一工作区");
   }
   for (const [rows, parentField] of [[data.nodes, "parent_id"], [data.workspaces, "parent_workspace_id"]] as const) {
     const map = new Map(rows.map(row => [row.id, row]));

@@ -153,6 +153,7 @@ def recovery_check(page, directory):
     large=Path(directory)/'large.json';large.write_text(json.dumps(data,ensure_ascii=False))
     assert large.stat().st_size>32*1024*1024
     page.locator('.syncIndicator').click()
+    page.once('dialog', lambda dialog: dialog.accept())
     page.locator('input[aria-label="恢复备份文件"]').set_input_files(large)
     page.get_by_role('button',name='下载备份').wait_for()
     page.wait_for_function("!document.querySelector('.syncActionRow')?.disabled",timeout=60000)

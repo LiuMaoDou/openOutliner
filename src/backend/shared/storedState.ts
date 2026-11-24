@@ -1,13 +1,14 @@
 import { SCHEMA_VERSION } from "./schema.js";
 import type { SqlDatabase } from "./sql.js";
 import type { Row, Snapshot, Table } from "./sync.js";
+import type { SnapshotBackup } from "./syncSafety.js";
 
 export interface StoredState {
   bytes: Uint8Array;
   base: Snapshot;
   revision: string;
   conflict?: { current: Snapshot; conflicts: string[] };
-  backups: Array<{ date: string; data: Snapshot }>;
+  backups: SnapshotBackup[];
   schemaVersion?: number;
 }
 

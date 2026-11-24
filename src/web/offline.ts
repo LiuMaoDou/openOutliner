@@ -6,10 +6,10 @@ import { OutlinerService } from "../backend/services/outliner.js";
 import { dispatch } from "../backend/shared/dispatch.js";
 import { changesBetween, mergeChanges, replaceSnapshot, snapshot, type Snapshot } from "../backend/shared/sync.js";
 import { DraftJournal, parseDraftBackup, type DraftField, type EditorDraft } from "./editorDrafts";
+import { backupBeforeSync, incomingRemovalConflicts, removesToday, type SnapshotBackup } from "../backend/shared/syncSafety.js";
 
 interface Conflict { current: Snapshot; conflicts: string[] }
-interface Backup { date: string; data: Snapshot }
-interface Saved { bytes: Uint8Array; base: Snapshot; revision: string; conflict?: Conflict; backups: Backup[]; schemaVersion?: number }
+interface Saved { bytes: Uint8Array; base: Snapshot; revision: string; conflict?: Conflict; backups: SnapshotBackup[]; schemaVersion?: number }
 interface Envelope { version: number; revision: string; data: Snapshot }
 export interface SyncStatus { text: string; pending: number; needsLogin?: boolean; conflict?: string[]; error?: string; localSaveError?: string; drafts?: number; archivedDrafts?: number; draftConflicts?: EditorDraft[]; ready: boolean }
 let status: SyncStatus = { text: "正在读取本机数据…", pending: 0, ready: false };
@@ -195,7 +195,11 @@ async function refreshStatus() {
   });
 }
 async function network(method: string, body?: unknown): Promise<Response> {
-  return fetch("/api/sync", { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined, cache: "no-store", signal: AbortSignal.timeout(12000) });
+  const payload = body ? JSON.stringify(body) : undefined;
+  if (payload && new Blob([payload]).size > 32 * 1024 * 1024) {
+    throw new Error("待同步数据超过 32 MiB，本机数据已保留。请先下载恢复备份；当前版本尚不支持分批同步。");
+  }
+  return fetch("/api/sync", { method, headers: { "content-type": "application/json" }, body: payload, cache: "no-store", signal: AbortSignal.timeout(12000) });
 }
 let pendingLocalWrites = 0;
 export async function localRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -240,6 +244,7 @@ export async function synchronize(): Promise<void> {
       if (sent?.state.conflict) { await refreshStatus(); return; }
       if (!navigator.onLine) { await refreshStatus(); return; }
       const changes = sent ? changesBetween(sent.state.base, sent.data) : [];
+      if (changes.length > 100000) throw new Error("待同步记录超过 100000 条，本机数据已保留。请先下载恢复备份。");
       report({ text: "正在同步…", error: undefined });
       const response = await network(changes.length ? "POST" : "GET", changes.length ? { changes } : undefined);
       if (response.status === 401) { report({ needsLogin: true, text: "请登录以同步 · 本机数据保留" }); return; }
@@ -267,10 +272,21 @@ export async function synchronize(): Promise<void> {
               await save(state); return;
             }
           }
+          if (state && current) {
+            const conflicts = incomingRemovalConflicts(current, merged);
+            if (conflicts.length) {
+              state.conflict = { current: remote.data, conflicts };
+              await save(state);
+              return;
+            }
+          }
           remoteChanged = !current || changesBetween(current, merged).length > 0;
+          const backups = remoteChanged && current
+            ? backupBeforeSync(state?.backups ?? [], current)
+            : state?.backups ?? [];
           if (remoteChanged) replaceSnapshot(sql, merged);
           if (!state || remoteChanged || changes.length || state.revision !== remote.revision) {
-            await save({ bytes: db.export(), base: remote.data, revision: remote.revision, backups: state?.backups ?? [], schemaVersion: SCHEMA_VERSION });
+            await save({ bytes: db.export(), base: remote.data, revision: remote.revision, backups, schemaVersion: SCHEMA_VERSION });
           }
           report({ ready: true, needsLogin: false, error: undefined });
         } finally { db.close(); }
@@ -396,34 +412,39 @@ export function downloadEditorDrafts() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function restoreRecovery(file: File) {
+export async function restoreRecovery(file: File, confirmRestore: (summary: string) => boolean) {
   const recovery = await decodeRecovery(file) as { format?: string; local?: Snapshot; editorDrafts?: unknown } | null;
   if (!recovery || recovery.format !== "openoutliner-recovery-v1" || !recovery.local) throw new Error("请选择 OpenOutliner 恢复备份文件。");
   const drafts = parseDraftBackup(recovery.editorDrafts);
   await flushAllNodeDrafts();
-  await locked(async () => {
+  const restored = await locked(async () => {
     const state = await read();
     if (!state) throw new Error("请先完成首次同步，再导入恢复备份。");
     const { db, sql } = await openLocal(state.bytes);
     try {
-      const previous = snapshot(sql);
-      replaceSnapshot(sql, recovery.local!);
+      const previous = snapshot(sql), incoming = recovery.local!;
+      if (removesToday(previous, incoming)) throw new Error("此备份缺少系统 Today 工作区。为避免清除现有 Today，请选择包含 Today 的完整恢复备份。");
+      const activeCount = (data: Snapshot) => data.nodes.filter(row => row.parent_id !== null && row.deleted_at === null).length;
+      const summary = `全量恢复将替换本机全部工作区（${previous.workspaces.length} → ${incoming.workspaces.length}）、有效大纲（${activeCount(previous)} → ${activeCount(incoming)}）。\n恢复后可能将修改或删除同步到其他设备。当前数据会保留在历史备份中。确认继续？`;
+      if (!confirmRestore(summary)) return false;
+      replaceSnapshot(sql, incoming);
       state.backups.push({ date: new Date().toISOString(), data: previous });
       state.bytes = db.export();
       // Recovery is treated as pending local edits, with normal conflict checks.
       await save(state);
       journal.restore(drafts);
+      return true;
     } finally { db.close(); }
   });
-  await refreshStatus(); changed(); window.dispatchEvent(new Event("outliner-sync")); schedule();
+  if (restored) { await refreshStatus(); changed(); window.dispatchEvent(new Event("outliner-sync")); schedule(); }
 }
 
 export async function recoveryVersions(): Promise<string[]> {
   return (await locked(read))?.backups.map(backup => backup.date) ?? [];
 }
-export async function downloadBackup(index: number) {
+export async function downloadBackup(index: number, expectedDate: string) {
   const state = await locked(read), backup = state?.backups[index];
-  if (!backup) throw new Error("备份不存在");
+  if (!backup || backup.date !== expectedDate) throw new Error("备份列表已更新，请重新打开备份面板后选择版本。");
   const url = URL.createObjectURL(encodeRecovery({ format: "openoutliner-recovery-v1", local: backup.data }));
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = `openoutliner-backup-${index + 1}.json`; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);

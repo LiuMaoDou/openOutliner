@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { removesToday } from "../shared/syncSafety.js";
 import type { SqlDatabase } from "../shared/sql.js";
 import { tables, rowKey, changesBetween, snapshot, mergeChanges, replaceSnapshot, SyncConflict, type Change, type Table } from "../shared/sync.js";
 
@@ -28,6 +29,7 @@ export class SyncService {
     try {
       const current = snapshot(this.db);
       const merged = mergeChanges(current, changes as Change[]);
+      if (removesToday(current, merged)) throw new SyncConflict(current, ["系统 Today 工作区不能通过同步删除。请保留 Today 或恢复缺失的节点。"]);
       try { if (changesBetween(current, merged).length) replaceSnapshot(this.db, merged); }
       catch (error) { throw new SyncConflict(current, [error instanceof Error ? error.message : "数据关联冲突"]); }
       const result = this.pull();

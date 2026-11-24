@@ -48,7 +48,8 @@ export function fromNestedTree(root: OutlineTreeNode): {
     const childIds = children.map(c => c.id);
     nodes[node.id] = { ...rest, parentId, childIds };
     if (parentId !== null && visible) visibleIds.push(node.id);
-    const childVisible = visible && !node.collapsed;
+    // The synthetic workspace root is never displayed or expandable.
+    const childVisible = visible && (parentId === null || !node.collapsed);
     for (let index = children.length - 1; index >= 0; index -= 1) {
       stack.push({ node: children[index], parentId: node.id, visible: childVisible });
     }
