@@ -1,4 +1,5 @@
 import { encodeRecovery, decodeRecovery } from "./recoveryFile";
+import { saveLocalFile } from "./saveFile";
 import { exportNativeArchive, parseNativeArchive, restoreNativeArchive } from "../backend/importExport/nativeArchive.js";
 import { openLocal } from "./localDatabase";
 import { migrate, SCHEMA_VERSION } from "../backend/shared/schema.js";
@@ -440,12 +441,10 @@ export async function downloadRecovery() {
   const { db, sql } = await openLocal(state.bytes);
   try {
     const blob = encodeRecovery({ ...exportNativeArchive(sql), base: state.base, conflict: state.conflict, backups: state.backups, editorDrafts: journal.list(), pendingCreations: creations.list() });
-    const url = URL.createObjectURL(blob), anchor = document.createElement("a");
     const now = new Date();
     const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(value => String(value).padStart(2, "0")).join("-");
     const time = [now.getHours(), now.getMinutes(), now.getSeconds()].map(value => String(value).padStart(2, "0")).join("-");
-    anchor.href = url; anchor.download = `openoutliner-backup-${date}_${time}.json`; anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await saveLocalFile(blob, `openoutliner-backup-${date}_${time}.json`);
   } finally { db.close(); }
 }
 
@@ -498,10 +497,9 @@ export async function resolveEditorDraft(id: string, choice: "draft" | "current"
   updateDraftStatus(); await refreshStatus(); changed(); window.dispatchEvent(new Event("outliner-sync")); schedule();
 }
 
-export function downloadEditorDrafts() {
-  const url = URL.createObjectURL(new Blob([JSON.stringify({ format: "openoutliner-editor-drafts-v1", drafts: journal.list() }, null, 2)], { type: "application/json" }));
-  const anchor = document.createElement("a"); anchor.href = url; anchor.download = `openoutliner-editor-drafts-${Date.now()}.json`; anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+export async function downloadEditorDrafts() {
+  const blob = encodeRecovery({ format: "openoutliner-editor-drafts-v1", drafts: journal.list(), pendingCreations: creations.list() });
+  await saveLocalFile(blob, `openoutliner-editor-drafts-${Date.now()}.json`);
 }
 
 export async function restoreRecovery(file: File, confirmRestore: (summary: string) => boolean) {
@@ -558,9 +556,8 @@ export async function recoveryVersions(): Promise<string[]> {
 export async function downloadBackup(index: number, expectedDate: string) {
   const state = await locked(read), backup = state?.backups[index];
   if (!backup || backup.date !== expectedDate) throw new Error("备份列表已更新，请重新打开备份面板后选择版本。");
-  const url = URL.createObjectURL(encodeRecovery({ format: "openoutliner-recovery-v1", local: backup.data, outlineHistory: backup.outlineHistory }));
-  const anchor = document.createElement("a"); anchor.href = url; anchor.download = `openoutliner-backup-${index + 1}.json`; anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const blob = encodeRecovery({ format: "openoutliner-recovery-v1", local: backup.data, outlineHistory: backup.outlineHistory });
+  await saveLocalFile(blob, `openoutliner-backup-${index + 1}.json`);
 }
 
 

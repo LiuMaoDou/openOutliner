@@ -45,6 +45,7 @@ public class MainActivity extends Activity {
   private ProgressBar progress;
   private ValueCallback<Uri[]> fileCallback;
   private String mobileScript;
+  private LocalExportController localExport;
   private String home = HOME;
   private boolean failed;
   private final ArrayList<Button> themedButtons = new ArrayList<>();
@@ -85,6 +86,7 @@ public class MainActivity extends Activity {
     progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
     root.addView(progress, new LinearLayout.LayoutParams(-1, dp(3)));
     web = new WebView(this);
+    localExport = new LocalExportController(this);
     web.setBackgroundColor(Color.WHITE);
     root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
     errorPanel = new LinearLayout(this);
@@ -139,6 +141,7 @@ public class MainActivity extends Activity {
         return true;
       }
       @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+        localExport.detach();
         failed = false;
         errorPanel.setVisibility(View.GONE);
         web.setVisibility(View.VISIBLE);
@@ -151,7 +154,14 @@ public class MainActivity extends Activity {
           web.evaluateJavascript("Boolean(window.indexedDB && window.WebAssembly && navigator.locks && window.crypto && typeof crypto.randomUUID === 'function' && typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')", supported -> {
             if (!"true".equals(supported)) {
               showError("系统网页组件版本过旧\n请更新 Android System WebView 后重试，或通过菜单在浏览器打开。");
-            } else web.evaluateJavascript(mobileScript, null);
+            } else if (web.getUrl() != null && trusted(Uri.parse(web.getUrl()))) {
+              web.evaluateJavascript(mobileScript, ignored -> {
+                if (!failed && web.getUrl() != null && trusted(Uri.parse(web.getUrl()))) {
+                  Uri base = Uri.parse(home);
+                  localExport.attach(web, Uri.parse(base.getScheme() + "://" + base.getAuthority()));
+                }
+              });
+            }
           });
         }
         CookieManager.getInstance().flush();
@@ -175,7 +185,7 @@ public class MainActivity extends Activity {
     });
     web.setDownloadListener((url, agent, disposition, mime, length) -> {
       if (url.startsWith("https://")) openExternal(Uri.parse(url));
-      else toast("此版本暂不支持本机导出下载，请在电脑端导出已同步的笔记");
+      else toast("请在备份与恢复中使用本机 JSON 导出；如网页版本过旧，请先更新");
     });
     if (Build.VERSION.SDK_INT >= 33) {
       getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::goBack);
@@ -264,7 +274,7 @@ public class MainActivity extends Activity {
           .setPositiveButton("重新加载", (d, w) -> web.reload()).setNegativeButton("取消", null).show();
         if (which == 1) openExternal(Uri.parse(HOME));
         if (which == 2) new AlertDialog.Builder(this).setTitle("手机编辑")
-          .setMessage("先点选节点标题，再点底部的缩进或取消缩进。缩进会变成前一个同级节点的子节点；取消缩进会向上移一级。\n\n中文输入时请先确认候选字。首个同级节点无法继续缩进，顶层节点无法取消缩进。\n\n首次使用需要联网。离线能力取决于系统 WebView 和页面缓存；请确认页面显示已同步后再卸载或清除应用数据。\n\n当前版本不支持网页生成的本机导出文件，请在电脑端导出已同步的笔记。")
+          .setMessage("先点选节点标题，再点底部的缩进或取消缩进。缩进会变成前一个同级节点的子节点；取消缩进会向上移一级。\n\n中文输入时请先确认候选字。首个同级节点无法继续缩进，顶层节点无法取消缩进。\n\n首次使用需要联网。离线能力取决于系统 WebView 和页面缓存；请确认页面显示已同步后再卸载或清除应用数据。\n\n可在备份与恢复中选择下载备份，通过系统文件保存器离线导出本机 JSON（含尚未同步的内容）。")
           .setPositiveButton("知道了", null).show();
       }).show();
   }
@@ -313,6 +323,7 @@ public class MainActivity extends Activity {
   }
   @Override protected void onActivityResult(int request, int result, Intent data) {
     super.onActivityResult(request, result, data);
+    if (request == LocalExportController.REQUEST) { localExport.onResult(result, data); return; }
     if (request == FILE_PICKER && fileCallback != null) {
       fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
       fileCallback = null;
@@ -322,6 +333,7 @@ public class MainActivity extends Activity {
     resumed = false;
     themeHandler.removeCallbacks(themeRefresh);
     if (fileCallback != null) fileCallback.onReceiveValue(null);
+    localExport.detach();
     root.removeView(web);
     web.destroy();
     super.onDestroy();

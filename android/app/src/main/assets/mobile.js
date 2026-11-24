@@ -1,4 +1,53 @@
 (() => {
+  if (window.openOutlinerExportListenerInstalled) return;
+  window.openOutlinerExportListenerInstalled = true;
+  window.addEventListener("message", event => {
+    if (event.data !== "openoutliner-export-port-v1" || event.ports.length !== 1) return;
+    const port = event.ports[0];
+    let active = null;
+    port.onmessage = message => {
+      try {
+        const reply = JSON.parse(message.data);
+        if (active && reply.id === active.id && active.wait) {
+          const wait = active.wait;
+          active.wait = null;
+          clearTimeout(wait.timer);
+          if (reply.type === "error") wait.reject(new Error(reply.error || "保存备份失败"));
+          else if (reply.type === wait.type) wait.resolve();
+          else wait.reject(new Error("备份协议响应不匹配"));
+        }
+      } catch { /* Never treat an invalid message as a successful save. */ }
+    };
+    const send = (type, op, data = {}, timeout = 30000) => new Promise((resolve, reject) => {
+      const id = active.id;
+      const timer = setTimeout(() => {
+        if (active?.id === id) active.wait = null;
+        reject(new Error("保存备份超时；本机数据未改动"));
+      }, timeout);
+      active.wait = { type, timer, resolve, reject };
+      try { port.postMessage(JSON.stringify({ op, id, ...data })); }
+      catch (error) { clearTimeout(timer); active.wait = null; reject(error); }
+    });
+    window.openOutlinerAndroidSave = async (blob, filename) => {
+      if (active) throw new Error("已有备份正在保存");
+      active = { id: crypto.randomUUID(), wait: null };
+      try {
+        await send("ready", "begin", { name: filename, mime: "application/json", size: blob.size }, 5 * 60_000);
+        for (let offset = 0; offset < blob.size; offset += 48 * 1024) {
+          const bytes = new Uint8Array(await blob.slice(offset, offset + 48 * 1024).arrayBuffer());
+          let text = "";
+          for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+          await send("ack", "chunk", { data: btoa(text) });
+        }
+        await send("done", "end");
+      } catch (error) {
+        try { port.postMessage(JSON.stringify({ op: "abort", id: active.id })); } catch {}
+        throw error;
+      } finally { active = null; }
+    };
+  });
+})();
+(() => {
   if (window.openOutlinerAndroidCommand) return;
   let composing = false;
   document.addEventListener("compositionstart", () => { composing = true; }, true);

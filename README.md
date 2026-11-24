@@ -120,7 +120,7 @@ The web app runs outline operations against a local SQLite database saved in Ind
 Optional self-hosting adds password-protected access and synchronization between your devices. Independent record/field changes merge automatically; conflicting edits pause synchronization for review. The **备份与恢复** (Backup and recovery) panel lets you download all workspaces as a JSON recovery backup, restore a backup, review retained editing drafts, and choose between local and server versions when conflicts occur.
 
 - This is a personal, single-dataset service, not a multi-user workspace with isolated accounts.
-- Sync is not guaranteed while the page is closed or the device is asleep.
+- Sync is not guaranteed while the page is closed or the device is asleep. Recent compatible revisions use checksum-verified delta responses; old or missing checkpoints fall back to full snapshots. Common row updates avoid full database replacement. The server's bounded revision window is memory-only; oversized uploads still require a separate batching design.
 - Undo history is local to each device and is reset when remote changes are applied. Before applying changed remote data, the browser retains the latest three automatic recovery snapshots; explicit restore and conflict backups are not rotated.
 - If a remote snapshot unexpectedly omits a live node or workspace, sync pauses for review. This guards against server rollback and permanent deletions on other devices. Delete-versus-edit conflicts also require review.
 - Restoring a JSON backup replaces the entire local dataset and can propagate changes/deletions to other devices; review the confirmation before proceeding. Markdown/OPML are interchange formats, not full-fidelity backups.
@@ -133,7 +133,7 @@ See the [deployment, synchronization, and recovery guide](deploy/README.md) for 
 
 The repository includes an Android 8.0+ WebView client with keyboard-friendly indent/outdent controls, theme-aware system bars, persistent login, system file import, and external-browser links. The current release build targets the project's configured personal deployment, rather than an arbitrary server picker.
 
-It shares the web app's local storage and sync behavior. First use needs a network connection; offline startup depends on the website cache and WebView support. Blob-based export downloads are not currently supported in the Android shell, so export synced content from a desktop browser.
+It shares the web app's local storage and sync behavior. First use needs a network connection; offline startup depends on the website cache and WebView support. The updated Android shell supports offline JSON recovery export through the system document picker, including unsynced local notes. It uses a page-scoped message port with chunk acknowledgements; no broad filesystem permissions are needed. Both the updated website and a rebuilt APK are required.
 
 See [Android setup, build instructions, and limitations](android/README.md).
 
