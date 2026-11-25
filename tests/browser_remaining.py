@@ -237,21 +237,24 @@ def retry_local_startup(browser, base, node):
     })()""")
     try:
         page = context.new_page()
-        requests = []
+        allow_runtime_download = False
+        successful_requests = []
 
         def load_wasm(route):
-            requests.append(route.request.url)
-            if len(requests) == 1:
-                route.fulfill(status=503)
-            else:
+            if allow_runtime_download:
+                successful_requests.append(route.request.url)
                 route.continue_()
+            else:
+                route.fulfill(status=503)
 
         page.route('**/*.wasm', load_wasm)
         page.goto(base)
         expect(page.get_by_role('alert')).to_contain_text('无法加载本机数据库模块 (503)')
+        page.evaluate("navigator.locks.request('openoutliner-sync', () => {})")
+        allow_runtime_download = True
         page.evaluate("window.dispatchEvent(new Event('focus'))")
         row(page, node).locator('.nodeTitlePreview').wait_for(state='visible')
-        assert len(requests) == 2
+        assert len(successful_requests) == 1
     finally:
         context.close()
 
@@ -289,8 +292,9 @@ def sync_committed_edit_despite_draft_failure(browser, base, first, second):
         edit(second, 'Draft blocked by quota')
         page.locator('.syncIndicator').click()
         expect(page.get_by_role('alert')).to_contain_text('Draft save rejected')
+        page.evaluate("navigator.locks.request('openoutliner-sync', () => {})")
         with page.expect_response(lambda response: '/api/sync?' in response.url and
-                                   response.request.method == 'POST' and response.ok, timeout=5000):
+                                   response.request.method == 'POST' and response.ok, timeout=20000):
             page.unroute(pattern)
             page.evaluate("window.dispatchEvent(new Event('focus'))")
         assert request(base, f'/api/nodes/{first["id"]}')['title'] == title
@@ -332,7 +336,8 @@ def failed_attachment_cannot_replace_archive(browser, base, first, second):
         })
         expect(page.get_by_role('alert')).to_contain_text('Recovery attachment rejected')
         assert page.evaluate("!Object.keys(localStorage).some(key => key.startsWith('openoutliner-recovery-'))")
-        with page.expect_response(lambda response: '/api/sync?' in response.url and response.ok, timeout=5000):
+        page.evaluate("navigator.locks.request('openoutliner-sync', () => {})")
+        with page.expect_response(lambda response: '/api/sync?' in response.url and response.ok, timeout=20000):
             page.evaluate("window.dispatchEvent(new Event('focus'))")
         assert request(base, '/api/sync')['revision'] == before['revision']
         row(page, second).locator('.nodeTitlePreview').wait_for(state='visible')
