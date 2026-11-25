@@ -460,6 +460,13 @@ export function App() {
   }, []);
 
   const loadTree = useCallback(async (id: string, options: LoadTreeOptions = {}) => {
+    const hasPendingStructure = () => pendingTreeMutationsRef.current > 0 || pendingNodeCreateCountRef.current > 0;
+    const retryRefresh = () => window.setTimeout(() => window.dispatchEvent(new Event("outliner-sync")), 100);
+    // A deferred refresh must not invalidate the request ID used to roll back a pending edit.
+    if (options.preserveSelection && hasPendingStructure()) {
+      retryRefresh();
+      return;
+    }
     const requestId = ++treeRequestRef.current;
     const initialState = flatStateRef.current;
     if (!id || id === SYSTEM_CALENDAR_WORKSPACE_ID || id === SYSTEM_TAGS_WORKSPACE_ID || id === SYSTEM_RECYCLE_BIN_WORKSPACE_ID) {
@@ -476,9 +483,8 @@ export function App() {
       throw error;
     }
     if (requestId !== treeRequestRef.current || id !== workspaceIdRef.current) return;
-    if (options.preserveSelection && (initialState !== flatStateRef.current ||
-      pendingTreeMutationsRef.current > 0 || pendingNodeCreateCountRef.current > 0)) {
-      window.setTimeout(() => window.dispatchEvent(new Event("outliner-sync")), 100);
+    if (options.preserveSelection && (initialState !== flatStateRef.current || hasPendingStructure())) {
+      retryRefresh();
       return;
     }
     const loaded = fromNestedTree(next);

@@ -129,6 +129,7 @@ def editor_checks(page, a, b, nodes, other, mapped):
     page.wait_for_timeout(200)
     assert later.input_value()=='Later title must survive'
     page.locator('.workspaceTitleInput').click()
+    page.locator('.workspaceTitleInput').evaluate('e=>e.blur()')
     row(page,nodes[0]).locator('.nodeTitlePreview').wait_for(state='visible')
     assert row(page,nodes[2]).locator('textarea.nodeTitle').input_value()=='Later title must survive'
     # A failed move returning after a workspace switch must not restore A over B either.
